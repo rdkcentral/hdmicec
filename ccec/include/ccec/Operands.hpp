@@ -272,8 +272,8 @@ public:
 		MAX_LEN = 3,
 	};
 
-    Language(const char *str) : CECBytes((const uint8_t*)str, MAX_LEN) {
-        validate();
+    Language(const char *str) : CECBytes((const uint8_t*)str, strlen(str)) {
+        Assert(strlen(str) <= MAX_LEN);
     }
 
     Language(const CECFrame &frame, size_t startPos) : CECBytes(frame, startPos, MAX_LEN) {
