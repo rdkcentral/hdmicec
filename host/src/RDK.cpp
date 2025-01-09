@@ -406,9 +406,9 @@ static IARM_Result_t _SetOSDName(void *arg)
         CCEC_LOG( LOG_DEBUG, "RDKHost::_SetOSDName() : %s::%s", param->name, osdName);
 
 	if (strncmp(osdName, (char *)param->name, sizeof(param->name)) != 0) {
-		osdName[14] = '\0';
        
-         	strncpy((char *)osdName, (const char *) param->name, sizeof(osdName) - 1);
+        strncpy((char *)osdName, (const char *) param->name, sizeof(osdName) - 1);
+        osdName[sizeof(osdName) - 1] = '\0';
 		if (hostCb.osdCb) {
 			hostCb.osdCb((uint8_t *)osdName, strlen(osdName));
 		}
@@ -439,7 +439,7 @@ static IARM_Result_t _GetOSDName(void *arg)
     if(NULL != arg)
     {
         IARM_Bus_CECHost_GetOSDName_Param_t *param = (IARM_Bus_CECHost_GetOSDName_Param_t *)arg;
-        if(NULL != param->name)
+        if(NULL != param && param->name)
         {
             MEMCPY_S(param->name,sizeof(param->name), osdName, sizeof(osdName));
             CCEC_LOG( LOG_DEBUG, "RDKHost::_GetOSDName() : %s::%s\n",param->name,osdName);

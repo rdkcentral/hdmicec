@@ -146,7 +146,13 @@ int main(int argc, char *argv[])
 
     conn.close();
 
-    LibCCEC::getInstance().term();
+    try{
+        LibCCEC::getInstance().term();
+	}
+	catch(Exception &e)
+	{
+        CCEC_LOG( LOG_EXP, "I-ARM CEC Mgr:: Caught Exception while calling LibCCEC::term()\r\n");
+    }
 
     IARM_Bus_Disconnect();
     IARM_Bus_Term();
