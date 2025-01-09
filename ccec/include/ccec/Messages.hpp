@@ -631,6 +631,9 @@ public:
     Op_t opCode(void) const {return USER_CONTROL_PRESSED;}
 
 	UserControlPressed( const UICommand &command ) : uiCommand(command) { }
+    UserControlPressed(const CECFrame &frame, int startPos = 0):uiCommand(frame, startPos)
+	{
+	}
 
 	CECFrame &serialize(CECFrame &frame) const {
 		return uiCommand.serialize(frame);
