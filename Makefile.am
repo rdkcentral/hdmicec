@@ -16,8 +16,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 ##########################################################################
-SUBDIRS = osal ccec host
-DIST_SUBDIRS = cfg osal ccec host
+SUBDIRS = osal ccec
+DIST_SUBDIRS = cfg osal ccec
 
 nobase_includedir = ${includedir}/hdmicec
 nobase_include_HEADERS = ${top_srcdir}/ccec/include/ccec/Assert.hpp \
