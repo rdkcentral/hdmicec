@@ -80,7 +80,7 @@ public:
 		return source;
 	}
 	
-	void setSource(const LogicalAddress &from) {
+	void setSource(LogicalAddress &from) {
 		source = from;
 	}
 
