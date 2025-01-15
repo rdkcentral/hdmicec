@@ -129,7 +129,7 @@ void MessageDecoder::decode(const CECFrame &in_)
 		processor.process(SetOSDName(in), header);
 		break;
 	case USER_CONTROL_RELEASED:
-		processor.process(UserControlReleased(in), header);
+		processor.process(UserControlReleased(), header);
 		break;
 	case USER_CONTROL_PRESSED:
 		processor.process(UserControlPressed(in), header);
