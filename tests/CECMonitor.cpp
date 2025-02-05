@@ -250,7 +250,13 @@ int main()
 
     if(1 == libcecInitStatus)
     {
-        LibCCEC::getInstance().term();
+        try{
+            LibCCEC::getInstance().term();
+	    }
+	    catch(Exception &e)
+	    {
+            CCEC_LOG( LOG_EXP, "I-ARM CEC Mgr:: Caught Exception while calling LibCCEC::term()\r\n");
+        }
     }
     libcecInitStatus--;
 

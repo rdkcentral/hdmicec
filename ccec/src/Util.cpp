@@ -79,31 +79,25 @@ void check_cec_log_status(void)
     const int buffer_length = 256;
     char cecBuffer[buffer_length];
     memset(&st,0,sizeof(st));
-    if(0 == stat("/tmp/cec_log_enabled",&st))
+    if((fp = fopen("/tmp/cec_log_enabled","r")) == NULL)
     {
-        if(!S_ISREG(st.st_mode))
+        printf("Error in opening cec_log_enabled filee \n");
+        return;
+    }
+    if ((fgets(cecBuffer,buffer_length,fp)) != NULL)
+    {
+        for (int i =0; i< LOG_MAX;i++)
         {
-            return;
-        }
-        if((fp = fopen("/tmp/cec_log_enabled","r")) == NULL)
-        {
-            printf("Error in opening cec_log_enabled filee \n");
-            return;
-        }
-        if ((fgets(cecBuffer,buffer_length,fp)) != NULL)
-        {
-            for (int i =0; i< LOG_MAX;i++)
+            if (strncmp(cecBuffer,logLevel[i][0],strlen(logLevel[i][0])) == 0)
             {
-                if (strncmp(cecBuffer,logLevel[i][0],strlen(logLevel[i][0])) == 0)
-                {
-                    cec_log_level = atoi(logLevel[i][1]);
-					break;
-                }
+                cec_log_level = atoi(logLevel[i][1]);
+				break;
             }
         }
-        fclose(fp);
-        }
-        return;
+    }
+    fclose(fp);
+    
+    return;
 }
 
 char _CEC_LOG_PREFIX[64];
