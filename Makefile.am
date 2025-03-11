@@ -48,7 +48,6 @@ nobase_include_HEADERS = ${top_srcdir}/ccec/include/ccec/Assert.hpp \
                         ${top_srcdir}/osal/include/osal/Exception.hpp \
                         ${top_srcdir}/osal/include/osal/OSAL.hpp \
                         ${top_srcdir}/osal/include/osal/Stoppable.hpp \
-                        ${top_srcdir}/osal/include/osal/Util.hpp \
-			${top_srcdir}/host/include/ccec/host/RDK.hpp
+                        ${top_srcdir}/osal/include/osal/Util.hpp
 
 distcleancheck_listfiles = *-libtool
