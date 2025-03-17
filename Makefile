@@ -24,10 +24,9 @@ install_lib_dir := ./install/lib
 exe_osal            := osal/
 exe_ccec            := ccec/
 exe_soc             := soc/$(PLATFORM_SOC)/common
-exe_host            := host
 exe_tests           := tests
 
-executable := $(exe_soc) $(exe_osal) $(exe_ccec) $(exe_host) $(exe_tests)
+executable := $(exe_soc) $(exe_osal) $(exe_ccec) $(exe_tests)
 
 .PHONY: clean all $(executable) install
 
@@ -44,7 +43,6 @@ install:
 	cp $(exe_osal)/src/install/lib/*.so $(install_lib_dir)
 	cp $(exe_ccec)/src/install/lib/*.so $(install_lib_dir)
 	cp soc/$(PLATFORM_SOC)/common/install/lib/*.so $(install_lib_dir)
-	cp $(exe_host)/install/lib/* $(install_lib_dir)
 
 ifneq ($(PLATFORM_SOC),entropic)
 endif
@@ -59,7 +57,6 @@ clean:
 	rm -rf $(exe_osal)/test/install
 	rm -rf $(exe_ccec)/lib/install
 	rm -rf soc/$(PLATFORM_SOC)/common/install
-	rm -rf $(exe_host)/install
 	rm -rf $(exe_tests)/install
 #delete all temp objects
 	rm -rf $(exe_osal)/src/*.o
