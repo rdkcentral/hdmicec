@@ -44,6 +44,17 @@ m4_ifdef([AM_SILENT_RULES],[AM_SILENT_RULES([yes])],
    AC_SUBST(AM_DEFAULT_VERBOSITY)])
 
 
+AC_ARG_ENABLE([telemetry_2_0],
+         AS_HELP_STRING([--enable-telemetry_2_0],[This will enable/disable telemetry 2.0]),
+         [
+           case "${enableval}" in
+            yes) TELEMETRY_2_0=true ;;
+            no) TELEMETRY_2_0=false ;;
+           *) AC_MSG_ERROR([bad value ${enableval} for --enable-telemetry_2_0 ]) ;;
+            esac
+            ],
+          [echo " telemetry 2.0 is enabled"])
+ AM_CONDITIONAL([TELEMETRY_2_0], [test x$TELEMETRY_2_0 = xtrue])
 
 
 dnl **********************************

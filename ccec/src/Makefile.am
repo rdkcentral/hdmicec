@@ -21,6 +21,11 @@ AM_CXXFLAGS = -pthread -Wall -I${top_srcdir}/osal/include -I${top_srcdir}/ccec/i
 
 lib_LTLIBRARIES = libRCEC.la
 
+if TELEMETRY_2_0
+AM_LDFLAGS = -ltelemetry_msgsender
+AM_CXXFLAGS += -DUSE_TELEMETRY_2_0
+endif
+
 libRCEC_la_SOURCES = CECFrame.cpp \
                      Util.cpp \
                      DriverImpl.cpp \

@@ -42,7 +42,7 @@
 #include "ccec/Driver.hpp"
 #include "ccec/Exception.hpp"
 #include "ccec/Util.hpp"
-
+#include <telemetry_busmessage_sender.h>
 #include "Bus.hpp"
 
 using CCEC_OSAL::AutoLock;
@@ -339,7 +339,16 @@ void Bus::send(const CECFrame &frame, int timeout)
                 CCEC_LOG( LOG_DEBUG, "Bus::send write done\r\n");
             }
             catch (Exception &e){
-                if( frame.length() > 1) CCEC_LOG( LOG_EXP, "Bus::send exp caught [%s] \r\n", e.what());
+                if( frame.length() > 1)
+		{
+#ifdef USE_TELEMETRY_2_0
+                        char buffer[128]={0};
+                        snprintf(buffer, 128, "Bus::send exp caught [%s] ", e.what());
+                        t2_event_s("HDMI_WARN_CEC_InvalidParamExcptn",buffer);
+#else
+			CCEC_LOG( LOG_EXP, "Bus::send exp caught [%s] \r\n", e.what());
+#endif
+		}
                 throw;
             }
         }

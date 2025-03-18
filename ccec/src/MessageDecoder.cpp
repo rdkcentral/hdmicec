@@ -33,6 +33,7 @@
 #include "ccec/MessageDecoder.hpp"
 #include "ccec/Exception.hpp"
 #include "ccec/Util.hpp" 
+#include <telemetry_busmessage_sender.h>
 
 CCEC_BEGIN_NAMESPACE
 
@@ -188,7 +189,13 @@ void MessageDecoder::decode(const CECFrame &in_)
     }
     catch(InvalidParamException &e)
     {
+#ifdef USE_TELEMETRY_2_0
+	char buffer[128];
+        snprintf(buffer, 128, "MessageDecoder::decode caught %s", e.what());
+        t2_event_s("SYST_ERR_CECBusEx",buffer);
+#else
 	CCEC_LOG( LOG_EXP, "MessageDecoder::decode caught %s \r\n",e.what());
+#endif
     }
     catch(std::exception &e)
     {
