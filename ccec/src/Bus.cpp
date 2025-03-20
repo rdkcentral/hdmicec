@@ -117,7 +117,7 @@ CCEC_LOG( LOG_INFO, "Bus::stop is called\r\n");
 	}
 
 	Driver::getInstance().close();
-	CCEC_LOG( LOG_INFO, "Bus::stop is called reader isstop :%d writer isstop :%d \r\n",reader.isStopped(),writer.isStopped());
+	CCEC_LOG( LOG_INFO, "Bus::stop is called reader isstop :%d writer isstop :%d \r\n",reader.isStopped());
 }
 
 /**
