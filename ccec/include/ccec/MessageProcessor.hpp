@@ -80,15 +80,15 @@ public:
 	virtual void process (const GetMenuLanguage &msg, const Header &header) 			{header.print();msg.print();}
 	virtual void process (const ReportPhysicalAddress &msg, const Header &header) 		{header.print();msg.print();}
 	virtual void process (const DeviceVendorID &msg, const Header &header) 				{header.print();msg.print();}
-	//virtual void process (const UserControlReleased &msg, const Header &header) 		{header.print();msg.print();}
-	//virtual void process (const UserControlPressed &msg, const Header &header) 		{header.print();msg.print();}
+	virtual void process (const UserControlReleased &msg, const Header &header) 		{header.print();msg.print();}
+	virtual void process (const UserControlPressed &msg, const Header &header) 		{header.print();msg.print();}
 	virtual void process (const GiveDevicePowerStatus &msg, const Header &header) 		{header.print();msg.print();}
 	virtual void process (const ReportPowerStatus &msg, const Header &header) 			{header.print();msg.print();}
 	virtual void process (const FeatureAbort &msg, const Header &header) 				{header.print();msg.print();}
 	virtual void process (const Abort &msg, const Header &header) 						{header.print();msg.print();}
 	virtual void process (const Polling &msg, const Header &header) 					{header.print();msg.print();}
-        virtual void process (const InitiateArc &msg, const Header &header)                             {header.print();msg.print();}
-        virtual void process (const TerminateArc &msg, const Header &header)                             {header.print();msg.print();}
+    virtual void process (const InitiateArc &msg, const Header &header)                             {header.print();msg.print();}
+    virtual void process (const TerminateArc &msg, const Header &header)                             {header.print();msg.print();}
 	virtual void process (const RequestShortAudioDescriptor &msg,const Header &header)               {header.print();msg.print();}
 	virtual void process (const ReportShortAudioDescriptor &msg, const Header &header)               {header.print();msg.print();}
 	virtual void process (const SystemAudioModeRequest &msg , const Header &header)                  {header.print();msg.print();}

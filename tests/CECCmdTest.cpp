@@ -86,7 +86,13 @@ int main(int argc, char *argv[])
                 if(true == inited)
                 {
                     cout << "LibCCEC term....................\n";
-                    LibCCEC::getInstance().term();
+                    try{
+                        LibCCEC::getInstance().term();
+	                }
+	                catch(Exception &e)
+	                {
+                        CCEC_LOG( LOG_EXP, "I-ARM CEC Mgr:: Caught Exception while calling LibCCEC::term()\r\n");
+                    }
                     inited = false;
                 }
             break;
@@ -110,7 +116,15 @@ int main(int argc, char *argv[])
             break;
             case 4:
                 if(inited != false)
-                    LibCCEC::getInstance().term();
+                {
+                    try{
+                        LibCCEC::getInstance().term();
+	                }
+	                catch(Exception &e)
+	                {
+                        CCEC_LOG( LOG_EXP, "I-ARM CEC Mgr:: Caught Exception while calling LibCCEC::term()\r\n");
+                    }
+                }
 
                 running = false;
             break;

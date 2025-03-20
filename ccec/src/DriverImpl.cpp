@@ -91,7 +91,14 @@ DriverImpl::~DriverImpl()
 {
     {AutoLock lock_(mutex);
 		if (status != CLOSED) {
-			this->close();
+			try{
+                this->close();
+	        }
+	        catch(Exception &e)
+	        {
+                CCEC_LOG( LOG_EXP, "DriverImpl: Caught Exception while calling ~DriverImpl::close()\r\n");
+
+            }
 		}
     }
 }

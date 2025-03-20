@@ -891,6 +891,9 @@ public:
         return str[0];
     }
 
+    UICommand ( const CECFrame &frame, size_t startPos) : CECBytes (frame, startPos, MAX_LEN) {
+	            };
+
 protected:
 	size_t getMaxLen() const {return MAX_LEN;}
 };

@@ -67,7 +67,7 @@ Bus & Bus::getInstance(void)
  *
  * @return None
  */
-Bus::Bus(void) : reader(*this), writer(*this)
+Bus::Bus(void) : reader(*this), writer(*this), started(false)
 {
 	CCEC_LOG( LOG_DEBUG, "Bus Instance Created\r\n");
 	Thread(this->reader).start();

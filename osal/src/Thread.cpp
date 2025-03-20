@@ -42,7 +42,7 @@ void *Thread::CEntry(void * arg)
 	return NULL;
 }
 
-Thread::Thread(Runnable &target) : runnable(target)
+Thread::Thread(Runnable &target) : runnable(target), nativeHandle(0)
 {
 }
 
