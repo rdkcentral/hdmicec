@@ -17,14 +17,12 @@
  * limitations under the License.
 */
 
-
 /**
 * @defgroup hdmicec
 * @{
 * @defgroup ccec
 * @{
 **/
-
 
 #include <cstdio>
 #include <stdexcept>
