@@ -70,7 +70,5 @@ AC_CONFIG_FILES([Makefile
                  osal/src/Makefile
                  ccec/Makefile
                  ccec/src/Makefile
-		 host/Makefile
-		 host/src/Makefile
                  tests/Makefile])
 AC_OUTPUT

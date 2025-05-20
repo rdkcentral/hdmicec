@@ -45,6 +45,7 @@
 
 #include "ccec/Driver.hpp"
 #include "Bus.hpp"
+#include <telemetry_busmessage_sender.h>
 
 using CCEC_OSAL::AutoLock;
 using CCEC_OSAL::Thread;
@@ -101,6 +102,7 @@ void LibCCEC::init(const char *name)
 	/* Add Host-specific Initialization*/
 	Driver::getInstance().open();
 	Bus::getInstance().start();
+        t2_init("hdmicec");
 	initialized = true;
 }
 
