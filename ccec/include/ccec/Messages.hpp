@@ -146,7 +146,7 @@ public:
     PhysicalAddress physicalAddress;
 };
 
-class RequestActiveSource : public DataBlock
+class RequestActiveSourceMessage : public DataBlock
 {
 public:
     Op_t opCode(void) const {return REQUEST_ACTIVE_SOURCE;}
@@ -463,13 +463,13 @@ public:
     PhysicalAddress toSink;
 };
 
-class RequestShortAudioDescriptor : public DataBlock
+class RequestShortAudioDescriptorMessage : public DataBlock
 {
 
 public:
     Op_t opCode(void) const {return REQUEST_SHORT_AUDIO_DESCRIPTOR;}
 
-      RequestShortAudioDescriptor(const std::vector<uint8_t> formatid, const std::vector<uint8_t> audioFormatCode, uint8_t number_of_descriptor = 1)
+      RequestShortAudioDescriptorMessage(const std::vector<uint8_t> formatid, const std::vector<uint8_t> audioFormatCode, uint8_t number_of_descriptor = 1)
       {
 	    uint8_t audioFormatIdCode;
 	    numberofdescriptor = number_of_descriptor > 4 ? 4 : number_of_descriptor;
@@ -480,7 +480,7 @@ public:
 	    }
        }
 	 /* called by the messaged_decoder */
-     RequestShortAudioDescriptor(const CECFrame &frame, int startPos = 0)
+     RequestShortAudioDescriptorMessage(const CECFrame &frame, int startPos = 0)
      {
 	uint8_t len = frame.length();
         numberofdescriptor = len > 4 ? 4:len;

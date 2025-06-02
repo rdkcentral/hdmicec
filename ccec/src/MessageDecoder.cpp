@@ -69,7 +69,7 @@ void MessageDecoder::decode(const CECFrame &in_)
 		processor.process(TextViewOn(), header);
 		break;
 	case REQUEST_ACTIVE_SOURCE:
-		processor.process(RequestActiveSource(), header);
+		processor.process(RequestActiveSourceMessage(), header);
 		break;
 	case STANDBY:
 		CCEC_LOG( LOG_DEBUG, "Decoding STANDBY\r\n");
@@ -154,7 +154,7 @@ void MessageDecoder::decode(const CECFrame &in_)
              processor.process(TerminateArc(), header);
              break;
 	 case REQUEST_SHORT_AUDIO_DESCRIPTOR:
-             processor.process(RequestShortAudioDescriptor(in), header);
+             processor.process(RequestShortAudioDescriptorMessage(in), header);
              break;
 
 	case REPORT_SHORT_AUDIO_DESCRIPTOR:

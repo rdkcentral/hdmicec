@@ -87,10 +87,10 @@ public:
             printHeader(header);
             printf("Command: TextViewOn\n");
         }
-	void process (const RequestActiveSource &msg, const Header &header)
+	void process (const RequestActiveSourceMessage &msg, const Header &header)
         {
             printHeader(header);
-            printf("Command: RequestActiveSource\n");
+            printf("Command: RequestActiveSourceMessage\n");
         }
 	void process (const Standby &msg, const Header &header)
         {
