@@ -82,7 +82,7 @@ void MessageDecoder::decode(const CECFrame &in_)
 		processor.process(CECVersion(in), header);
 		break;
 	case SET_MENU_LANGUAGE:
-		processor.process(SetMenuLanguage(in), header);
+		processor.process(SetMenuLanguageMessage(in), header);
 		break;
 	case GIVE_OSD_NAME:
 		processor.process(GiveOSDName(), header);

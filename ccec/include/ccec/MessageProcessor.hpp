@@ -68,7 +68,7 @@ public:
 	virtual void process (const Standby &msg, const Header &header)						{header.print();msg.print();}
 	virtual void process (const GetCECVersion &msg, const Header &header) 				{header.print();msg.print();}
 	virtual void process (const CECVersion &msg, const Header &header) 		 			{header.print();msg.print();}
-	virtual void process (const SetMenuLanguage &msg, const Header &header) 			{header.print();msg.print();}
+	virtual void process (const SetMenuLanguageMessage &msg, const Header &header) 			{header.print();msg.print();}
 	virtual void process (const GiveOSDName &msg, const Header &header) 		 		{header.print();msg.print();}
 	virtual void process (const GivePhysicalAddress &msg, const Header &header) 		{header.print();msg.print();}
 	virtual void process (const GiveDeviceVendorID &msg, const Header &header) 		 	{header.print();msg.print();}

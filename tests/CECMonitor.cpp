@@ -108,10 +108,10 @@ public:
             printf("Command: CECVersion\n");
             printf("Version : %s \n",msg.version.toString().c_str());
         }
-	void process (const SetMenuLanguage &msg, const Header &header)
+	void process (const SetMenuLanguageMessage &msg, const Header &header)
         {
             printHeader(header);
-            printf("Command: SetMenuLanguage\n");
+            printf("Command: SetMenuLanguageMessage\n");
             printf("Language : %s \n",msg.language.toString().c_str());
         }
 	void process (const GiveOSDName &msg, const Header &header)

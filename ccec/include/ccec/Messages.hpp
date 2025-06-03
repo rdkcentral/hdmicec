@@ -187,15 +187,15 @@ public:
     Version version;
 };
 
-class SetMenuLanguage : public DataBlock
+class SetMenuLanguageMessage : public DataBlock
 {
 
 public:
     Op_t opCode(void) const {return SET_MENU_LANGUAGE;}
 
-    SetMenuLanguage(const Language &language) : language(language) {};
+    SetMenuLanguageMessage(const Language &language) : language(language) {};
 
-    SetMenuLanguage(const CECFrame &frame, int startPos = 0)
+    SetMenuLanguageMessage(const CECFrame &frame, int startPos = 0)
     : language(frame, startPos)
     {
     }
