@@ -19,4 +19,4 @@ jobs:
 
       - name: native build
         run: |
-          sh -x cov_build.sh
+          ./cov_build.sh
