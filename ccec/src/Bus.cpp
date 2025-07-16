@@ -349,7 +349,6 @@ void Bus::send(const CECFrame &frame, int timeout)
 		}
 	}
 
-
         if (timeout > 0) {
             /* Retry in 250ms increment till timeout */
             int retry = (timeout / 250);
