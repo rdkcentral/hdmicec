@@ -146,7 +146,7 @@ public:
     PhysicalAddress physicalAddress;
 };
 
-class RequestActiveSourceMessage : public DataBlock
+class RequestActiveSource : public DataBlock
 {
 public:
     Op_t opCode(void) const {return REQUEST_ACTIVE_SOURCE;}
@@ -187,15 +187,15 @@ public:
     Version version;
 };
 
-class SetMenuLanguageMessage : public DataBlock
+class SetMenuLanguage : public DataBlock
 {
 
 public:
     Op_t opCode(void) const {return SET_MENU_LANGUAGE;}
 
-    SetMenuLanguageMessage(const Language &language) : language(language) {};
+    SetMenuLanguage(const Language &language) : language(language) {};
 
-    SetMenuLanguageMessage(const CECFrame &frame, int startPos = 0)
+    SetMenuLanguage(const CECFrame &frame, int startPos = 0)
     : language(frame, startPos)
     {
     }
@@ -463,13 +463,13 @@ public:
     PhysicalAddress toSink;
 };
 
-class RequestShortAudioDescriptorMessage : public DataBlock
+class RequestShortAudioDescriptor : public DataBlock
 {
 
 public:
     Op_t opCode(void) const {return REQUEST_SHORT_AUDIO_DESCRIPTOR;}
 
-      RequestShortAudioDescriptorMessage(const std::vector<uint8_t> formatid, const std::vector<uint8_t> audioFormatCode, uint8_t number_of_descriptor = 1)
+      RequestShortAudioDescriptor(const std::vector<uint8_t> formatid, const std::vector<uint8_t> audioFormatCode, uint8_t number_of_descriptor = 1)
       {
 	    uint8_t audioFormatIdCode;
 	    numberofdescriptor = number_of_descriptor > 4 ? 4 : number_of_descriptor;
@@ -480,7 +480,7 @@ public:
 	    }
        }
 	 /* called by the messaged_decoder */
-     RequestShortAudioDescriptorMessage(const CECFrame &frame, int startPos = 0)
+     RequestShortAudioDescriptor(const CECFrame &frame, int startPos = 0)
      {
 	uint8_t len = frame.length();
         numberofdescriptor = len > 4 ? 4:len;
