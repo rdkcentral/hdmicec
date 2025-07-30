@@ -64,11 +64,11 @@ public:
 	virtual void process (const InActiveSource &msg, const Header &header) 				{header.print();msg.print();}
 	virtual void process (const ImageViewOn &msg, const Header &header)    				{header.print();msg.print();}
 	virtual void process (const TextViewOn &msg, const Header &header) 	 				{header.print();msg.print();}
-	virtual void process (const RequestActiveSourceMessage &msg, const Header &header) 		{header.print();msg.print();}
+	virtual void process (const RequestActiveSource &msg, const Header &header) 		{header.print();msg.print();}
 	virtual void process (const Standby &msg, const Header &header)						{header.print();msg.print();}
 	virtual void process (const GetCECVersion &msg, const Header &header) 				{header.print();msg.print();}
 	virtual void process (const CECVersion &msg, const Header &header) 		 			{header.print();msg.print();}
-	virtual void process (const SetMenuLanguageMessage &msg, const Header &header) 			{header.print();msg.print();}
+	virtual void process (const SetMenuLanguage &msg, const Header &header) 			{header.print();msg.print();}
 	virtual void process (const GiveOSDName &msg, const Header &header) 		 		{header.print();msg.print();}
 	virtual void process (const GivePhysicalAddress &msg, const Header &header) 		{header.print();msg.print();}
 	virtual void process (const GiveDeviceVendorID &msg, const Header &header) 		 	{header.print();msg.print();}
@@ -89,7 +89,7 @@ public:
 	virtual void process (const Polling &msg, const Header &header) 					{header.print();msg.print();}
     virtual void process (const InitiateArc &msg, const Header &header)                             {header.print();msg.print();}
     virtual void process (const TerminateArc &msg, const Header &header)                             {header.print();msg.print();}
-	virtual void process (const RequestShortAudioDescriptorMessage &msg,const Header &header)               {header.print();msg.print();}
+	virtual void process (const RequestShortAudioDescriptor &msg,const Header &header)               {header.print();msg.print();}
 	virtual void process (const ReportShortAudioDescriptor &msg, const Header &header)               {header.print();msg.print();}
 	virtual void process (const SystemAudioModeRequest &msg , const Header &header)                  {header.print();msg.print();}
 	virtual void process (const SetSystemAudioMode &msg , const Header &header)                      {header.print();msg.print();}
