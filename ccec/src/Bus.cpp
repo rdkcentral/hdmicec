@@ -329,47 +329,48 @@ void Bus::Writer::stop(bool block)
  */
 void Bus::send(const CECFrame &frame, int timeout)
 {
-	{AutoLock rlock_(rMutex), wlock_(wMutex);
-
         if (timeout <= 0) {
-            if (!started) throw InvalidStateException();
-
-            try {
-                Driver::getInstance().write(frame);
-                CCEC_LOG( LOG_DEBUG, "Bus::send write done\r\n");
-            }
-            catch (Exception &e){
-                if( frame.length() > 1)
-		{
-                        char buffer[128]={0};
-                        snprintf(buffer, 128, "Bus::send exp caught [%s] ", e.what());
-                        t2_event_s("HDMI_WARN_CEC_InvalidParamExcptn",buffer);
-			CCEC_LOG( LOG_EXP, "Bus::send exp caught [%s] \r\n", e.what());
+		{AutoLock rlock_(rMutex), wlock_(wMutex);
+			if (!started) throw InvalidStateException();
+			try {
+				Driver::getInstance().write(frame);
+				CCEC_LOG( LOG_DEBUG, "Bus::send write done\r\n");
+			}
+			catch (Exception &e){
+				if( frame.length() > 1)
+				{
+					char buffer[128]={0};
+					snprintf(buffer, 128, "Bus::send exp caught [%s] ", e.what());
+					t2_event_s("HDMI_WARN_CEC_InvalidParamExcptn",buffer);
+					CCEC_LOG( LOG_EXP, "Bus::send exp caught [%s] \r\n", e.what());
+				}
+				throw;
+			}
 		}
-                throw;
-            }
-        }
-    }
+	}
 
-	{AutoLock rlock_(rMutex), wlock_(wMutex);
         if (timeout > 0) {
             /* Retry in 250ms increment till timeout */
             int retry = (timeout / 250);
             do {
-                try {
-                    if (!started) throw InvalidStateException();
-                    send(frame, 0);
-                    retry = 0;
-                }
-                catch (Exception &e){
-                    if( frame.length() > 1) CCEC_LOG( LOG_EXP, "Bus::send exp caught [%s], retry [%d]\r\n", e.what(), retry);
-                    if (retry == 0) {
-                        throw;
-                    }
-                    usleep(250000);
-                }
-            } while (retry--);
-        }
+		    usleep(1000);
+		    {AutoLock rlock_(rMutex), wlock_(wMutex);
+			    try {
+				    if (!started) throw InvalidStateException();
+				    send(frame, 0);
+				    retry = 0;
+			    }
+			    catch (Exception &e){
+				    if( frame.length() > 1) CCEC_LOG( LOG_EXP, "Bus::send exp caught [%s], retry [%d]\r\n", e.what(), retry);
+				    if (retry == 0) {
+					    throw;
+				    }
+			    }
+		    }
+		    if (retry) {
+			    usleep(250000);
+		    }
+	    } while (retry--);
 	}
 }
 
