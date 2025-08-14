@@ -102,7 +102,7 @@ void LibCCEC::init(const char *name)
 	/* Add Host-specific Initialization*/
 	Driver::getInstance().open();
 	Bus::getInstance().start();
-        t2_init("hdmicec");
+        t2_init(const_cast<char*>("hdmicec"));
 	initialized = true;
 }
 
