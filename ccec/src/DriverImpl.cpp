@@ -358,7 +358,7 @@ bool DriverImpl::isValidLogicalAddress(const LogicalAddress & source) const
 			break;
 		}
 	}
-
+    mutex.unlock();
 	return found;
 }
 
