@@ -349,16 +349,16 @@ bool DriverImpl::addLogicalAddress(const LogicalAddress &source)
 
 bool DriverImpl::isValidLogicalAddress(const LogicalAddress & source) const
 {
-	AutoLock lock_(mutex);
-	bool found = false;
-	std::list<LogicalAddress>::const_iterator it;
-	for (it = logicalAddresses.begin(); it != logicalAddresses.end(); it++) {
-		if(*it == source) {
-			found = true;
-			break;
+    {AutoLock lock_(mutex);
+		bool found = false;
+		std::list<LogicalAddress>::const_iterator it;
+		for (it = logicalAddresses.begin(); it != logicalAddresses.end(); it++) {
+			if(*it == source) {
+				found = true;
+				break;
+			}
 		}
 	}
-    mutex.unlock();
 	return found;
 }
 
