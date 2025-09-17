@@ -87,49 +87,51 @@ void ConditionVariable::wait(void)
 
 long ConditionVariable::wait(long timeout)
 {
-	long timeLeft = 1;
-	mutex->lock();
-	if (!cond->isSet()) {
-		int ret = 0;
-		if (timeout == 0) {
-			ret = pthread_cond_wait((pthread_cond_t *)nativeHandle,
-								    (pthread_mutex_t *)mutex->getNativeHandle());
-			if (ret < 0) {
-				/* @TODO Throw Exception */
-			}
-		}
-		else {
-            struct timeval  curTime;
-            memset(&curTime, 0, sizeof(curTime));
-            gettimeofday(&curTime, NULL);
+    long timeLeft = 1;
+    mutex->lock();
 
-            struct timespec wakeTime;
-            memset(&wakeTime, 0, sizeof(wakeTime));
-            wakeTime.tv_nsec = curTime.tv_usec * 1000 + (timeout % 1000) * 1000000;
-            wakeTime.tv_sec = curTime.tv_sec + (timeout / 1000);
-            if (wakeTime.tv_nsec > 1000000000)
-            {
-            	wakeTime.tv_nsec -= 1000000000;
-            	wakeTime.tv_sec++;
+    int ret = 0;
+    if (timeout == 0) {
+        while (!cond->isSet()) {
+            ret = pthread_cond_wait(
+                (pthread_cond_t *)nativeHandle,
+                (pthread_mutex_t *)mutex->getNativeHandle()
+            );
+            if (ret < 0) {
+                // @TODO Throw Exception
+                break;
             }
+        }
+    } else {
+        struct timeval curTime;
+        memset(&curTime, 0, sizeof(curTime));
+        gettimeofday(&curTime, NULL);
 
-            ret = pthread_cond_timedwait((pthread_cond_t *)nativeHandle,
-            							 (pthread_mutex_t *)mutex->getNativeHandle(),
-            							 &wakeTime);
+        struct timespec wakeTime;
+        memset(&wakeTime, 0, sizeof(wakeTime));
+        wakeTime.tv_nsec = curTime.tv_usec * 1000 + (timeout % 1000) * 1000000;
+        wakeTime.tv_sec = curTime.tv_sec + (timeout / 1000);
+        if (wakeTime.tv_nsec > 1000000000) {
+            wakeTime.tv_nsec -= 1000000000;
+            wakeTime.tv_sec++;
+        }
+
+        while (!cond->isSet()) {
+            ret = pthread_cond_timedwait(
+                (pthread_cond_t *)nativeHandle,
+                (pthread_mutex_t *)mutex->getNativeHandle(),
+                &wakeTime
+            );
 
             if ((ret != 0) && !cond->isSet() && ret == ETIMEDOUT) {
-            	timeLeft = 0;
+                timeLeft = 0;
+                break;
             }
-            else {
-            	/* @TODO: Handle wait interruption. Return actual left over time */
-            	timeLeft =  1;
-            }
-
-		}
+        }
     }
-	mutex->unlock();
 
-	return timeLeft;
+    mutex->unlock();
+    return timeLeft;
 }
 
 void ConditionVariable::notify(void)

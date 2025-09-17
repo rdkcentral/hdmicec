@@ -84,7 +84,7 @@ private:
 	int status;
 	int nativeHandle;
 	IncomingQueue rQueue;
-	Mutex mutex;
+        mutable Mutex mutex;
 	std::list<LogicalAddress> logicalAddresses;
 
 	DriverImpl(const DriverImpl &); /* Not allowed */
