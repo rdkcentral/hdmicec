@@ -69,7 +69,7 @@ void MessageDecoder::decode(const CECFrame &in_)
 		processor.process(TextViewOn(), header);
 		break;
 	case REQUEST_ACTIVE_SOURCE:
-		processor.process(RequestActiveSourceMessage(), header);
+		processor.process(RequestActiveSource(), header);
 		break;
 	case STANDBY:
 		CCEC_LOG( LOG_DEBUG, "Decoding STANDBY\r\n");
@@ -82,7 +82,7 @@ void MessageDecoder::decode(const CECFrame &in_)
 		processor.process(CECVersion(in), header);
 		break;
 	case SET_MENU_LANGUAGE:
-		processor.process(SetMenuLanguageMessage(in), header);
+		processor.process(SetMenuLanguage(in), header);
 		break;
 	case GIVE_OSD_NAME:
 		processor.process(GiveOSDName(), header);
@@ -154,7 +154,7 @@ void MessageDecoder::decode(const CECFrame &in_)
              processor.process(TerminateArc(), header);
              break;
 	 case REQUEST_SHORT_AUDIO_DESCRIPTOR:
-             processor.process(RequestShortAudioDescriptorMessage(in), header);
+             processor.process(RequestShortAudioDescriptor(in), header);
              break;
 
 	case REPORT_SHORT_AUDIO_DESCRIPTOR:

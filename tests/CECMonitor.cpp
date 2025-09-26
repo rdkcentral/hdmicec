@@ -87,10 +87,10 @@ public:
             printHeader(header);
             printf("Command: TextViewOn\n");
         }
-	void process (const RequestActiveSourceMessage &msg, const Header &header)
+	void process (const RequestActiveSource &msg, const Header &header)
         {
             printHeader(header);
-            printf("Command: RequestActiveSourceMessage\n");
+            printf("Command: RequestActiveSource\n");
         }
 	void process (const Standby &msg, const Header &header)
         {
@@ -108,10 +108,10 @@ public:
             printf("Command: CECVersion\n");
             printf("Version : %s \n",msg.version.toString().c_str());
         }
-	void process (const SetMenuLanguageMessage &msg, const Header &header)
+	void process (const SetMenuLanguage &msg, const Header &header)
         {
             printHeader(header);
-            printf("Command: SetMenuLanguageMessage\n");
+            printf("Command: SetMenuLanguage\n");
             printf("Language : %s \n",msg.language.toString().c_str());
         }
 	void process (const GiveOSDName &msg, const Header &header)
