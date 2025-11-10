@@ -115,8 +115,23 @@ void DriverImpl::open(void) noexcept(false)
 		}
 
 		int err = HdmiCecOpen(&nativeHandle);
-		if (err !=  HDMI_CEC_IO_SUCCESS) {
-			throw IOException();
+		if (HDMI_CEC_IO_SUCCESS != err) {
+			CCEC_LOG( LOG_EXP, "DriverImpl::open HdmiCecOpen failed with error %d\r\n", err);
+			switch (err) {
+				case HDMI_CEC_IO_INVALID_ARGUMENT:
+				case HDMI_CEC_IO_INVALID_HANDLE:
+					throw InvalidParamException();
+					break;
+				case HDMI_CEC_IO_ALREADY_OPEN:
+					throw InvalidStateException();
+					break;
+				case HDMI_CEC_IO_OPERATION_NOT_SUPPORTED:
+					throw OperationNotSupportedException();
+					break;
+				case HDMI_CEC_IO_GENERAL_ERROR:
+				default:
+					throw IOException();
+			}
 		}
 
 		HdmiCecSetRxCallback(nativeHandle, DriverReceiveCallback, 0);
@@ -143,7 +158,19 @@ void  DriverImpl::close(void) noexcept(false)
 
 		int err = HdmiCecClose(nativeHandle);
 		if (err != HDMI_CEC_IO_SUCCESS) {
-			throw IOException();
+			CCEC_LOG( LOG_EXP, "DriverImpl::close HdmiCecClose failed with error %d\r\n", err);
+			switch (err) {
+				case HDMI_CEC_IO_INVALID_HANDLE:
+					throw InvalidParamException();
+					break;
+				case HDMI_CEC_IO_OPERATION_NOT_SUPPORTED:
+					throw OperationNotSupportedException();
+					break;
+				case HDMI_CEC_IO_GENERAL_ERROR:
+				default:
+					throw IOException();
+					break;
+			}
 		}
 
 		status = CLOSED;
@@ -193,7 +220,6 @@ void  DriverImpl::read(CECFrame &frame)  noexcept(false)
  */
 void  DriverImpl::writeAsync(const CECFrame &frame)  noexcept(false)
 {
-
 	const uint8_t *buf = NULL;
 	size_t length = 0;
 
@@ -217,7 +243,20 @@ void  DriverImpl::writeAsync(const CECFrame &frame)  noexcept(false)
 		CCEC_LOG( LOG_DEBUG, "DriverImpl:: call HdmiCecTxAsync %x\r\n", err);
 
 		if (err != HDMI_CEC_IO_SUCCESS) {
-			throw IOException();
+			CCEC_LOG(LOG_EXP, "DriverImpl::write HdmiCecTxAsync failed with error %d\r\n", err);
+			switch (err) {
+				case HDMI_CEC_IO_INVALID_ARGUMENT:
+				case HDMI_CEC_IO_INVALID_HANDLE:
+					throw InvalidParamException();
+					break;
+				case HDMI_CEC_IO_OPERATION_NOT_SUPPORTED:
+					throw OperationNotSupportedException();
+					break;
+				case HDMI_CEC_IO_GENERAL_ERROR:
+				default:
+					throw IOException();
+					break;
+			}
 		}
 
     }
@@ -231,7 +270,6 @@ void  DriverImpl::writeAsync(const CECFrame &frame)  noexcept(false)
  */
 void  DriverImpl::write(const CECFrame &frame)  noexcept(false)
 {
-
 	const uint8_t *buf = NULL;
 	size_t length = 0;
 
@@ -256,14 +294,26 @@ void  DriverImpl::write(const CECFrame &frame)  noexcept(false)
 		CCEC_LOG( LOG_DEBUG, "DriverImpl:: call HdmiCecTx DONE %x, result %x\r\n", err, sendResult);
 
 		if (err != HDMI_CEC_IO_SUCCESS) {
-			throw IOException();
+			switch (err) {
+				case HDMI_CEC_IO_INVALID_ARGUMENT:
+				case HDMI_CEC_IO_INVALID_HANDLE:
+					throw InvalidParamException();
+					break;
+				case HDMI_CEC_IO_OPERATION_NOT_SUPPORTED:
+					throw OperationNotSupportedException();
+					break;
+				case HDMI_CEC_IO_GENERAL_ERROR:
+				default:
+					throw IOException();
+					break;
+			}
 		}
 
         if (sendResult != HDMI_CEC_IO_SUCCESS) {
             if ((sendResult == HDMI_CEC_IO_INVALID_HANDLE) ||
-                (sendResult == HDMI_CEC_IO_INVALID_ARGUMENT) || 
-                (sendResult == HDMI_CEC_IO_LOGICALADDRESS_UNAVAILABLE) || 
-                (sendResult == HDMI_CEC_IO_SENT_FAILED) || 
+                (sendResult == HDMI_CEC_IO_INVALID_ARGUMENT) ||
+                (sendResult == HDMI_CEC_IO_LOGICALADDRESS_UNAVAILABLE) ||
+                (sendResult == HDMI_CEC_IO_SENT_FAILED) ||
                 (sendResult == HDMI_CEC_IO_GENERAL_ERROR) )
             {
                 throw IOException();
@@ -276,7 +326,6 @@ void  DriverImpl::write(const CECFrame &frame)  noexcept(false)
 		   /* CEC CTS 9-3-3 -Ensure that the DUT will accept a negatively for broadcat report physical address msg and retry atleast once */
 		else if (((frame.at(0) & 0x0F) == 0x0F) && (length > 1) && ((frame.at(1) & 0xFF) == REPORT_PHYSICAL_ADDRESS ) && (sendResult == HDMI_CEC_IO_SENT_BUT_NOT_ACKD))
 		{
-
                    throw CECNoAckException();
 		}
     }
@@ -290,7 +339,23 @@ int DriverImpl::getLogicalAddress(int devType)
 	int logicalAddress = 0;
 	CCEC_LOG( LOG_DEBUG, "DriverImpl::getLogicalAddress called for devType : %d \r\n", devType);
 
-	HdmiCecGetLogicalAddress(nativeHandle, &logicalAddress);
+	int err = HdmiCecGetLogicalAddress(nativeHandle, &logicalAddress);
+	if (err != HDMI_CEC_IO_SUCCESS) {
+		CCEC_LOG(LOG_EXP, "DriverImpl::getLogicalAddress HdmiCecGetLogicalAddress failed with error %d\r\n", err);
+		switch (err) {
+			case HDMI_CEC_IO_INVALID_ARGUMENT:
+			case HDMI_CEC_IO_INVALID_HANDLE:
+				throw InvalidParamException();
+				break;
+			case HDMI_CEC_IO_OPERATION_NOT_SUPPORTED:
+				throw OperationNotSupportedException();
+				break;
+			case HDMI_CEC_IO_GENERAL_ERROR:
+			default:
+				throw IOException();
+				break;
+		}
+	}
 
 	CCEC_LOG( LOG_DEBUG, "DriverImpl::getLogicalAddress got logical Address : %d \r\n", logicalAddress);
 	return logicalAddress;
@@ -302,7 +367,23 @@ void DriverImpl::getPhysicalAddress(unsigned int *physicalAddress)
     {AutoLock lock_(mutex);
         CCEC_LOG( LOG_DEBUG, "DriverImpl::getPhysicalAddress called \r\n");
 
-        HdmiCecGetPhysicalAddress(nativeHandle,physicalAddress);
+        int err = HdmiCecGetPhysicalAddress(nativeHandle,physicalAddress);
+		if (err != HDMI_CEC_IO_SUCCESS) {
+			CCEC_LOG(LOG_EXP, "DriverImpl::getPhysicalAddress HdmiCecGetPhysicalAddress failed with error %d\r\n", err);
+			switch (err) {
+				case HDMI_CEC_IO_INVALID_ARGUMENT:
+				case HDMI_CEC_IO_INVALID_HANDLE:
+					throw InvalidParamException();
+					break;
+				case HDMI_CEC_IO_OPERATION_NOT_SUPPORTED:
+					throw OperationNotSupportedException();
+					break;
+				case HDMI_CEC_IO_GENERAL_ERROR:
+				default:
+					throw IOException();
+					break;
+			}
+		}
 
         CCEC_LOG( LOG_DEBUG, "DriverImpl::getPhysicalAddress got physical Address : %x \r\n", *physicalAddress);
         return ;
@@ -319,7 +400,23 @@ void DriverImpl::removeLogicalAddress(const LogicalAddress &source)
 		}
 
 		logicalAddresses.remove(source);
-		HdmiCecRemoveLogicalAddress(nativeHandle, source.toInt());
+		int err = HdmiCecRemoveLogicalAddress(nativeHandle, source.toInt());
+		if (err != HDMI_CEC_IO_SUCCESS) {
+			CCEC_LOG(LOG_EXP, "DriverImpl::removeLogicalAddress HdmiCecRemoveLogicalAddress failed with error %d\r\n", err);
+			switch (err) {
+				case HDMI_CEC_IO_INVALID_ARGUMENT:
+				case HDMI_CEC_IO_INVALID_HANDLE:
+					throw InvalidParamException();
+					break;
+				case HDMI_CEC_IO_OPERATION_NOT_SUPPORTED:
+					throw OperationNotSupportedException();
+					break;
+				case HDMI_CEC_IO_GENERAL_ERROR:
+				default:
+					throw IOException();
+					break;
+			}
+		}
     }
 }
 
@@ -332,14 +429,24 @@ bool DriverImpl::addLogicalAddress(const LogicalAddress &source)
 		}
 
 		int retErr =  HdmiCecAddLogicalAddress(nativeHandle, source.toInt());
-
-		if (retErr == HDMI_CEC_IO_LOGICALADDRESS_UNAVAILABLE) {
-			throw AddressNotAvailableException();
-		}
-		else if (retErr == HDMI_CEC_IO_GENERAL_ERROR) {
-			throw IOException();
-		}
-		else {
+		if (retErr != HDMI_CEC_IO_SUCCESS) {
+			CCEC_LOG(LOG_EXP, "DriverImpl::addLogicalAddress HdmiCecAddLogicalAddress failed with error %d\r\n", retErr);
+			switch (retErr) {
+				case HDMI_CEC_IO_INVALID_ARGUMENT:
+				case HDMI_CEC_IO_INVALID_HANDLE:
+					throw InvalidParamException();
+					break;
+				case HDMI_CEC_IO_OPERATION_NOT_SUPPORTED:
+					throw OperationNotSupportedException();
+					break;
+				case HDMI_CEC_IO_LOGICALADDRESS_UNAVAILABLE:
+					throw AddressNotAvailableException();
+					break;
+				case HDMI_CEC_IO_GENERAL_ERROR:
+					throw IOException();
+					break;
+			}
+		} else {
 			logicalAddresses.push_back(source);
 		}
     }
@@ -372,7 +479,7 @@ void DriverImpl::poll(const LogicalAddress &from, const LogicalAddress &to)
 		frame.append(firstByte);
 		write(frame);
 	}
-	
+
 #if 0
 	{
 		/* Send a Poll so indicate there is a device present */
