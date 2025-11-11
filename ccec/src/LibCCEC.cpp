@@ -99,7 +99,9 @@ void LibCCEC::init(const char *name)
 
 	check_cec_log_status();
 
-	/* Add Host-specific Initialization*/
+	/* Add Host-specific Initialization */
+	// Do not start the threads in Bus constructor if HAL does not support CEC to prevent CPU 100% issue.
+	// throw exceptions and prevent starting the worker threads if driver open fails.
 	try {
 		Driver::getInstance().open();
 	} catch (Exception &e) {

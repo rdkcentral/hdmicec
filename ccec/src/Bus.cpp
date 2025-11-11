@@ -70,8 +70,9 @@ Bus & Bus::getInstance(void)
 Bus::Bus(void) : reader(*this), writer(*this), started(false)
 {
 	CCEC_LOG( LOG_DEBUG, "Bus Instance Created\r\n");
-	// Note: Both reader and writer threads are started in Bus::start()
-	// which is called from LibCCEC::init() after driver validation
+	// Do not start threads here. They will be started by Bus::start() to avoid
+	// 100% CPU usage on a HAL that does not support CEC. They will be created
+	// from LibCCEC::init() after driver validation.
 	CCEC_LOG( LOG_DEBUG, "Bus Instance DONE\r\n");
 }
 
