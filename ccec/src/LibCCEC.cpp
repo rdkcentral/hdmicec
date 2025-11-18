@@ -104,11 +104,11 @@ void LibCCEC::init(const char *name)
 	// throw exceptions and prevent starting the worker threads if driver open fails.
 	try {
 		Driver::getInstance().open();
-	} catch (Exception &e) {
-		CCEC_LOG( LOG_EXP, "LibCCEC::init Caught Exception during host-specific initialization: %s\r\n", e.what());
-		throw;
 	} catch (OperationNotSupportedException &e) {
 		CCEC_LOG( LOG_EXP, "LibCCEC::init Caught OperationNotSupportedException during host-specific initialization: %s\r\n", e.what());
+		throw;
+	} catch (Exception &e) {
+		CCEC_LOG( LOG_EXP, "LibCCEC::init Caught Exception during host-specific initialization: %s\r\n", e.what());
 		throw;
 	} catch (...) {
 		CCEC_LOG( LOG_EXP, "LibCCEC::init Caught Unknown Exception during host-specific initialization\r\n");
