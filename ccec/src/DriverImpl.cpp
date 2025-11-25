@@ -299,14 +299,11 @@ void  DriverImpl::write(const CECFrame &frame)  noexcept(false)
 				case HDMI_CEC_IO_INVALID_ARGUMENT:
 				case HDMI_CEC_IO_INVALID_HANDLE:
 					throw InvalidParamException();
-					break;
 				case HDMI_CEC_IO_OPERATION_NOT_SUPPORTED:
 					throw OperationNotSupportedException();
-					break;
 				case HDMI_CEC_IO_GENERAL_ERROR:
 				default:
 					throw IOException();
-					break;
 			}
 		}
 
@@ -347,14 +344,11 @@ int DriverImpl::getLogicalAddress(int devType)
 			case HDMI_CEC_IO_INVALID_ARGUMENT:
 			case HDMI_CEC_IO_INVALID_HANDLE:
 				throw InvalidParamException();
-				break;
 			case HDMI_CEC_IO_OPERATION_NOT_SUPPORTED:
 				throw OperationNotSupportedException();
-				break;
 			case HDMI_CEC_IO_GENERAL_ERROR:
 			default:
 				throw IOException();
-				break;
 		}
 	}
 
@@ -375,14 +369,11 @@ void DriverImpl::getPhysicalAddress(unsigned int *physicalAddress)
 				case HDMI_CEC_IO_INVALID_ARGUMENT:
 				case HDMI_CEC_IO_INVALID_HANDLE:
 					throw InvalidParamException();
-					break;
 				case HDMI_CEC_IO_OPERATION_NOT_SUPPORTED:
 					throw OperationNotSupportedException();
-					break;
 				case HDMI_CEC_IO_GENERAL_ERROR:
 				default:
 					throw IOException();
-					break;
 			}
 		}
 
@@ -408,14 +399,11 @@ void DriverImpl::removeLogicalAddress(const LogicalAddress &source)
 				case HDMI_CEC_IO_INVALID_ARGUMENT:
 				case HDMI_CEC_IO_INVALID_HANDLE:
 					throw InvalidParamException();
-					break;
 				case HDMI_CEC_IO_OPERATION_NOT_SUPPORTED:
 					throw OperationNotSupportedException();
-					break;
 				case HDMI_CEC_IO_GENERAL_ERROR:
 				default:
 					throw IOException();
-					break;
 			}
 		}
     }
@@ -436,16 +424,12 @@ bool DriverImpl::addLogicalAddress(const LogicalAddress &source)
 				case HDMI_CEC_IO_INVALID_ARGUMENT:
 				case HDMI_CEC_IO_INVALID_HANDLE:
 					throw InvalidParamException();
-					break;
 				case HDMI_CEC_IO_OPERATION_NOT_SUPPORTED:
 					throw OperationNotSupportedException();
-					break;
 				case HDMI_CEC_IO_LOGICALADDRESS_UNAVAILABLE:
 					throw AddressNotAvailableException();
-					break;
 				case HDMI_CEC_IO_GENERAL_ERROR:
 					throw IOException();
-					break;
 			}
 		} else {
 			logicalAddresses.push_back(source);
