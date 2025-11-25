@@ -71,7 +71,7 @@ Bus::Bus(void) : reader(*this), writer(*this), started(false)
 {
 	CCEC_LOG( LOG_DEBUG, "Bus Instance Created\r\n");
 	// Do not start threads here. They will be started by Bus::start() to avoid
-	// 100% CPU usage on a HAL that does not support CEC. They will be created
+	// 100% CPU usage on a HAL that does not support CEC. They will be started.
 	// from LibCCEC::init() after driver validation.
 	CCEC_LOG( LOG_DEBUG, "Bus Instance DONE\r\n");
 }
@@ -94,7 +94,6 @@ void Bus::start(void)
              Thread(writer).start();
         }
 
-	Driver::getInstance().open();
 	started = true;
 }
 
@@ -117,7 +116,6 @@ CCEC_LOG( LOG_INFO, "Bus::stop is called\r\n");
 	    writer.stop(true);
 	}
 
-	Driver::getInstance().close();
 	CCEC_LOG( LOG_INFO, "Bus::stop is called reader isstop :%d writer isstop :%d \r\n",reader.isStopped(),writer.isStopped());
 }
 

@@ -294,6 +294,7 @@ void  DriverImpl::write(const CECFrame &frame)  noexcept(false)
 		CCEC_LOG( LOG_DEBUG, "DriverImpl:: call HdmiCecTx DONE %x, result %x\r\n", err, sendResult);
 
 		if (err != HDMI_CEC_IO_SUCCESS) {
+			CCEC_LOG(LOG_EXP, "DriverImpl::write HdmiCecTx failed with error %d\r\n", err);
 			switch (err) {
 				case HDMI_CEC_IO_INVALID_ARGUMENT:
 				case HDMI_CEC_IO_INVALID_HANDLE:
