@@ -429,6 +429,7 @@ bool DriverImpl::addLogicalAddress(const LogicalAddress &source)
 				case HDMI_CEC_IO_LOGICALADDRESS_UNAVAILABLE:
 					throw AddressNotAvailableException();
 				case HDMI_CEC_IO_GENERAL_ERROR:
+				default:
 					throw IOException();
 			}
 		} else {
