@@ -392,7 +392,7 @@ void Bus::sendAsync(const CECFrame &frame)
 		*copyFrame = frame;
                 // Copilot fix: Add exception-safe cleanup to prevent memory leak if offer() throws
                 try {
-		    wQueue.offer((copyFrame));
+                    wQueue.offer((copyFrame));
                 }
                 catch (...) {
                     delete copyFrame;
