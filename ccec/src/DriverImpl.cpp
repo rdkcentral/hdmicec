@@ -275,7 +275,7 @@ void  DriverImpl::write(const CECFrame &frame)  noexcept(false)
                 // Copilot fix: Add bounds checking before frame.at() to prevent buffer overflow
                 if ((length > 0) && ((frame.at(0) & 0x0F) != 0x0F) && sendResult == HDMI_CEC_IO_SENT_BUT_NOT_ACKD) {
                     throw CECNoAckException();
-		}
+                }
                 /* CEC CTS 9-3-3 -Ensure that the DUT will accept a negatively for broadcat report physical address msg and retry atleast once */
                 else if ((length > 1) && ((frame.at(0) & 0x0F) == 0x0F) && ((frame.at(1) & 0xFF) == REPORT_PHYSICAL_ADDRESS ) && (sendResult == HDMI_CEC_IO_SENT_BUT_NOT_ACKD))
                 {
