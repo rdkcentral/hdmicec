@@ -395,6 +395,7 @@ void Bus::sendAsync(const CECFrame &frame)
             wQueue.offer((copyFrame));
         }
         catch (...) {
+            CCEC_LOG( LOG_EXP, "Exception during copy frame offer...discarding\r\n");
             delete copyFrame;
             throw;
         }
