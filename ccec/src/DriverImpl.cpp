@@ -71,6 +71,8 @@ void DriverImpl::DriverReceiveCallback(int handle, void *callbackData, unsigned 
 	}
 	catch(...) {
 		CCEC_LOG( LOG_EXP, "Exception during frame offer...discarding\r\n");
+		// Copilot fix: Delete frame to prevent memory leak when offer() throws exception
+		delete frame;
 	}
 	CCEC_LOG( LOG_DEBUG, "frame offered\r\n");
 }
