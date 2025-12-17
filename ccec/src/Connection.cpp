@@ -256,7 +256,7 @@ void Connection::poll(const LogicalAddress &from, const Throw_e &doThrow)
  */
 void Connection::ping(const LogicalAddress &from, const LogicalAddress &to, const Throw_e &doThrow)
 {
-	CCEC_LOG( LOG_DEBUG, "Polling\r\n");
+	CCEC_LOG( LOG_INFO, "Pinging\r\n");
 	//@TODO: Need to enforce frame's source == connection.source?
 
 	try

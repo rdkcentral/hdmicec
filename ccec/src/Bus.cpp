@@ -439,8 +439,9 @@ void Bus::ping(const LogicalAddress &from, const LogicalAddress &to)
             if (!started) throw InvalidStateException();
 
             try {
+                CCEC_LOG( LOG_INFO, "Bus::ping start\r\n");
                 Driver::getInstance().poll(from, to);
-                CCEC_LOG( LOG_DEBUG, "Bus::ping done\r\n");
+                CCEC_LOG( LOG_INFO, "Bus::ping done\r\n");
             }
             catch (Exception &e){
                 CCEC_LOG( LOG_DEBUG, "Bus::ping exp caught [%s] \r\n", e.what());

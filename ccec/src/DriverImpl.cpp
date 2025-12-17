@@ -243,11 +243,11 @@ void  DriverImpl::write(const CECFrame &frame)  noexcept(false)
     		throw InvalidStateException();
     	}
 		int sendResult = HDMI_CEC_IO_SUCCESS;
-		CCEC_LOG( LOG_DEBUG, "DriverImpl::write to call HdmiCecTx\r\n");
+		CCEC_LOG( LOG_INFO, "DriverImpl::write to call HdmiCecTx\r\n");
 
 		int err = HdmiCecTx(nativeHandle, buf, length, &sendResult);
 
-		CCEC_LOG( LOG_DEBUG, ">>>>>>> >>>>> >>>> >> >> >\r\n");
+		CCEC_LOG( LOG_INFO, ">>>>>>> >>>>> >>>> >> >> >\r\n");
 
 		dump_buffer((unsigned char*)buf,length);
 
@@ -266,6 +266,7 @@ void  DriverImpl::write(const CECFrame &frame)  noexcept(false)
                 (sendResult == HDMI_CEC_IO_SENT_FAILED) || 
                 (sendResult == HDMI_CEC_IO_GENERAL_ERROR) )
             {
+		CCEC_LOG( LOG_INFO, "throw IO Exeception\r\n");
                 throw IOException();
             }
         }
@@ -276,6 +277,7 @@ void  DriverImpl::write(const CECFrame &frame)  noexcept(false)
 		   /* CEC CTS 9-3-3 -Ensure that the DUT will accept a negatively for broadcat report physical address msg and retry atleast once */
 		else if (((frame.at(0) & 0x0F) == 0x0F) && (length > 1) && ((frame.at(1) & 0xFF) == REPORT_PHYSICAL_ADDRESS ) && (sendResult == HDMI_CEC_IO_SENT_BUT_NOT_ACKD))
 		{
+		CCEC_LOG( LOG_INFO, "CEC throw No ACK Exeception\r\n");
 
                    throw CECNoAckException();
 		}
@@ -365,7 +367,7 @@ void DriverImpl::poll(const LogicalAddress &from, const LogicalAddress &to)
      	 	 	 	  noexcept(false)
 {
 	uint8_t firstByte = (((from.toInt() & 0x0F) << 4) | (to.toInt() & 0x0F));
-	CCEC_LOG( LOG_DEBUG, "$$$$$$$$$$$$$$$$$$$$ POST POLL [%s] [%s]$$$$$$$$$$$$$$$$$$$$$\r\n", from.toString().c_str(), to.toString().c_str());
+	CCEC_LOG( LOG_INFO, "$$$$$$$$$$$$$$$$$$$$ POST POLL [%s] [%s]$$$$$$$$$$$$$$$$$$$$$\r\n", from.toString().c_str(), to.toString().c_str());
 
 	{
 		CECFrame frame;
