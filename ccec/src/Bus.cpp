@@ -111,10 +111,7 @@ CCEC_LOG( LOG_INFO, "Bus::stop is called\r\n");
 	}
 
 	reader.stop(true);
-
-        {AutoLock rlock_(rMutex), wlock_(wMutex);
-	    writer.stop(true);
-	}
+	writer.stop(true);
 
 	Driver::getInstance().close();
 	CCEC_LOG( LOG_INFO, "Bus::stop is called reader isstop :%d writer isstop :%d \r\n",reader.isStopped(),writer.isStopped());

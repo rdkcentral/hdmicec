@@ -113,15 +113,18 @@ void LibCCEC::init(const char *name)
  * @return None
  */
 void LibCCEC::term()
-{AutoLock lock_(mutex);
+{
+	{AutoLock lock_(mutex);
 
-	if (!initialized) {
+	    if (!initialized) {
 		throw InvalidStateException();
+	    }
+
+	    initialized = false;
 	}
 
 	Bus::getInstance().stop();
 	Driver::getInstance().close();
-	initialized = false;
 }
 
 /**
