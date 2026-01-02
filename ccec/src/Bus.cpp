@@ -96,7 +96,19 @@ void Bus::start(void)
 	Driver::getInstance().open();
 	started = true;
 }
+void Bus::stopState()
+{
+    AutoLock rlock_(rMutex);
+    AutoLock wlock_(wMutex);
+    started = false;
+}
 
+void Bus::stopThreads()
+{
+    reader.stop(true);
+    writer.stop(true);
+    Driver::getInstance().close();
+}
 /**
  * @brief This function stops the reader & writer threads and removes the
  * instance for Bus.
@@ -105,16 +117,10 @@ void Bus::start(void)
  */
 void Bus::stop(void)
 {
-CCEC_LOG( LOG_INFO, "Bus::stop is called\r\n");
-        {AutoLock rlock_(rMutex), wlock_(wMutex);
-	    started = false;
-	}
-
-	reader.stop(true);
-	writer.stop(true);
-
-	Driver::getInstance().close();
-	CCEC_LOG( LOG_INFO, "Bus::stop is called reader isstop :%d writer isstop :%d \r\n",reader.isStopped(),writer.isStopped());
+    CCEC_LOG( LOG_INFO, "Bus::stop is called\r\n");
+	stopState();
+	stopThreads();
+    CCEC_LOG( LOG_INFO, "Bus::stop is called reader isstop :%d writer isstop :%d \r\n",reader.isStopped(),writer.isStopped());
 }
 
 /**
