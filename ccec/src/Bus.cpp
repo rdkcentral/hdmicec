@@ -98,9 +98,9 @@ void Bus::start(void)
 }
 void Bus::stopState()
 {
-    AutoLock rlock_(rMutex);
-    AutoLock wlock_(wMutex);
-    started = false;
+    {AutoLock rlock_(rMutex), wlock_(wMutex);
+        started = false;
+	}
 }
 
 void Bus::stopThreads()
