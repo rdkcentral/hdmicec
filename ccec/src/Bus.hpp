@@ -62,6 +62,8 @@ public:
 
 	void start(void);
 	void stop(void);
+	void stopState(void);
+	void stopThreads(void);
 
 private:
     class Reader : public Runnable, public Stoppable {

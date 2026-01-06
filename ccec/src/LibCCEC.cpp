@@ -107,6 +107,31 @@ void LibCCEC::init(const char *name)
 }
 
 /**
+ * @brief This function is used to reset the initialized state
+ *
+ * @return None
+ */
+void LibCCEC::termState(void)
+{AutoLock lock_(mutex);
+	if (!initialized) {
+            throw InvalidStateException();
+	}
+	initialized = false;
+}
+
+/**
+ * @brief This function is used to stop CEC by terminating the connection and
+ * stoping the driver.
+ *
+ * @return None
+ */
+void LibCCEC::termShutdown(void)
+{
+	Bus::getInstance().stop();
+	Driver::getInstance().close();
+}
+
+/**
  * @brief This function is used to stop CEC by terminating the connection and
  * stoping the driver.
  *
@@ -114,17 +139,8 @@ void LibCCEC::init(const char *name)
  */
 void LibCCEC::term()
 {
-	{AutoLock lock_(mutex);
-
-	    if (!initialized) {
-		throw InvalidStateException();
-	    }
-
-	    initialized = false;
-	}
-
-	Bus::getInstance().stop();
-	Driver::getInstance().close();
+	termState();
+	termShutdown();
 }
 
 /**
