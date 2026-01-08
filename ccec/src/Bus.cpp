@@ -382,15 +382,23 @@ void Bus::send(const CECFrame &frame, int timeout)
  */
 void Bus::sendAsync(const CECFrame &frame)
 {
-	{AutoLock lock_(wMutex);
+    {AutoLock lock_(wMutex);
 
-		if (!started) throw InvalidStateException();
+        if (!started) throw InvalidStateException();
 
-		CECFrame *copyFrame = (new CECFrame());
-		*copyFrame = frame;
+        CECFrame *copyFrame = (new CECFrame());
+        *copyFrame = frame;
+        // Copilot fix: Add exception-safe cleanup to prevent memory leak if offer() throws
+        try {
+            wQueue.offer((copyFrame));
+        }
+        catch (...) {
+            CCEC_LOG( LOG_EXP, "Exception during copy frame offer...discarding\r\n");
+            delete copyFrame;
+            throw;
+        }
 
-		wQueue.offer((copyFrame));
-	}
+    }
 }
 
 /**
