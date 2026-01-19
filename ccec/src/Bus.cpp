@@ -109,9 +109,9 @@ CCEC_LOG( LOG_INFO, "Bus::stop is called\r\n");
         {AutoLock rlock_(rMutex), wlock_(wMutex);
 	    started = false;
 	}
-
+	/* coverity[sleep : FALSE] */
 	reader.stop(true);
-        /* coverity[sleep : FALSE] */
+		/* coverity[sleep : FALSE] */
         {AutoLock rlock_(rMutex), wlock_(wMutex);
 	    writer.stop(true);
 	}
