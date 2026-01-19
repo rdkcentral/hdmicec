@@ -130,8 +130,16 @@ void LibCCEC::termShutdown()
  */
 void LibCCEC::term()
 {
-	termState();
-	termShutdown();
+    {AutoLock lock_(mutex);
+
+        if (!initialized) {
+		    throw InvalidStateException();
+	    }
+        initialized = false;
+    }
+
+	Bus::getInstance().stop();
+	Driver::getInstance().close();
 }
 
 /**
