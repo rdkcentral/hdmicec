@@ -98,30 +98,6 @@ void Bus::start(void)
 }
 
 /**
- * @brief This function reset the started state
- *
- * @return None
- */
-void Bus::stopState(void)
-{AutoLock rlock_(rMutex), wlock_(wMutex);
-	started = false;
-
-}
-
-/**
- * @brief This function stops the reader & writer threads and removes the
- * instance for Bus.
- *
- * @return None
- */
-void Bus::stopThreads(void)
-{
-	reader.stop(true);
-	writer.stop(true);
-	Driver::getInstance().close();
-}
-
-/**
  * @brief This function stops the reader & writer threads and removes the
  * instance for Bus.
  *
@@ -129,9 +105,18 @@ void Bus::stopThreads(void)
  */
 void Bus::stop(void)
 {
-	CCEC_LOG( LOG_INFO, "Bus::stop is called\r\n");
-	stopState();
-	stopThreads();
+CCEC_LOG( LOG_INFO, "Bus::stop is called\r\n");
+        {AutoLock rlock_(rMutex), wlock_(wMutex);
+	    started = false;
+	}
+
+	reader.stop(true);
+        /* coverity[sleep : FALSE] */
+        {AutoLock rlock_(rMutex), wlock_(wMutex);
+	    writer.stop(true);
+	}
+
+	Driver::getInstance().close();
 	CCEC_LOG( LOG_INFO, "Bus::stop is called reader isstop :%d writer isstop :%d \r\n",reader.isStopped(),writer.isStopped());
 }
 

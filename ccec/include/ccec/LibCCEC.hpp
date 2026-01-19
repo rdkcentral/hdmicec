@@ -46,8 +46,6 @@ public:
 	LibCCEC(void);
 	void init(const char * name= 0);
 	void term(void);
-	void termState(void);
-	void termShutdown(void);
 	int getLogicalAddress(int devType);
 	void getPhysicalAddress(unsigned int *physicalAddress);
 	int addLogicalAddress(const LogicalAddress &source);

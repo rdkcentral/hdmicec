@@ -107,42 +107,22 @@ void LibCCEC::init(const char *name)
 }
 
 /**
- * @brief This function is used to reset the initialized state
- *
- * @return None
- */
-void LibCCEC::termState(void)
-{AutoLock lock_(mutex);
-	if (!initialized) {
-            throw InvalidStateException();
-	}
-	initialized = false;
-}
-
-/**
- * @brief This function is used to stop CEC by terminating the connection and
- * stoping the driver.
- *
- * @return None
- */
-void LibCCEC::termShutdown(void)
-{
-	Bus::getInstance().stop();
-	Driver::getInstance().close();
-}
-
-/**
  * @brief This function is used to stop CEC by terminating the connection and
  * stoping the driver.
  *
  * @return None
  */
 void LibCCEC::term()
-{
-	termState();
-	termShutdown();
-}
+{AutoLock lock_(mutex);
 
+	if (!initialized) {
+		throw InvalidStateException();
+	}
+        /* coverity[sleep : FALSE] */
+	Bus::getInstance().stop();
+	Driver::getInstance().close();
+	initialized = false;
+}
 /**
  * @brief This function is used to add logical address
  * to the driver, so that it can ACK if there a direct messages received.
