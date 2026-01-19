@@ -130,20 +130,18 @@ void LibCCEC::termShutdown()
  */
 void LibCCEC::term()
 {
-	bool doCleanup = false;
     {AutoLock lock_(mutex);
 
         if (!initialized) {
 		    throw InvalidStateException();
 	    }
         initialized = false;
-	    doCleanup = true;
     }
-	if (doCleanup)
-    {
-	    Bus::getInstance().stop();
-	    Driver::getInstance().close();
-    }
+	/* coverity[sleep : FALSE] */
+	Bus::getInstance().stop();
+	/* coverity[sleep : FALSE] */
+	Driver::getInstance().close();
+    
 }
 
 /**
