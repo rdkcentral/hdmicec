@@ -31,10 +31,33 @@ OBJS:= CECFrame.o \
 	OpCode.o \
 	Util.o \
 
+# Calculate AIDL include path relative to workspace
+AIDL_GEN_DIR := $(shell cd ../../.. && pwd)/hdmicec/aidl/rdk-halif-aidl/gen
+AIDL_H_DIR := $(AIDL_GEN_DIR)/h
+BINDER_IDL_DIR := $(shell cd ../../.. && pwd)/hdmicec/aidl/linux_binder_idl
+BINDER_INCLUDE := $(BINDER_IDL_DIR)/android/native/libs/binder/include
+BINDER_NDK_INCLUDE := $(BINDER_IDL_DIR)/android/native/libs/binder/ndk/include_cpp
+BINDER_UTILS_INCLUDE := $(BINDER_IDL_DIR)/android/core/libutils/include
+BINDER_CUTILS_INCLUDE := $(BINDER_IDL_DIR)/android/core/libcutils/include
+BINDER_LOG_INCLUDE := $(BINDER_IDL_DIR)/android/logging/liblog/include
+BINDER_BASE_INCLUDE := $(BINDER_IDL_DIR)/android/libbase/include
+BINDER_BUILD_DIR := $(BINDER_IDL_DIR)/aidl-generator/out
+
+# Calculate include directory path explicitly
+CCEC_INCLUDE_DIR := $(shell cd .. && pwd)/include
+
 INCLUDE = -I.\
-	-I../include	\
+	-I$(CCEC_INCLUDE_DIR)	\
 	-I../../osal/include	\
 	-I../drivers/include	\
+	-I$(AIDL_H_DIR)	\
+	-I$(BINDER_INCLUDE)	\
+	-I$(BINDER_NDK_INCLUDE)	\
+	-I$(BINDER_UTILS_INCLUDE)	\
+	-I$(BINDER_CUTILS_INCLUDE)	\
+	-I$(BINDER_LOG_INCLUDE)	\
+	-I$(BINDER_BASE_INCLUDE)	\
+	-I$(BINDER_IDL_DIR)/android/native/include	\
 
 
 CFLAGS+= $(INCLUDE)
@@ -43,6 +66,16 @@ LDFLAGS+= -L$(OPENSOURCE_BASE)/lib
 LDFLAGS+=-L$(GLIB_LIBRARY_PATH)/
 LDFLAGS+=$(GLIBS)
 LDFLAGS += -L. -lpthread
+# Binder libraries - link if they exist
+ifneq ($(wildcard $(BINDER_BUILD_DIR)/libbinder.a),)
+LDFLAGS += -L$(BINDER_BUILD_DIR) -lbinder
+endif
+ifneq ($(wildcard $(BINDER_BUILD_DIR)/libutils.a),)
+LDFLAGS += -L$(BINDER_BUILD_DIR) -lutils
+endif
+ifneq ($(wildcard $(BINDER_BUILD_DIR)/liblog.a),)
+LDFLAGS += -L$(BINDER_BUILD_DIR) -llog
+endif
 
 all: clean library
 	@echo "Build Finished...."
