@@ -31,6 +31,7 @@
 #define HDMI_CCEC_DRIVER_IMPL_HPP_
 
 #include <list>
+#include <memory>
 
 #include "osal/Mutex.hpp"
 #include "osal/EventQueue.hpp"
@@ -38,6 +39,17 @@
 #include "osal/ConditionVariable.hpp"
 #include "ccec/Driver.hpp"
 #include "ccec/Header.hpp"
+
+// AIDL includes
+#include <binder/IServiceManager.h>
+#include <binder/ProcessState.h>
+#include <utils/String16.h>
+#include <com/rdk/hal/hdmicec/IHdmiCec.h>
+#include <com/rdk/hal/hdmicec/IHdmiCecController.h>
+#include <com/rdk/hal/hdmicec/IHdmiCecEventListener.h>
+#include <com/rdk/hal/hdmicec/BnHdmiCecEventListener.h>
+#include <com/rdk/hal/hdmicec/SendMessageStatus.h>
+#include <com/rdk/hal/hdmicec/State.h>
 
 using CCEC_OSAL::EventQueue;
 using CCEC_OSAL::Mutex;
@@ -80,12 +92,22 @@ public:
 
 private:
 	IncomingQueue & getIncomingQueue(int nativeHandle);
+	
+	// AIDL service access
+	android::sp<com::rdk::hal::hdmicec::IHdmiCec> getAidlService();
+	void initAidlService();
 
 	int status;
 	int nativeHandle;
 	IncomingQueue rQueue;
         mutable Mutex mutex;
 	std::list<LogicalAddress> logicalAddresses;
+	
+	// AIDL members
+	android::sp<com::rdk::hal::hdmicec::IHdmiCec> mAidlService;
+	android::sp<com::rdk::hal::hdmicec::IHdmiCecController> mAidlController;
+	android::sp<com::rdk::hal::hdmicec::IHdmiCecEventListener> mEventListener;
+	mutable Mutex mAidlMutex;
 
 	DriverImpl(const DriverImpl &); /* Not allowed */
 	DriverImpl & operator = (const DriverImpl &); /* Not allowed */
