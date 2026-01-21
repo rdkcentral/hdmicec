@@ -719,9 +719,9 @@ class ReportFeatures : public DataBlock
                 frame.getBuffer(&buf, &frameLen);
 
                 //The frame is stored in buffer
-                CCEC_LOG( LOG_INFO, "Features Buffer ----> Frame Length:  %d\n",frameLen);
+                CCEC_LOG( LOG_INFO, "Features Buffer ----> Frame Length:  %zu\n",frameLen);
                 for(size_t i = 0; i < frameLen ;i++){
-                        CCEC_LOG( LOG_INFO, "%0x :\n",buf[i]);
+                        CCEC_LOG( LOG_INFO, "%02x :\n",(unsigned int)buf[i]);
                 }
 
                 //[RC Profile] length is calculated based on Extension bit

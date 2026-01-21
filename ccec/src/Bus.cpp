@@ -109,9 +109,9 @@ CCEC_LOG( LOG_INFO, "Bus::stop is called\r\n");
         {AutoLock rlock_(rMutex), wlock_(wMutex);
 	    started = false;
 	}
-
+	/* coverity[sleep : FALSE] */
 	reader.stop(true);
-
+		/* coverity[sleep : FALSE] */
         {AutoLock rlock_(rMutex), wlock_(wMutex);
 	    writer.stop(true);
 	}
@@ -193,6 +193,7 @@ void Bus::Reader::stop(bool block)
 	Driver::getInstance().close();
 
 	if (block) {
+		/* coverity[sleep : FALSE] */
 		while (!isStopped()) {
 			usleep(50 * 1000);
 		}
@@ -309,6 +310,7 @@ void Bus::Writer::stop(bool block)
 	}
 
 	if (block) {
+		/* coverity[sleep : FALSE] */
 		while (!isStopped()) {
 			usleep(50 * 1000);
 		}
