@@ -43,7 +43,7 @@ install:
 	echo "Copying files now.."	
 	cp $(exe_osal)/src/install/lib/*.so $(install_lib_dir)
 	cp $(exe_ccec)/src/install/lib/*.so $(install_lib_dir)
-	cp soc/$(PLATFORM_SOC)/common/install/lib/*.so $(install_lib_dir)
+	# cp soc/$(PLATFORM_SOC)/common/install/lib/*.so $(install_lib_dir)
 
 ifneq ($(PLATFORM_SOC),entropic)
 endif
