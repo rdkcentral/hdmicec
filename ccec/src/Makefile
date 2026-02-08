@@ -34,7 +34,7 @@ OBJS:= CECFrame.o \
 # Calculate AIDL include path relative to workspace
 AIDL_GEN_DIR := $(shell cd ../../.. && pwd)/aidl/rdk-halif-aidl/gen
 AIDL_H_DIR := $(AIDL_GEN_DIR)/h
-BINDER_IDL_DIR := $(shell cd ../../.. && pwd)/aidl/linux_binder_idl
+BINDER_IDL_DIR := $(shell cd ../../.. && pwd)/aidl/rdk-halif-aidl/build-tools/linux_binder_idl
 BINDER_INCLUDE := $(BINDER_IDL_DIR)/android/native/libs/binder/include
 BINDER_NDK_INCLUDE := $(BINDER_IDL_DIR)/android/native/libs/binder/ndk/include_cpp
 BINDER_UTILS_INCLUDE := $(BINDER_IDL_DIR)/android/core/libutils/include
