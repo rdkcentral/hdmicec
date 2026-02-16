@@ -110,7 +110,7 @@ jobs:
           &&
           LD_LIBRARY_PATH=$GITHUB_WORKSPACE/install/usr/lib:${LD_LIBRARY_PATH}
           GTEST_OUTPUT="json:$GITHUB_WORKSPACE/hdmicecL1TestResults.json"
-          ./run_L1Tests
+          make check
           &&
           cp -rf $GITHUB_WORKSPACE/hdmicecL1TestResults.json $GITHUB_WORKSPACE/hdmicecL1TestResultsWithoutValgrind.json
 
@@ -121,6 +121,7 @@ jobs:
           &&
           LD_LIBRARY_PATH=$GITHUB_WORKSPACE/install/usr/lib:${LD_LIBRARY_PATH}
           GTEST_OUTPUT="json:$GITHUB_WORKSPACE/hdmicecL1TestResults.json"
+          make check-valgrind || (
           valgrind
           --tool=memcheck
           --log-file=$GITHUB_WORKSPACE/valgrind_log
@@ -128,7 +129,7 @@ jobs:
           --show-reachable=yes
           --track-fds=yes
           --fair-sched=try
-          ./run_L1Tests
+          ./run_L1Tests )
           &&
           cp -rf $GITHUB_WORKSPACE/hdmicecL1TestResults.json $GITHUB_WORKSPACE/hdmicecL1TestResultsWithValgrind.json
 
