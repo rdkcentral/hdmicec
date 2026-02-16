@@ -85,6 +85,7 @@ jobs:
           rdk/iarmbus/libIBus.h
           rdk/iarmbus/libIBusDaemon.h
           ccec/drivers/iarmbus/CecIARMBusMgr.h
+          hdmi_cec_driver.h
 
       - name: Build hdmicec
         run: >

@@ -31,6 +31,7 @@ extern "C" {
  */
 
 // Stub implementation - does nothing
+#define t2_init(component)
 #define t2_event_s(marker, value)
 #define t2_event_d(marker, value)
 #define t2_event_f(marker, value)
