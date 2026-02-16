@@ -21,8 +21,6 @@
 #include "ccec/CECFrame.hpp"
 #include "ccec/Header.hpp"
 
-using namespace CCEC;
-
 class CECFrameTest : public ::testing::Test {
 protected:
     void SetUp() override {
