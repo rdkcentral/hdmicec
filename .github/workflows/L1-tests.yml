@@ -108,6 +108,7 @@ jobs:
         run: >
           cd $GITHUB_WORKSPACE/hdmicec/tests/L1Tests
           &&
+          LD_LIBRARY_PATH=$GITHUB_WORKSPACE/install/usr/lib:${LD_LIBRARY_PATH}
           GTEST_OUTPUT="json:$GITHUB_WORKSPACE/hdmicecL1TestResults.json"
           ./run_L1Tests
           &&
@@ -118,6 +119,7 @@ jobs:
         run: >
           cd $GITHUB_WORKSPACE/hdmicec/tests/L1Tests
           &&
+          LD_LIBRARY_PATH=$GITHUB_WORKSPACE/install/usr/lib:${LD_LIBRARY_PATH}
           GTEST_OUTPUT="json:$GITHUB_WORKSPACE/hdmicecL1TestResults.json"
           valgrind
           --tool=memcheck
