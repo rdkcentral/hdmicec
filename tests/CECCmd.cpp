@@ -38,7 +38,7 @@
 #include "ccec/LibCCEC.hpp"
 #include "ccec/CECFrame.hpp"
 
-using namespace CCEC;
+
 
 //The tool is to convert the hex bytes in command line to CECFrame and send it out directly
 //CECCmd <hex bytes>

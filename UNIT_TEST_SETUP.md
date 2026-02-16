@@ -174,7 +174,7 @@ Create `tests/L1Tests/ccec/test_NewClass.cpp`:
 #include <gtest/gtest.h>
 #include "ccec/NewClass.hpp"
 
-using namespace CCEC;
+
 
 class NewClassTest : public ::testing::Test {
 protected:
@@ -486,7 +486,7 @@ Create `unit_tests/ccec/test_NewClass.cpp`:
 #include <gtest/gtest.h>
 #include "ccec/NewClass.hpp"
 
-using namespace CCEC;
+
 
 class NewClassTest : public ::testing::Test {
 protected:

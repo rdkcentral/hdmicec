@@ -38,7 +38,7 @@
 #include "ccec/CECFrame.hpp"
 
 using namespace std;
-using namespace CCEC;
+
 
 int main(int argc, char *argv[])
 {

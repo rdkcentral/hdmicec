@@ -21,7 +21,7 @@
 #include "ccec/MessageDecoder.hpp"
 #include "ccec/CECFrame.hpp"
 
-using namespace CCEC;
+
 
 class MessageDecoderTest : public ::testing::Test {
 protected:

@@ -20,7 +20,7 @@
 #include <gtest/gtest.h>
 #include "ccec/Operands.hpp"
 
-using namespace CCEC;
+
 
 class OperandsTest : public ::testing::Test {};
 

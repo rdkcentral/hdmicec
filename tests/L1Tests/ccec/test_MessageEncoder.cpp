@@ -21,7 +21,7 @@
 #include "ccec/MessageEncoder.hpp"
 #include "ccec/Messages.hpp"
 
-using namespace CCEC;
+
 
 class MessageEncoderTest : public ::testing::Test {
 protected:

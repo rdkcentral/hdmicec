@@ -20,7 +20,7 @@
 #include <gtest/gtest.h>
 #include "ccec/LibCCEC.hpp"
 
-using namespace CCEC;
+
 
 class LibCCECTest : public ::testing::Test {
 protected:
