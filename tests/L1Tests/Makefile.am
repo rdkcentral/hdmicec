@@ -27,7 +27,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/ccec/include \
 AM_CXXFLAGS = -Wall -Werror -std=c++11 -g
 
 # Define test programs
-check_PROGRAMS = run_L1Tests
+noinst_PROGRAMS = run_L1Tests
 
 # Main test runner
 run_L1Tests_SOURCES = \
