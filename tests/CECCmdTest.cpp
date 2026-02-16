@@ -35,10 +35,10 @@
 #include "ccec/host/RDK.hpp"
 #include "ccec/MessageEncoder.hpp"
 #include "ccec/LibCCEC.hpp"
-#include "ccec/drivers/iarmbus/CecIARMBusMgr.h"
+#include "ccec/CECFrame.hpp"
 
 using namespace std;
-
+using namespace CCEC;
 
 int main(int argc, char *argv[])
 {
@@ -51,12 +51,6 @@ int main(int argc, char *argv[])
     bool inited = false;
 
     Connection *testConnection = NULL;
-    IARM_Bus_Init("CECClient");
-    IARM_Bus_Connect();
-
-    IARM_Result_t ret = IARM_RESULT_SUCCESS;
-    IARM_Bus_CECMgr_Send_Param_t dataToSend;
-    memset(&dataToSend, 0, sizeof(dataToSend));
 
     cout << "********Entered CECCmd tool***********\n";
     cout << "Options : " << endl;
@@ -101,17 +95,23 @@ int main(int argc, char *argv[])
                  cin >> command;
                  cout << "Command is : " << command << endl;
                  i = 0;
-                 while ((pos = command.find(delimiter)) != string::npos) {
+                 
+                 try {
+                     CECFrame frame;
+                     while ((pos = command.find(delimiter)) != string::npos) {
                          token = command.substr(0, pos);
-                         dataToSend.data[i++] = (int) strtol(token.c_str(), NULL, 16);
+                         frame.append((unsigned char)strtol(token.c_str(), NULL, 16));
                          command.erase(0, pos + delimiter.length());
+                     }
+                     frame.append((unsigned char)strtol(command.c_str(), NULL, 16));
+                     
+                     // Send frame directly using Connection
+                     Connection conn(LogicalAddress::UNREGISTERED, true);
+                     conn.sendTo(LogicalAddress::BROADCAST, frame);
+                     cout << "CEC frame sent successfully" << endl;
                  }
-                 dataToSend.data[i++] = (int) strtol(command.c_str(), NULL, 16);
-                 dataToSend.length = i;
-                 ret = IARM_Bus_Call(IARM_BUS_CECMGR_NAME,IARM_BUS_CECMGR_API_Send,(void *)&dataToSend, sizeof(dataToSend));
-                 if( IARM_RESULT_SUCCESS != ret)
-                 {
-                      cout << "Iarm call failed retval " << ret << endl;
+                 catch(Exception &e) {
+                     cout << "Failed to send CEC frame" << endl;
                  }
             break;
             case 4:
@@ -122,7 +122,7 @@ int main(int argc, char *argv[])
 	                }
 	                catch(Exception &e)
 	                {
-                        CCEC_LOG( LOG_EXP, "I-ARM CEC Mgr:: Caught Exception while calling LibCCEC::term()\r\n");
+                        CCEC_LOG( LOG_EXP, \"CEC Mgr:: Caught Exception while calling LibCCEC::term()\\r\\n\");
                     }
                 }
 
@@ -134,9 +134,8 @@ int main(int argc, char *argv[])
             break;
         }
     }
-
-    IARM_Bus_Disconnect();
-    IARM_Bus_Term();
+    
+    return 0;
 }
 //Note: To enable yocto build for the test app, please add the folder name 'tests' in the 
 //SUBDIRS & DIST_SUBDIRS parameters in /hdmicec/Makefile.am

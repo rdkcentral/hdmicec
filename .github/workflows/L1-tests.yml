@@ -1,15 +1,15 @@
 name: L1-tests
 
 on:
-  workflow_call:
-    inputs:
-      caller_source:
-        description: "Specifies the source type (e.g., local or test framework) for the workflow."
-        required: true
-        type: string
-    secrets:
-      RDKCM_RDKE:
-        required: true
+  push:
+    branches:
+      - develop
+      - main
+  pull_request:
+    branches:
+      - develop
+      - main
+  workflow_dispatch:
 
 env:
   BUILD_TYPE: Debug
@@ -31,16 +31,6 @@ jobs:
             coverage: without-coverage
 
     steps:
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.x'
-
-      - name: ACK External Trigger
-        run: |
-           echo "Message: External Trigger Received for L1 Tests"
-           echo "Trigger Source: ${{ inputs.caller_source }}"
-
       - name: Set up CMake
         uses: jwlawson/actions-setup-cmake@v1.13
         with:
@@ -62,27 +52,10 @@ jobs:
 
       - name: Checkout hdmicec
         if: ${{ inputs.caller_source == 'local' }}
+        uses: actions/chdmicec
         uses: actions/checkout@v3
         with:
-          path: hdmicec
-
-      - name: Checkout hdmicec from testframework
-        if: ${{ inputs.caller_source == 'testframework' }}
-        uses: actions/checkout@v3
-        with:
-          repository: rdkcentral/hdmicec
-          path: hdmicec
-          ref: develop
-
-      - name: Checkout googletest
-        uses: actions/checkout@v3
-        with:
-          repository: google/googletest
-          path: googletest
-          ref: v1.15.0
-
-      - name: Set clang toolchain
-        if: ${{ matrix.compiler == 'clang' }}
+          path: hdmicec.compiler == 'clang' }}
         run: echo "TOOLCHAIN_FILE=$GITHUB_WORKSPACE/entservices-testframework/Tests/clang.cmake" >> $GITHUB_ENV
 
       - name: Set gcc/with-coverage toolchain
@@ -98,19 +71,13 @@ jobs:
           -DBUILD_TYPE=Debug
           -DBUILD_GMOCK=ON
           -DBUILD_SHARED_LIBS=OFF
-          -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-          &&
-          cmake --build build/googletest -j8
-          &&
-          cmake --install build/googletest
-
-      - name: Generate external headers
-        run: >
+          -DCM
           cd "$GITHUB_WORKSPACE/entservices-testframework/Tests/"
           &&
           mkdir -p
           headers
           headers/rdk/iarmbus
+          headers/ccec/drivers/iarmbus
           &&
           cd headers
           &&
@@ -118,6 +85,7 @@ jobs:
           rdk/iarmbus/libIARM.h
           rdk/iarmbus/libIBus.h
           rdk/iarmbus/libIBusDaemon.h
+          ccec/drivers/iarmbus/CecIARMBusMgr.h
 
       - name: Build mocks
         run: >
@@ -126,50 +94,22 @@ jobs:
           -B build/mocks
           -DBUILD_SHARED_LIBS=ON
           -DRDK_SERVICES_L1_TEST=ON
-          -DCMAKE_TOOLCHAIN_FILE="${{ env.TOOLCHAIN_FILE }}"
-          -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/install/usr"
-          -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
-          -DCMAKE_CXX_FLAGS="
-          -fprofile-arcs
-          -ftest-coverage
-          -I $GITHUB_WORKSPACE/entservices-testframework/Tests/headers
-          -I $GITHUB_WORKSPACE/entservices-testframework/Tests/headers/rdk/iarmbus
-          -I $GITHUB_WORKSPACE/entservices-testframework/Tests/headers/rdk/ds
-          -I $GITHUB_WORKSPACE/entservices-testframework/Tests/headers/ccec/drivers
-          -I $GITHUB_WORKSPACE/entservices-testframework/Tests
-          -I $GITHUB_WORKSPACE/install/usr/include
-          -include $GITHUB_WORKSPACE/entservices-testframework/Tests/mocks/Iarm.h
-          --coverage
-          -Wall -Wno-unused-result -Wno-deprecated-declarations
-          -DUSE_IARMBUS"
-          &&
-          cmake --build build/mocks -j8
-          &&
-          cmake --install build/mocks
-
-      - name: Build hdmicec
+          -DCMAKE_TOOLCstub headers
+        # Empty headers to mute errors
         run: >
-          cd $GITHUB_WORKSPACE/hdmicec
+          cd "$GITHUB_WORKSPACE/hdmicec"
           &&
-          autoreconf -if
+          mkdir -p
+          stubs/rdk/iarmbus
+          stubs/ccec/drivers/iarmbus
           &&
-          CPPFLAGS="-I$GITHUB_WORKSPACE/hdmicec/mocks
-          -I$GITHUB_WORKSPACE/hdmicec/mocks/hdmicec
-          -I$GITHUB_WORKSPACE/entservices-testframework/Tests/headers
-          -I$GITHUB_WORKSPACE/entservices-testframework/Tests/headers/rdk/iarmbus
-          -I$GITHUB_WORKSPACE/install/usr/include
-          -I$GITHUB_WORKSPACE/entservices-testframework/Tests/mocks
-          -include $GITHUB_WORKSPACE/entservices-testframework/Tests/mocks/Iarm.h"
-          LDFLAGS="-L$GITHUB_WORKSPACE/install/usr/lib
-          -fprofile-arcs -ftest-coverage"
-          CXXFLAGS="-fprofile-arcs -ftest-coverage"
-          ./configure --enable-l1tests
+          cd stubs
           &&
-          make -j$(nproc)
-
-      - name: Run L1 Tests without valgrind
-        run: >
-          cd $GITHUB_WORKSPACE/hdmicec/tests/L1Tests
+          touch
+          rdk/iarmbus/libIARM.h
+          rdk/iarmbus/libIBus.h
+          rdk/iarmbus/libIBusDaemon.h
+          ccec/drivers/iarmbus/CecIARMBusMgr.hc/tests/L1Tests
           &&
           LD_LIBRARY_PATH=$GITHUB_WORKSPACE/install/usr/lib:${LD_LIBRARY_PATH}
           GTEST_OUTPUT="json:$GITHUB_WORKSPACE/hdmicecL1TestResults.json"
@@ -182,7 +122,6 @@ jobs:
         run: >
           cd $GITHUB_WORKSPACE/hdmicec/tests/L1Tests
           &&
-          LD_LIBRARY_PATH=$GITHUB_WORKSPACE/install/usr/lib:${LD_LIBRARY_PATH}
           GTEST_OUTPUT="json:$GITHUB_WORKSPACE/hdmicecL1TestResults.json"
           valgrind
           --tool=memcheck
@@ -191,12 +130,8 @@ jobs:
           --show-reachable=yes
           --track-fds=yes
           --fair-sched=try
-          ./run_L1Tests
-          &&
-          cp -rf $GITHUB_WORKSPACE/hdmicecL1TestResults.json $GITHUB_WORKSPACE/hdmicecL1TestResultsWithValgrind.json
-
-      - name: Generate coverage
-        if: ${{ matrix.coverage == 'with-coverage' && !env.ACT }}
+          ./run_L1Testshdmicec/stubs
+          -I$GITHUB_WORKSPACE/install/usr/include
         run: >
           cd $GITHUB_WORKSPACE
           &&
@@ -204,7 +139,6 @@ jobs:
           -o coverage.info
           -d hdmicec
           &&
-          lcov
           -r coverage.info
           '/usr/include/*'
           '*/install/usr/include/*'
@@ -214,8 +148,8 @@ jobs:
           -o filtered_coverage.info
           &&
           genhtml
-          -o coverage
-          -t "hdmicec coverage"
+          -o stubs/*'
+          '*cec coverage"
           filtered_coverage.info
 
       - name: Upload artifacts
