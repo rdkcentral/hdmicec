@@ -21,6 +21,8 @@
 #include "ccec/CECFrame.hpp"
 #include "ccec/Header.hpp"
 
+using namespace CCEC;
+
 class CECFrameTest : public ::testing::Test {
 protected:
     void SetUp() override {
@@ -33,28 +35,28 @@ protected:
 };
 
 TEST_F(CECFrameTest, DefaultConstructor) {
-    CCEC::CECFrame frame;
+    CECFrame frame;
     EXPECT_EQ(frame.length(), (size_t)0);
 }
 
 TEST_F(CECFrameTest, ConstructorWithHeader) {
-    CCEC::Header header(CCEC::LogicalAddress::TV, CCEC::LogicalAddress::PLAYBACK_DEVICE_1);
-    CCEC::CECFrame frame;
+    Header header(LogicalAddress::TV, LogicalAddress::PLAYBACK_DEVICE_1);
+    CECFrame frame;
     header.serialize(frame);
     EXPECT_GT(frame.length(), (size_t)0);
 }
 
 TEST_F(CECFrameTest, CopyConstructor) {
-    CCEC::Header header(CCEC::LogicalAddress::TV, CCEC::LogicalAddress::PLAYBACK_DEVICE_1);
-    CCEC::CECFrame frame1;
+    Header header(LogicalAddress::TV, LogicalAddress::PLAYBACK_DEVICE_1);
+    CECFrame frame1;
     header.serialize(frame1);
-    CCEC::CECFrame frame2(frame1);
+    CECFrame frame2(frame1);
     EXPECT_EQ(frame1.length(), frame2.length());
 }
 
 TEST_F(CECFrameTest, HexDumpOutput) {
-    CCEC::Header header(CCEC::LogicalAddress::TV, CCEC::LogicalAddress::PLAYBACK_DEVICE_1);
-    CCEC::CECFrame frame;
+    Header header(LogicalAddress::TV, LogicalAddress::PLAYBACK_DEVICE_1);
+    CECFrame frame;
     header.serialize(frame);
     EXPECT_NO_THROW(frame.hexDump());
 }
