@@ -76,7 +76,6 @@ jobs:
           &&
           mkdir -p
           stubs/rdk/iarmbus
-          stubs/ccec/drivers
           stubs/ccec/drivers/iarmbus
           &&
           cd stubs
@@ -86,7 +85,6 @@ jobs:
           rdk/iarmbus/libIBus.h
           rdk/iarmbus/libIBusDaemon.h
           ccec/drivers/iarmbus/CecIARMBusMgr.h
-          ccec/drivers/hdmi_cec_driver.h
           
       - name: Build hdmicec
         run: >
@@ -97,7 +95,8 @@ jobs:
           CPPFLAGS="-I$GITHUB_WORKSPACE/hdmicec/mocks
           -I$GITHUB_WORKSPACE/hdmicec/mocks/hdmicec
           -I$GITHUB_WORKSPACE/hdmicec/stubs
-          -I$GITHUB_WORKSPACE/install/usr/include"
+          -I$GITHUB_WORKSPACE/install/usr/include
+          -include $GITHUB_WORKSPACE/hdmicec/mocks/hdmicec/hdmi_cec_driver.h"
           LDFLAGS="-L$GITHUB_WORKSPACE/install/usr/lib
           -fprofile-arcs -ftest-coverage"
           CXXFLAGS="-fprofile-arcs -ftest-coverage"
