@@ -25,15 +25,15 @@
 class OpCodeTest : public ::testing::Test {};
 
 TEST_F(OpCodeTest, OpCodeConstants) {
-    EXPECT_EQ(OpCode::IMAGE_VIEW_ON, 0x04);
-    EXPECT_EQ(OpCode::TEXT_VIEW_ON, 0x0D);
-    EXPECT_EQ(OpCode::STANDBY, 0x36);
-    EXPECT_EQ(OpCode::ACTIVE_SOURCE, 0x82);
-    EXPECT_EQ(OpCode::INACTIVE_SOURCE, 0x9D);
+    EXPECT_EQ(IMAGE_VIEW_ON, 0x04);
+    EXPECT_EQ(TEXT_VIEW_ON, 0x0D);
+    EXPECT_EQ(STANDBY, 0x36);
+    EXPECT_EQ(ACTIVE_SOURCE, 0x82);
+    EXPECT_EQ(INACTIVE_SOURCE, 0x9D);
 }
 
 TEST_F(OpCodeTest, OpCodeToString) {
-    OpCode opcode(OpCode::IMAGE_VIEW_ON);
+    OpCode opcode(IMAGE_VIEW_ON);
     EXPECT_NO_THROW({
         std::string name = opcode.toString();
         EXPECT_FALSE(name.empty());
