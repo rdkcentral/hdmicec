@@ -85,7 +85,6 @@ jobs:
           rdk/iarmbus/libIBus.h
           rdk/iarmbus/libIBusDaemon.h
           ccec/drivers/iarmbus/CecIARMBusMgr.h
-          safec_lib.h
 
       - name: Build hdmicec
         run: >
