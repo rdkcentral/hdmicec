@@ -30,7 +30,7 @@
 #ifndef HDMI_CCEC_HPP_
 #define HDMI_CCEC_HPP_
 
-#define CEC_NAMESPACE
+#define CCEC_NAMESPACE
 
 #ifdef CCEC_NAMESPACE
 #define CCEC_BEGIN_NAMESPACE namespace CCEC {
