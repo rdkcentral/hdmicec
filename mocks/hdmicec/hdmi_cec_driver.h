@@ -128,14 +128,13 @@ int HdmiCecRemoveLogicalAddress(int handle, int logicalAddress);
 int HdmiCecGetPhysicalAddress(int handle, unsigned int *physicalAddress);
 
 /**
- * @brief Get logical address for device type
+ * @brief Get logical address
  *
  * @param[in] handle Driver handle
- * @param[in] devType Device type
  * @param[out] logicalAddress Pointer to store logical address
  * @return HDMI_CEC_IO_SUCCESS on success, error code otherwise
  */
-int HdmiCecGetLogicalAddress(int handle, int devType, int *logicalAddress);
+int HdmiCecGetLogicalAddress(int handle, int *logicalAddress);
 
 #ifdef __cplusplus
 }

@@ -40,7 +40,7 @@ public:
     virtual int HdmiCecAddLogicalAddress(int handle, int logicalAddress) = 0;
     virtual int HdmiCecRemoveLogicalAddress(int handle, int logicalAddress) = 0;
     virtual int HdmiCecGetPhysicalAddress(int handle, unsigned int *physicalAddress) = 0;
-    virtual int HdmiCecGetLogicalAddress(int handle, int devType, int *logicalAddress) = 0;
+    virtual int HdmiCecGetLogicalAddress(int handle, int *logicalAddress) = 0;
 };
 
 /**
@@ -64,7 +64,7 @@ public:
     MOCK_METHOD(int, HdmiCecAddLogicalAddress, (int handle, int logicalAddress), (override));
     MOCK_METHOD(int, HdmiCecRemoveLogicalAddress, (int handle, int logicalAddress), (override));
     MOCK_METHOD(int, HdmiCecGetPhysicalAddress, (int handle, unsigned int *physicalAddress), (override));
-    MOCK_METHOD(int, HdmiCecGetLogicalAddress, (int handle, int devType, int *logicalAddress), (override));
+    MOCK_METHOD(int, HdmiCecGetLogicalAddress, (int handle, int *logicalAddress), (override));
     
     /**
      * @brief Get the singleton instance

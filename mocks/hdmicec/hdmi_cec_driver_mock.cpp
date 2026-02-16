@@ -94,9 +94,9 @@ HdmiCecDriverMock::HdmiCecDriverMock()
                 return HDMI_CEC_IO_INVALID_ARGUMENT;
             }));
     
-    ON_CALL(*this, HdmiCecGetLogicalAddress(::testing::_, ::testing::_, ::testing::_))
+    ON_CALL(*this, HdmiCecGetLogicalAddress(::testing::_, ::testing::_))
         .WillByDefault(::testing::Invoke(
-            [](int handle, int devType, int* logicalAddress) {
+            [](int handle, int* logicalAddress) {
                 if (logicalAddress) {
                     *logicalAddress = 4; // Default: Playback device
                     return HDMI_CEC_IO_SUCCESS;
@@ -221,13 +221,13 @@ int HdmiCecGetPhysicalAddress(int handle, unsigned int *physicalAddress)
     return mock->HdmiCecGetPhysicalAddress(handle, physicalAddress);
 }
 
-int HdmiCecGetLogicalAddress(int handle, int devType, int *logicalAddress)
+int HdmiCecGetLogicalAddress(int handle, int *logicalAddress)
 {
     HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
     if (!mock) {
         return HDMI_CEC_IO_GENERAL_ERROR;
     }
-    return mock->HdmiCecGetLogicalAddress(handle, devType, logicalAddress);
+    return mock->HdmiCecGetLogicalAddress(handle, logicalAddress);
 }
 
 } // extern "C"
