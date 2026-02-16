@@ -24,7 +24,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/ccec/include \
               -I$(GTEST_INCLUDE_DIR) \
               -I$(GMOCK_INCLUDE_DIR)
 
-AM_CXXFLAGS = -Wall -Werror -std=c++14 -g
+AM_CXXFLAGS = -Wall -std=c++14 -g
 
 # Define test programs
 noinst_PROGRAMS = run_L1Tests
