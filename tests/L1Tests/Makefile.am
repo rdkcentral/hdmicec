@@ -19,6 +19,8 @@
 
 AM_CPPFLAGS = -I$(top_srcdir)/ccec/include \
               -I$(top_srcdir)/osal/include \
+              -I$(top_srcdir)/mocks \
+              -I$(top_srcdir)/mocks/hdmicec \
               -I$(GTEST_INCLUDE_DIR) \
               -I$(GMOCK_INCLUDE_DIR) \
               -pthread
@@ -38,9 +40,11 @@ run_L1Tests_SOURCES = \
     ccec/test_MessageDecoder.cpp \
     ccec/test_OpCode.cpp \
     ccec/test_Operands.cpp \
+    ccec/test_Driver_Mock.cpp \
     osal/test_Mutex.cpp \
     osal/test_Thread.cpp \
-    osal/test_ConditionVariable.cpp
+    osal/test_ConditionVariable.cpp \
+    $(top_srcdir)/mocks/hdmicec/hdmi_cec_driver_mock.cpp
 
 run_L1Tests_LDADD = \
     $(top_builddir)/ccec/src/libRCEC.la \
