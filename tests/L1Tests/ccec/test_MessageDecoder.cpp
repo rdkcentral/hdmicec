@@ -19,20 +19,21 @@
 
 #include <gtest/gtest.h>
 #include "ccec/MessageDecoder.hpp"
+#include "ccec/MessageProcessor.hpp"
 #include "ccec/CECFrame.hpp"
 
 
 
 class MessageDecoderTest : public ::testing::Test {
 protected:
-    MessageDecoder decoder;
+    MessageProcessor processor;
+    MessageDecoder decoder{processor};
 };
 
 TEST_F(MessageDecoderTest, DecodeValidFrame) {
     // Create a simple test frame
     uint8_t testData[] = {0x40, 0x04};
-    CECFrame frame;
-    // Populate frame with testData if API allows
+    CECFrame frame(testData, sizeof(testData));
     EXPECT_NO_THROW({
         decoder.decode(frame);
     });
