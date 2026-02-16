@@ -22,8 +22,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/ccec/include \
               -I$(top_srcdir)/mocks \
               -I$(top_srcdir)/mocks/hdmicec \
               -I$(GTEST_INCLUDE_DIR) \
-              -I$(GMOCK_INCLUDE_DIR) \
-              -pthread
+              -I$(GMOCK_INCLUDE_DIR)
 
 AM_CXXFLAGS = -Wall -Werror -std=c++11 -g
 
@@ -49,7 +48,9 @@ run_L1Tests_SOURCES = \
 run_L1Tests_LDADD = \
     $(top_builddir)/ccec/src/libRCEC.la \
     $(top_builddir)/osal/src/libRCECOSHal.la \
-    -lgtest -lgmock -pthread
+    -lgtest -lgmock
+
+run_L1Tests_LDFLAGS = -pthread
 
 # Run tests on 'make check'
 TESTS = run_L1Tests
