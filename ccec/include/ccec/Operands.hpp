@@ -106,6 +106,10 @@ public:
 		return this->str == in.str;
 	}
 
+	bool operator != (const CECBytes &in) const {
+		return this->str != in.str;
+	}
+
 protected:
     std::vector<uint8_t> str;
     virtual size_t getMaxLen(void) const {
