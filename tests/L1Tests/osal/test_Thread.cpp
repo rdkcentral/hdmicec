@@ -37,13 +37,13 @@ class ThreadTest : public ::testing::Test {};
 TEST_F(ThreadTest, ThreadCreation) {
     TestRunnable runnable;
     EXPECT_NO_THROW({
-        Thread thread(&runnable);
+        Thread thread(runnable);
     });
 }
 
 TEST_F(ThreadTest, ThreadExecution) {
     TestRunnable runnable;
-    Thread thread(&runnable);
+    Thread thread(runnable);
     
     thread.start();
     thread.stop();
