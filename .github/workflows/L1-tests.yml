@@ -108,12 +108,10 @@ jobs:
       - name: Run L1 Tests without valgrind
         run: >
           cd $GITHUB_WORKSPACE/hdmicec/tests/L1Tests
-          &&
           LD_LIBRARY_PATH=$GITHUB_WORKSPACE/install/usr/lib:${LD_LIBRARY_PATH}
-          GTEST_OUTPUT="json:$GITHUB_WORKSPACE/hdmicecL1TestResults.json"
-          make check
-          &&
-          cp -rf $GITHUB_WORKSPACE/hdmicecL1TestResults.json $GITHUB_WORKSPACE/hdmicecL1TestResultsWithoutValgrind.json
+          GTEST_OUTPUT="json:$GITHUB_WORKSPACE/rdkL1TestResults.json"
+          RdkServicesL1Test &&
+          cp -rf $GITHUB_WORKSPACE/rdkL1TestResults.json $GITHUB_WORKSPACE/rdkL1TestResultsWithoutValgrind.json
 
       - name: Run L1 Tests with valgrind
         if: ${{ !env.ACT }}
@@ -121,7 +119,7 @@ jobs:
           cd $GITHUB_WORKSPACE/hdmicec/tests/L1Tests
           &&
           LD_LIBRARY_PATH=$GITHUB_WORKSPACE/install/usr/lib:${LD_LIBRARY_PATH}
-          GTEST_OUTPUT="json:$GITHUB_WORKSPACE/hdmicecL1TestResults.json"
+          GTEST_OUTPUT="json:$GITHUB_WORKSPACE/rdkL1TestResults.json"
           make check-valgrind || (
           valgrind
           --tool=memcheck
@@ -132,7 +130,7 @@ jobs:
           --fair-sched=try
           ./run_L1Tests )
           &&
-          cp -rf $GITHUB_WORKSPACE/hdmicecL1TestResults.json $GITHUB_WORKSPACE/hdmicecL1TestResultsWithValgrind.json
+          cp -rf $GITHUB_WORKSPACE/rdkL1TestResults.json $GITHUB_WORKSPACE/rdkL1TestResultsWithValgrind.json
 
       - name: Generate coverage
         if: ${{ matrix.coverage == 'with-coverage' && !env.ACT }}
@@ -165,6 +163,6 @@ jobs:
           path: |
             coverage/
             valgrind_log
-            hdmicecL1TestResultsWithoutValgrind.json
-            hdmicecL1TestResultsWithValgrind.json
+            rdkL1TestResultsWithoutValgrind.json
+            rdkL1TestResultsWithValgrind.json
           if-no-files-found: warn
