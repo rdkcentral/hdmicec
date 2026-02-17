@@ -128,7 +128,7 @@ TEST_F(HdmiCecDriverMockTest, GetPhysicalAddressCustomValue) {
     int result = HdmiCecGetPhysicalAddress(handle, &physAddr);
     
     EXPECT_EQ(result, HDMI_CEC_IO_SUCCESS);
-    EXPECT_EQ(physAddr, 0x2100);
+    EXPECT_EQ(physAddr, 0x2100u);
 }
 
 TEST_F(HdmiCecDriverMockTest, TransmitMessageExpectSpecificData) {
@@ -217,7 +217,7 @@ TEST_F(HdmiCecDriverMockTest, MultipleExpectations) {
     
     unsigned int physAddr = 0;
     HdmiCecGetPhysicalAddress(handle, &physAddr);
-    EXPECT_EQ(physAddr, 0x3000);
+    EXPECT_EQ(physAddr, 0x3000u);
     
     HdmiCecRemoveLogicalAddress(handle, 4);
 }

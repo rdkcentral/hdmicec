@@ -32,7 +32,7 @@ TEST_F(MessageEncoderTest, EncodeImageViewOn) {
     ImageViewOn msg;
     EXPECT_NO_THROW({
         CECFrame frame = encoder.encode(msg);
-        EXPECT_GT(frame.length(), 0);
+        EXPECT_GT(frame.length(), (size_t)0);
     });
 }
 
@@ -40,7 +40,7 @@ TEST_F(MessageEncoderTest, EncodeTextViewOn) {
     TextViewOn msg;
     EXPECT_NO_THROW({
         CECFrame frame = encoder.encode(msg);
-        EXPECT_GT(frame.length(), 0);
+        EXPECT_GT(frame.length(), (size_t)0);
     });
 }
 
@@ -49,6 +49,6 @@ TEST_F(MessageEncoderTest, EncodeActiveSource) {
     ActiveSource msg(phy);
     EXPECT_NO_THROW({
         CECFrame frame = encoder.encode(msg);
-        EXPECT_GT(frame.length(), 0);
+        EXPECT_GT(frame.length(), (size_t)0);
     });
 }

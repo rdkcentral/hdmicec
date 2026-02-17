@@ -35,26 +35,20 @@ TEST_F(ConditionVariableTest, NotifyOne) {
     bool notified = false;
     
     std::thread waiter([&]() {
-        mutex.lock();
-        condVar.wait(mutex);
+        condVar.wait();
         notified = true;
-        mutex.unlock();
     });
     
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     
-    mutex.lock();
     condVar.notify();
-    mutex.unlock();
     
     waiter.join();
     EXPECT_TRUE(notified);
 }
 
 TEST_F(ConditionVariableTest, DISABLED_TimedWait) {
-    mutex.lock();
     long timeout = 100;
-    bool result = condVar.wait(mutex, timeout);
-    mutex.unlock();
-    EXPECT_FALSE(result);
+    long result = condVar.wait(timeout);
+    EXPECT_EQ(result, 0);
 }
