@@ -36,14 +36,14 @@ public:
 
 class ThreadTest : public ::testing::Test {};
 
-TEST_F(ThreadTest, DISABLED_ThreadCreation) {
+TEST_F(ThreadTest, ThreadCreation) {
     TestRunnable runnable;
     EXPECT_NO_THROW({
         Thread thread(runnable);
     });
 }
 
-TEST_F(ThreadTest, DISABLED_ThreadExecution) {
+TEST_F(ThreadTest, ThreadExecution) {
     TestRunnable runnable;
     Thread thread(runnable);
     
