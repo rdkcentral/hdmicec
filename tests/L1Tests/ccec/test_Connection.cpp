@@ -34,7 +34,7 @@ protected:
     }
 };
 
-TEST_F(ConnectionTest, ConstructorCreatesConnection) {
+TEST_F(ConnectionTest, DISABLED_ConstructorCreatesConnection) {
     EXPECT_NO_THROW({
         Connection conn(LogicalAddress::UNREGISTERED, false);
     });

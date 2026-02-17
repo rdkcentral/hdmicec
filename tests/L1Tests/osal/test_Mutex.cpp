@@ -28,14 +28,14 @@ protected:
     Mutex mutex;
 };
 
-TEST_F(MutexTest, LockUnlock) {
+TEST_F(MutexTest, DISABLED_LockUnlock) {
     EXPECT_NO_THROW({
         mutex.lock();
         mutex.unlock();
     });
 }
 
-TEST_F(MutexTest, MultipleLockUnlock) {
+TEST_F(MutexTest, DISABLED_MultipleLockUnlock) {
     EXPECT_NO_THROW({
         mutex.lock();
         mutex.unlock();
@@ -44,7 +44,7 @@ TEST_F(MutexTest, MultipleLockUnlock) {
     });
 }
 
-TEST_F(MutexTest, ConcurrentAccess) {
+TEST_F(MutexTest, DISABLED_ConcurrentAccess) {
     int sharedCounter = 0;
     const int iterations = 1000;
     

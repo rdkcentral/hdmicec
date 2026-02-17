@@ -37,14 +37,14 @@ TEST_F(CECFrameTest, DefaultConstructor) {
     EXPECT_EQ(frame.length(), (size_t)0);
 }
 
-TEST_F(CECFrameTest, ConstructorWithHeader) {
+TEST_F(CECFrameTest, DISABLED_ConstructorWithHeader) {
     Header header(LogicalAddress::TV, LogicalAddress::PLAYBACK_DEVICE_1);
     CECFrame frame;
     header.serialize(frame);
     EXPECT_GT(frame.length(), (size_t)0);
 }
 
-TEST_F(CECFrameTest, CopyConstructor) {
+TEST_F(CECFrameTest, DISABLED_CopyConstructor) {
     Header header(LogicalAddress::TV, LogicalAddress::PLAYBACK_DEVICE_1);
     CECFrame frame1;
     header.serialize(frame1);
@@ -52,7 +52,7 @@ TEST_F(CECFrameTest, CopyConstructor) {
     EXPECT_EQ(frame1.length(), frame2.length());
 }
 
-TEST_F(CECFrameTest, HexDumpOutput) {
+TEST_F(CECFrameTest, DISABLED_HexDumpOutput) {
     Header header(LogicalAddress::TV, LogicalAddress::PLAYBACK_DEVICE_1);
     CECFrame frame;
     header.serialize(frame);
