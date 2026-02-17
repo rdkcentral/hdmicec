@@ -24,7 +24,7 @@
 
 class OpCodeTest : public ::testing::Test {};
 
-TEST_F(OpCodeTest, DISABLED_OpCodeConstants) {
+TEST_F(OpCodeTest, OpCodeConstants) {
     EXPECT_EQ(IMAGE_VIEW_ON, 0x04);
     EXPECT_EQ(TEXT_VIEW_ON, 0x0D);
     EXPECT_EQ(STANDBY, 0x36);
@@ -32,7 +32,7 @@ TEST_F(OpCodeTest, DISABLED_OpCodeConstants) {
     EXPECT_EQ(INACTIVE_SOURCE, 0x9D);
 }
 
-TEST_F(OpCodeTest, DISABLED_OpCodeToString) {
+TEST_F(OpCodeTest, OpCodeToString) {
     OpCode opcode(IMAGE_VIEW_ON);
     EXPECT_NO_THROW({
         std::string name = opcode.toString();
