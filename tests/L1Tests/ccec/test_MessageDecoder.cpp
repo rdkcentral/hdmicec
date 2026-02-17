@@ -30,7 +30,7 @@ protected:
     MessageDecoder decoder{processor};
 };
 
-TEST_F(MessageDecoderTest, DISABLED_DecodeValidFrame) {
+TEST_F(MessageDecoderTest, DecodeValidFrame) {
     // Create a simple test frame
     uint8_t testData[] = {0x40, 0x04};
     CECFrame frame(testData, sizeof(testData));
