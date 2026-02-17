@@ -35,10 +35,12 @@ protected:
 };
 
 TEST_F(ConnectionTest, ConstructorCreatesConnection) {
-    EXPECT_NO_THROW({
+    EXPECT_NO_THROW(
         Connection conn(LogicalAddress::UNREGISTERED, false);
+    );
+    EXPECT_NO_THROW(
         conn.close();  // Manually close to test if this prevents segfault
-    });
+    )
 }
 
 // Note: Actual open/close tests would require hardware mocking
