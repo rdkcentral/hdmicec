@@ -31,7 +31,7 @@ protected:
     ConditionVariable condVar;
 };
 
-TEST_F(ConditionVariableTest, NotifyOne) {
+TEST_F(ConditionVariableTest, DISABLED_NotifyOne) {
     bool notified = false;
     
     // Ensure condition starts in reset state

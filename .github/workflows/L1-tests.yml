@@ -107,13 +107,21 @@ jobs:
           &&
           cd tests/L1Tests && make all
 
+      - name: List available tests
+        run: >
+          cd $GITHUB_WORKSPACE/hdmicec/tests/L1Tests
+          &&
+          LD_LIBRARY_PATH=$GITHUB_WORKSPACE/install/usr/lib:${LD_LIBRARY_PATH}
+          ./run_L1Tests --gtest_list_tests
+
       - name: Run L1 Tests without valgrind
         run: >
           cd $GITHUB_WORKSPACE/hdmicec/tests/L1Tests
           &&
           LD_LIBRARY_PATH=$GITHUB_WORKSPACE/install/usr/lib:${LD_LIBRARY_PATH}
           GTEST_OUTPUT="json:$GITHUB_WORKSPACE/rdkL1TestResults.json"
-          ./run_L1Tests --gtest_print_time=1 --gtest_output=json:$GITHUB_WORKSPACE/rdkL1TestResults.json
+          ./run_L1Tests --gtest_print_time=1 --gtest_output=json:$GITHUB_WORKSPACE/rdkL1TestResults.json || 
+          (echo "Test execution failed or crashed" && exit 1)
           &&
           cp -rf $GITHUB_WORKSPACE/rdkL1TestResults.json $GITHUB_WORKSPACE/rdkL1TestResultsWithoutValgrind.json
 
