@@ -103,7 +103,9 @@ jobs:
           CXXFLAGS="-fprofile-arcs -ftest-coverage"
           ./configure --enable-l1tests
           &&
-          make -j$(nproc)
+          make -j$(nproc) all
+          &&
+          cd tests/L1Tests && make all
 
       - name: Run L1 Tests without valgrind
         run: >
