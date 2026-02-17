@@ -111,7 +111,7 @@ jobs:
           &&
           LD_LIBRARY_PATH=$GITHUB_WORKSPACE/install/usr/lib:${LD_LIBRARY_PATH}
           GTEST_OUTPUT="json:$GITHUB_WORKSPACE/rdkL1TestResults.json"
-          ./run_L1Tests
+          ./run_L1Tests --gtest_print_time=1 --gtest_output=json:$GITHUB_WORKSPACE/rdkL1TestResults.json
           &&
           cp -rf $GITHUB_WORKSPACE/rdkL1TestResults.json $GITHUB_WORKSPACE/rdkL1TestResultsWithoutValgrind.json
 
