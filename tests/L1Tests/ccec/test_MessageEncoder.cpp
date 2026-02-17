@@ -28,7 +28,7 @@ protected:
     MessageEncoder encoder;
 };
 
-TEST_F(MessageEncoderTest, DISABLED_EncodeImageViewOn) {
+TEST_F(MessageEncoderTest, EncodeImageViewOn) {
     ImageViewOn msg;
     EXPECT_NO_THROW({
         CECFrame frame = encoder.encode(msg);
@@ -36,7 +36,7 @@ TEST_F(MessageEncoderTest, DISABLED_EncodeImageViewOn) {
     });
 }
 
-TEST_F(MessageEncoderTest, DISABLED_EncodeTextViewOn) {
+TEST_F(MessageEncoderTest, EncodeTextViewOn) {
     TextViewOn msg;
     EXPECT_NO_THROW({
         CECFrame frame = encoder.encode(msg);
@@ -44,7 +44,7 @@ TEST_F(MessageEncoderTest, DISABLED_EncodeTextViewOn) {
     });
 }
 
-TEST_F(MessageEncoderTest, DISABLED_EncodeActiveSource) {
+TEST_F(MessageEncoderTest, EncodeActiveSource) {
     PhysicalAddress phy(1, 0, 0, 0);
     ActiveSource msg(phy);
     EXPECT_NO_THROW({
