@@ -107,11 +107,12 @@ jobs:
 
       - name: Run L1 Tests without valgrind
         run: >
-          cd $GITHUB_WORKSPACE/hdmicec/tests/L1Tests
-          LD_LIBRARY_PATH=$GITHUB_WORKSPACE/install/usr/lib:${LD_LIBRARY_PATH}
-          GTEST_OUTPUT="json:$GITHUB_WORKSPACE/rdkL1TestResults.json"
+          PATH=$GITHUB_WORKSPACE/install/usr/bin:${PATH}
+          LD_LIBRARY_PATH=$GITHUB_WORKSPACE/install/usr/lib:$GITHUB_WORKSPACE/install/usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH}
+          GTEST_OUTPUT="json:$(pwd)/rdkL1TestResults.json"
           RdkServicesL1Test &&
-          cp -rf $GITHUB_WORKSPACE/rdkL1TestResults.json $GITHUB_WORKSPACE/rdkL1TestResultsWithoutValgrind.json
+          cp -rf $(pwd)/rdkL1TestResults.json $GITHUB_WORKSPACE/rdkL1TestResultsWithoutValgrind.json &&
+          rm -rf $(pwd)/rdkL1TestResults.json
 
       - name: Run L1 Tests with valgrind
         if: ${{ !env.ACT }}
