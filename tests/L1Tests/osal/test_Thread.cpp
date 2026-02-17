@@ -20,6 +20,8 @@
 #include <gtest/gtest.h>
 #include "osal/Thread.hpp"
 #include "osal/Runnable.hpp"
+#include <thread>
+#include <chrono>
 
 using namespace CCEC_OSAL;
 
