@@ -31,7 +31,7 @@ protected:
     ConditionVariable condVar;
 };
 
-TEST_F(ConditionVariableTest, DISABLED_NotifyOne) {
+TEST_F(ConditionVariableTest, NotifyOne) {
     bool notified = false;
     
     // Ensure condition starts in reset state
@@ -54,7 +54,7 @@ TEST_F(ConditionVariableTest, DISABLED_NotifyOne) {
     EXPECT_TRUE(notified);
 }
 
-TEST_F(ConditionVariableTest, DISABLED_TimedWait) {
+TEST_F(ConditionVariableTest, TimedWait) {
     long timeout = 100;
     long result = condVar.wait(timeout);
     EXPECT_EQ(result, 0);
