@@ -42,7 +42,7 @@ protected:
     }
 };
 
-TEST_F(HdmiCecDriverMockTest, DISABLED_OpenDriverSuccess) {
+TEST_F(HdmiCecDriverMockTest, OpenDriverSuccess) {
     int handle = 0;
     
     // Default behavior is already set in constructor
@@ -52,7 +52,7 @@ TEST_F(HdmiCecDriverMockTest, DISABLED_OpenDriverSuccess) {
     EXPECT_GT(handle, 0);
 }
 
-TEST_F(HdmiCecDriverMockTest, DISABLED_OpenDriverWithCustomBehavior) {
+TEST_F(HdmiCecDriverMockTest, OpenDriverWithCustomBehavior) {
     int handle = 0;
     
     // Override default behavior using ON_CALL
@@ -64,7 +64,7 @@ TEST_F(HdmiCecDriverMockTest, DISABLED_OpenDriverWithCustomBehavior) {
     EXPECT_EQ(result, HDMI_CEC_IO_GENERAL_ERROR);
 }
 
-TEST_F(HdmiCecDriverMockTest, DISABLED_ExpectOpenCalled) {
+TEST_F(HdmiCecDriverMockTest, ExpectOpenCalled) {
     int handle = 0;
     
     // Use EXPECT_CALL to verify the function is called
@@ -81,7 +81,7 @@ TEST_F(HdmiCecDriverMockTest, DISABLED_ExpectOpenCalled) {
     EXPECT_EQ(handle, 42);
 }
 
-TEST_F(HdmiCecDriverMockTest, DISABLED_CloseDriver) {
+TEST_F(HdmiCecDriverMockTest, CloseDriver) {
     int handle = 1;
     
     EXPECT_CALL(*mock, HdmiCecClose(handle))
@@ -93,7 +93,7 @@ TEST_F(HdmiCecDriverMockTest, DISABLED_CloseDriver) {
     EXPECT_EQ(result, HDMI_CEC_IO_SUCCESS);
 }
 
-TEST_F(HdmiCecDriverMockTest, DISABLED_AddLogicalAddressWithCustomReturn) {
+TEST_F(HdmiCecDriverMockTest, AddLogicalAddressWithCustomReturn) {
     int handle = 1;
     
     // Test successful addition
@@ -111,7 +111,7 @@ TEST_F(HdmiCecDriverMockTest, DISABLED_AddLogicalAddressWithCustomReturn) {
     EXPECT_EQ(result, HDMI_CEC_IO_LOGICALADDRESS_UNAVAILABLE);
 }
 
-TEST_F(HdmiCecDriverMockTest, DISABLED_GetPhysicalAddressCustomValue) {
+TEST_F(HdmiCecDriverMockTest, GetPhysicalAddressCustomValue) {
     int handle = 1;
     unsigned int physAddr = 0;
     
@@ -131,7 +131,7 @@ TEST_F(HdmiCecDriverMockTest, DISABLED_GetPhysicalAddressCustomValue) {
     EXPECT_EQ(physAddr, 0x2100u);
 }
 
-TEST_F(HdmiCecDriverMockTest, DISABLED_TransmitMessageExpectSpecificData) {
+TEST_F(HdmiCecDriverMockTest, TransmitMessageExpectSpecificData) {
     int handle = 1;
     unsigned char expectedMsg[] = {0x40, 0x04}; // Image View On
     int txResult = 0;
@@ -155,7 +155,7 @@ TEST_F(HdmiCecDriverMockTest, DISABLED_TransmitMessageExpectSpecificData) {
     EXPECT_EQ(txResult, HDMI_CEC_IO_SENT_AND_ACKD);
 }
 
-TEST_F(HdmiCecDriverMockTest, DISABLED_TransmitFailure) {
+TEST_F(HdmiCecDriverMockTest, TransmitFailure) {
     int handle = 1;
     unsigned char msg[] = {0x40, 0x04};
     int txResult = 0;
@@ -175,7 +175,7 @@ TEST_F(HdmiCecDriverMockTest, DISABLED_TransmitFailure) {
     EXPECT_EQ(txResult, HDMI_CEC_IO_SENT_BUT_NOT_ACKD);
 }
 
-TEST_F(HdmiCecDriverMockTest, DISABLED_ReceiveMessageCallback) {
+TEST_F(HdmiCecDriverMockTest, ReceiveMessageCallback) {
     int handle = 1;
     bool callbackCalled = false;
     
@@ -194,7 +194,7 @@ TEST_F(HdmiCecDriverMockTest, DISABLED_ReceiveMessageCallback) {
     EXPECT_TRUE(callbackCalled);
 }
 
-TEST_F(HdmiCecDriverMockTest, DISABLED_MultipleExpectations) {
+TEST_F(HdmiCecDriverMockTest, MultipleExpectations) {
     int handle = 1;
     
     // Set up multiple expectations in sequence
