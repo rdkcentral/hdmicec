@@ -24,14 +24,14 @@
 
 class OperandsTest : public ::testing::Test {};
 
-TEST_F(OperandsTest, DISABLED_PhysicalAddressCreation) {
+TEST_F(OperandsTest, PhysicalAddressCreation) {
     PhysicalAddress phy(1, 0, 0, 0);
     EXPECT_NO_THROW({
         phy.toString();
     });
 }
 
-TEST_F(OperandsTest, DISABLED_PhysicalAddressComponents) {
+TEST_F(OperandsTest, PhysicalAddressComponents) {
     PhysicalAddress phy(1, 2, 3, 4);
     EXPECT_NO_THROW({
         std::string str = phy.toString();
@@ -39,7 +39,7 @@ TEST_F(OperandsTest, DISABLED_PhysicalAddressComponents) {
     });
 }
 
-TEST_F(OperandsTest, DISABLED_LogicalAddressEnum) {
+TEST_F(OperandsTest, LogicalAddressEnum) {
     LogicalAddress tv = LogicalAddress::TV;
     LogicalAddress playback = LogicalAddress::PLAYBACK_DEVICE_1;
     LogicalAddress unreg = LogicalAddress::UNREGISTERED;
