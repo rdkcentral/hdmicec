@@ -34,16 +34,23 @@ protected:
 TEST_F(ConditionVariableTest, NotifyOne) {
     bool notified = false;
     
+    // Ensure condition starts in reset state
+    condVar.reset();
+    
     std::thread waiter([&]() {
         condVar.wait();
         notified = true;
     });
     
+    // Give thread time to start waiting
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     
+    // Signal the waiting thread
     condVar.notify();
     
+    // Wait for thread to complete
     waiter.join();
+    
     EXPECT_TRUE(notified);
 }
 
