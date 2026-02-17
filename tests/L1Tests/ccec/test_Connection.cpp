@@ -34,9 +34,10 @@ protected:
     }
 };
 
-TEST_F(ConnectionTest, DISABLED_ConstructorCreatesConnection) {
+TEST_F(ConnectionTest, ConstructorCreatesConnection) {
     EXPECT_NO_THROW({
         Connection conn(LogicalAddress::UNREGISTERED, false);
+        conn.close();  // Manually close to test if this prevents segfault
     });
 }
 
