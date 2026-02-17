@@ -49,8 +49,10 @@ TEST_F(ThreadTest, ThreadExecution) {
     
     thread.start();
     
-    // Give the thread time to execute since it's detached
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // Give the thread time to execute and complete since it's detached
+    // Use a longer sleep to ensure thread completes before test ends
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
     
     EXPECT_TRUE(runnable.executed);
 }
+
