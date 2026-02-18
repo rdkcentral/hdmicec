@@ -21,8 +21,6 @@
 #include <gmock/gmock.h>
 #include "ccec/Connection.hpp"
 
-using namespace CCEC;
-
 class ConnectionTest : public ::testing::Test {
 protected:
     void SetUp() override {
