@@ -87,6 +87,7 @@ TEST_F(DriverTest, AAA_DriverSingletonAccess) {
 
 // Test driver open (already opened by global environment)
 TEST_F(DriverTest, DriverAlreadyOpen) {
+    HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
     Driver &driver = Driver::getInstance();
     
     // Opening again should not throw (handled gracefully)
