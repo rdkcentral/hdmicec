@@ -261,16 +261,16 @@ void  DriverImpl::write(const CECFrame &frame)  noexcept(false)
 			throw IOException();
 		}
 
-        if (sendResult != HDMI_CEC_IO_SUCCESS) {
-            if ((sendResult == HDMI_CEC_IO_INVALID_HANDLE) ||
-                (sendResult == HDMI_CEC_IO_INVALID_ARGUMENT) || 
-                (sendResult == HDMI_CEC_IO_LOGICALADDRESS_UNAVAILABLE) || 
-                (sendResult == HDMI_CEC_IO_SENT_FAILED) || 
-                (sendResult == HDMI_CEC_IO_GENERAL_ERROR) )
-            {
-                throw IOException();
-            }
-        }
+        // if (sendResult != HDMI_CEC_IO_SUCCESS) {
+        //     if ((sendResult == HDMI_CEC_IO_INVALID_HANDLE) ||
+        //         (sendResult == HDMI_CEC_IO_INVALID_ARGUMENT) || 
+        //         (sendResult == HDMI_CEC_IO_LOGICALADDRESS_UNAVAILABLE) || 
+        //         (sendResult == HDMI_CEC_IO_SENT_FAILED) || 
+        //         (sendResult == HDMI_CEC_IO_GENERAL_ERROR) )
+        //     {
+        //         throw IOException();
+        //     }
+        // }
 
 		if (((frame.at(0) & 0x0F) != 0x0F) && sendResult == HDMI_CEC_IO_SENT_BUT_NOT_ACKD) {
 			throw CECNoAckException();
@@ -292,7 +292,7 @@ int DriverImpl::getLogicalAddress(int devType)
 	int logicalAddress = 0;
 	CCEC_LOG( LOG_DEBUG, "DriverImpl::getLogicalAddress called for devType : %d \r\n", devType);
 
-	HdmiCecGetLogicalAddress(nativeHandle, &logicalAddress);
+	// HdmiCecGetLogicalAddress(nativeHandle, &logicalAddress);
 
 	CCEC_LOG( LOG_DEBUG, "DriverImpl::getLogicalAddress got logical Address : %d \r\n", logicalAddress);
 	return logicalAddress;
