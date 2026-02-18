@@ -369,10 +369,12 @@ void DriverImpl::poll(const LogicalAddress &from, const LogicalAddress &to)
 {
 	uint8_t firstByte = (((from.toInt() & 0x0F) << 4) | (to.toInt() & 0x0F));
 	CCEC_LOG( LOG_DEBUG, "$$$$$$$$$$$$$$$$$$$$ POST POLL [%s] [%s]$$$$$$$$$$$$$$$$$$$$$\r\n", from.toString().c_str(), to.toString().c_str());
+    printf("DriverImpl::poll called from %s to %s\r\n", from.toString().c_str(), to.toString().c_str());
 
 	{
 		CECFrame frame;
 		frame.append(firstByte);
+        printf("DriverImpl::poll sending poll frame: %02X\r\n", firstByte);
 		write(frame);
 	}
 	
