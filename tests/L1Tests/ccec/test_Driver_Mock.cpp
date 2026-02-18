@@ -32,13 +32,20 @@ protected:
     HdmiCecDriverMock* mock;
     
     void SetUp() override {
-        mock = new HdmiCecDriverMock();
-        HdmiCecDriverMock::setInstance(mock);
+        // Use existing global mock if available, otherwise create one
+        mock = HdmiCecDriverMock::getInstance();
+        if (mock == nullptr) {
+            mock = new HdmiCecDriverMock();
+            HdmiCecDriverMock::setInstance(mock);
+        }
     }
     
     void TearDown() override {
-        HdmiCecDriverMock::setInstance(nullptr);
-        delete mock;
+        // Don't delete the mock - let the global environment manage it
+        // Just clear expectations
+        if (mock != nullptr) {
+            ::testing::Mock::VerifyAndClearExpectations(mock);
+        }
     }
 };
 
