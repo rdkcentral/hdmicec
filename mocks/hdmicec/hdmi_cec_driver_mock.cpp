@@ -19,6 +19,7 @@
 
 #include "hdmi_cec_driver_mock.h"
 #include <cstring>
+#include <iostream>
 
 // Static instance pointer
 HdmiCecDriverMock* HdmiCecDriverMock::instance = nullptr;
@@ -114,12 +115,15 @@ HdmiCecDriverMock::~HdmiCecDriverMock()
 
 HdmiCecDriverMock* HdmiCecDriverMock::getInstance()
 {
+    std::cout << "[Mock::getInstance] Returning instance: " << (void*)instance << std::endl;
     return instance;
 }
 
 void HdmiCecDriverMock::setInstance(HdmiCecDriverMock* newMock)
 {
+    std::cout << "[Mock::setInstance] Setting instance from " << (void*)instance << " to " << (void*)newMock << std::endl;
     instance = newMock;
+    std::cout << "[Mock::setInstance] Instance is now: " << (void*)instance << std::endl;
 }
 
 void HdmiCecDriverMock::injectReceivedMessage(const unsigned char* buf, int len)
