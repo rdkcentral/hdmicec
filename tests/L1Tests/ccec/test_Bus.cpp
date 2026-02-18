@@ -28,7 +28,6 @@
 #include "ccec/Connection.hpp"
 #include "ccec/LibCCEC.hpp"
 
-using namespace CCEC;
 using ::testing::_;
 using ::testing::Return;
 using ::testing::Invoke;
@@ -63,7 +62,7 @@ public:
 
 // Test basic send functionality with zero timeout
 TEST_F(BusTest, SendFrameWithZeroTimeout) {
-    Connection conn(LogicalAddress::PLAYBACK_1, false);
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
     conn.open();
     
     CECFrame frame;
@@ -79,7 +78,7 @@ TEST_F(BusTest, SendFrameWithZeroTimeout) {
 
 // Test send functionality with timeout
 TEST_F(BusTest, SendFrameWithTimeout) {
-    Connection conn(LogicalAddress::PLAYBACK_1, false);
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
     conn.open();
     
     CECFrame frame;
@@ -95,7 +94,7 @@ TEST_F(BusTest, SendFrameWithTimeout) {
 
 // Test sendAsync functionality
 TEST_F(BusTest, SendFrameAsync) {
-    Connection conn(LogicalAddress::PLAYBACK_1, false);
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
     conn.open();
     
     CECFrame frame;
@@ -114,7 +113,7 @@ TEST_F(BusTest, SendFrameAsync) {
 
 // Test multiple async sends
 TEST_F(BusTest, SendMultipleFramesAsync) {
-    Connection conn(LogicalAddress::PLAYBACK_1, false);
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
     conn.open();
     
     for (int i = 0; i < 5; i++) {
@@ -135,12 +134,12 @@ TEST_F(BusTest, SendMultipleFramesAsync) {
 
 // Test poll functionality
 TEST_F(BusTest, PollLogicalAddress) {
-    Connection conn(LogicalAddress::PLAYBACK_1, false);
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
     conn.open();
     
     // Poll same address (valid for discovering if address is taken)
     EXPECT_NO_THROW({
-        conn.poll(LogicalAddress::PLAYBACK_1, Throw_e());
+        conn.poll(LogicalAddress::PLAYBACK_DEVICE_1, Throw_e());
     });
     
     conn.close();
@@ -148,12 +147,12 @@ TEST_F(BusTest, PollLogicalAddress) {
 
 // Test ping functionality
 TEST_F(BusTest, PingLogicalAddress) {
-    Connection conn(LogicalAddress::PLAYBACK_1, false);
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
     conn.open();
     
     // Ping different address
     EXPECT_NO_THROW({
-        conn.ping(LogicalAddress::PLAYBACK_1, LogicalAddress::TV, Throw_e());
+        conn.ping(LogicalAddress::PLAYBACK_DEVICE_1, LogicalAddress::TV, Throw_e());
     });
     
     conn.close();
@@ -203,7 +202,7 @@ TEST_F(BusTest, MultipleFrameListeners) {
 
 // Test sending with specific logical addresses
 TEST_F(BusTest, SendToSpecificAddress) {
-    Connection conn(LogicalAddress::PLAYBACK_1, false);
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
     conn.open();
     
     CECFrame frame;
@@ -218,7 +217,7 @@ TEST_F(BusTest, SendToSpecificAddress) {
 
 // Test sendToAsync with specific addresses
 TEST_F(BusTest, SendToAsyncSpecificAddress) {
-    Connection conn(LogicalAddress::PLAYBACK_1, false);
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
     conn.open();
     
     CECFrame frame;
@@ -235,7 +234,7 @@ TEST_F(BusTest, SendToAsyncSpecificAddress) {
 
 // Test send with throw exception parameter
 TEST_F(BusTest, SendWithThrowParameter) {
-    Connection conn(LogicalAddress::PLAYBACK_1, false);
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
     conn.open();
     
     CECFrame frame;
@@ -251,7 +250,7 @@ TEST_F(BusTest, SendWithThrowParameter) {
 
 // Test sendTo with throw exception parameter
 TEST_F(BusTest, SendToWithThrowParameter) {
-    Connection conn(LogicalAddress::PLAYBACK_1, false);
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
     conn.open();
     
     CECFrame frame;
@@ -266,7 +265,7 @@ TEST_F(BusTest, SendToWithThrowParameter) {
 
 // Test broadcast messaging
 TEST_F(BusTest, SendBroadcastMessage) {
-    Connection conn(LogicalAddress::PLAYBACK_1, false);
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
     conn.open();
     
     CECFrame frame;
@@ -283,7 +282,7 @@ TEST_F(BusTest, SendBroadcastMessage) {
 
 // Test connection filtering with specific logical address
 TEST_F(BusTest, ConnectionWithSpecificLogicalAddress) {
-    Connection conn(LogicalAddress::PLAYBACK_1, false);
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
     
     EXPECT_NO_THROW({
         conn.open();
@@ -296,8 +295,8 @@ TEST_F(BusTest, ConnectionWithSpecificLogicalAddress) {
 
 // Test multiple connections simultaneously
 TEST_F(BusTest, MultipleConnections) {
-    Connection conn1(LogicalAddress::PLAYBACK_1, false);
-    Connection conn2(LogicalAddress::RECORDING_1, false);
+    Connection conn1(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    Connection conn2(LogicalAddress::RECORDING_DEVICE_1, false);
     
     EXPECT_NO_THROW({
         conn1.open();
@@ -312,7 +311,7 @@ TEST_F(BusTest, MultipleConnections) {
 
 // Test send with empty frame
 TEST_F(BusTest, SendEmptyFrame) {
-    Connection conn(LogicalAddress::PLAYBACK_1, false);
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
     conn.open();
     
     CECFrame frame;
@@ -327,7 +326,7 @@ TEST_F(BusTest, SendEmptyFrame) {
 
 // Test rapid open/close cycles
 TEST_F(BusTest, RapidOpenCloseCycles) {
-    Connection conn(LogicalAddress::PLAYBACK_1, false);
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
     
     for (int i = 0; i < 3; i++) {
         EXPECT_NO_THROW({
@@ -339,7 +338,7 @@ TEST_F(BusTest, RapidOpenCloseCycles) {
 
 // Test sending with different timeout values
 TEST_F(BusTest, SendWithVariousTimeouts) {
-    Connection conn(LogicalAddress::PLAYBACK_1, false);
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
     conn.open();
     
     CECFrame frame;
@@ -360,7 +359,7 @@ TEST_F(BusTest, SendWithVariousTimeouts) {
 
 // Test listener receives frames from different sources
 TEST_F(BusTest, ListenerFiltering) {
-    Connection conn(LogicalAddress::PLAYBACK_1, false);
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
     TestFrameListener listener;
     
     conn.open();
@@ -388,14 +387,14 @@ TEST_F(BusTest, UnregisteredConnectionReceivesAll) {
 
 // Test send to same source address (loopback scenario)
 TEST_F(BusTest, SendToSameAddress) {
-    Connection conn(LogicalAddress::PLAYBACK_1, false);
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
     conn.open();
     
     CECFrame frame;
     frame.append(0x83);
     
     EXPECT_NO_THROW({
-        conn.sendTo(LogicalAddress::PLAYBACK_1, frame);
+        conn.sendTo(LogicalAddress::PLAYBACK_DEVICE_1, frame);
     });
     
     conn.close();
@@ -403,7 +402,7 @@ TEST_F(BusTest, SendToSameAddress) {
 
 // Test sequential sends
 TEST_F(BusTest, SequentialSends) {
-    Connection conn(LogicalAddress::PLAYBACK_1, false);
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
     conn.open();
     
     CECFrame frame1;
@@ -429,7 +428,7 @@ TEST_F(BusTest, SequentialSends) {
 
 // Test mixed sync and async sends
 TEST_F(BusTest, MixedSyncAsyncSends) {
-    Connection conn(LogicalAddress::PLAYBACK_1, false);
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
     conn.open();
     
     CECFrame frame1;
