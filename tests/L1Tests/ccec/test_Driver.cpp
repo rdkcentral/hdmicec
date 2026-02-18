@@ -32,22 +32,47 @@ using ::testing::SetArgPointee;
 class DriverTest : public ::testing::Test {
 protected:
     void SetUp() override {
+        // Clear any lingering mock expectations
+        HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
+        ::testing::Mock::VerifyAndClearExpectations(mock);
+        
         // Ensure driver is open for each test
+        // Try multiple times as it might be in a bad state
         Driver &driver = Driver::getInstance();
-        try {
-            driver.open();
-        } catch (...) {
-            // Already open, ignore
+        for (int i = 0; i < 2; i++) {
+            try {
+                driver.open();
+                break;
+            } catch (...) {
+                // Already open or in bad state, try to reset
+                try {
+                    driver.close();
+                } catch (...) {
+                    // Ignore close errors
+                }
+            }
         }
     }
 
     void TearDown() override {
+        // Clear mock expectations after each test
+        HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
+        ::testing::Mock::VerifyAndClearExpectations(mock);
+        
         // Ensure driver is open after each test for other tests
         Driver &driver = Driver::getInstance();
-        try {
-            driver.open();
-        } catch (...) {
-            // Already open, ignore
+        for (int i = 0; i < 2; i++) {
+            try {
+                driver.open();
+                break;
+            } catch (...) {
+                // Try to recover
+                try {
+                    driver.close();
+                } catch (...) {
+                    // Ignore
+                }
+            }
         }
     }
 };
@@ -106,6 +131,13 @@ TEST_F(DriverTest, MultipleClose) {
 TEST_F(DriverTest, GetLogicalAddress) {
     HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
     Driver &driver = Driver::getInstance();
+    
+    // Ensure driver is definitely open
+    try {
+        driver.open();
+    } catch (...) {
+        // Already open
+    }
     
     // Set up mock to return a logical address
     EXPECT_CALL(*mock, HdmiCecGetLogicalAddress(_, _))
@@ -425,8 +457,37 @@ TEST_F(DriverTest, CloseWithFailure) {
     
     ::testing::Mock::VerifyAndClearExpectations(mock);
     
-    // Try to close cleanly (driver is in weird state, may need to reopen)
-    // TearDown will ensure it's opened
+    // Driver is now in a bad state - it threw but may have partially closed
+    // Force reopen by trying multiple times
+    bool recovered = false;
+    for (int i = 0; i < 3; i++) {
+        try {
+            driver.open();
+            recovered = true;
+            break;
+        } catch (...) {
+            try {
+                driver.close();
+            } catch (...) {}
+        }
+    }
+    EXPECT_TRUE(recovered);
+}
+
+// Test driver close and reopen
+TEST_F(DriverTest, CloseAndReopen) {
+    Driver &driver = Driver::getInstance();
+    
+    // Close the driver
+    driver.close();
+    
+    // Reopen it
+    driver.open();
+    
+    // Verify it works by doing a simple operation
+    EXPECT_NO_THROW({
+        driver.open(); // Should handle gracefully
+    });
 }
 
 // Test printFrameDetails with various frames
