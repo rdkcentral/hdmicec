@@ -41,6 +41,7 @@ run_L1Tests_SOURCES = \
     ccec/test_OpCode.cpp \
     ccec/test_Operands.cpp \
     ccec/test_Driver_Mock.cpp \
+    ccec/test_Driver.cpp \
     osal/test_Mutex.cpp \
     osal/test_Thread.cpp \
     osal/test_ConditionVariable.cpp \
