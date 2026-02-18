@@ -450,3 +450,270 @@ TEST_F(BusTest, MixedSyncAsyncSends) {
     
     conn.close();
 }
+
+// Test send with driver exception simulation
+TEST_F(BusTest, SendWithDriverFailure) {
+    HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
+    
+    // Set up mock to fail on write
+    EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _))
+        .Times(1)
+        .WillOnce(Return(HDMI_CEC_IO_SENT_FAILED));
+    
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    CECFrame frame;
+    frame.append(0x40);
+    frame.append(0x36);
+    
+    // Should not throw even though driver fails
+    EXPECT_NO_THROW({
+        conn.send(frame, 0);
+    });
+    
+    conn.close();
+}
+
+// Test send with throw parameter when driver fails
+TEST_F(BusTest, SendWithThrowOnDriverFailure) {
+    HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
+    
+    // Set up mock to fail on write
+    EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _))
+        .Times(1)
+        .WillOnce(Return(HDMI_CEC_IO_SENT_FAILED));
+    
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    CECFrame frame;
+    frame.append(0x40);
+    frame.append(0x36);
+    
+    // Should throw with Throw_e parameter
+    EXPECT_THROW({
+        conn.send(frame, 0, Throw_e());
+    }, Exception);
+    
+    conn.close();
+}
+
+// Test sendTo with throw parameter and driver failure
+TEST_F(BusTest, SendToWithThrowOnDriverFailure) {
+    HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
+    
+    // Set up mock to fail on write
+    EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _))
+        .Times(1)
+        .WillOnce(Return(HDMI_CEC_IO_SENT_FAILED));
+    
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    CECFrame frame;
+    frame.append(0x83);
+    
+    // Should throw with Throw_e parameter
+    EXPECT_THROW({
+        conn.sendTo(LogicalAddress::TV, frame, 0, Throw_e());
+    }, Exception);
+    
+    conn.close();
+}
+
+// Test retry logic with timeout - eventual success
+TEST_F(BusTest, SendWithTimeoutRetrySuccess) {
+    HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
+    
+    // Fail first attempt, succeed on retry
+    EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _))
+        .Times(::testing::AtLeast(1))
+        .WillOnce(Return(HDMI_CEC_IO_SENT_FAILED))
+        .WillRepeatedly(DoAll(
+            SetArgPointee<3>(HDMI_CEC_IO_SENT_AND_ACKD),
+            Return(HDMI_CEC_IO_SUCCESS)
+        ));
+    
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    CECFrame frame;
+    frame.append(0x40);
+    frame.append(0x36);
+    
+    // Should eventually succeed with retry
+    EXPECT_NO_THROW({
+        conn.send(frame, 500);
+    });
+    
+    conn.close();
+}
+
+// Test poll with driver failure
+TEST_F(BusTest, PollWithDriverFailure) {
+    HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
+    
+    // Set up mock to fail on poll
+    EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _))
+        .Times(1)
+        .WillOnce(Return(HDMI_CEC_IO_SENT_BUT_NOT_ACKD));
+    
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    // Poll should throw exception when it gets NACK
+    EXPECT_THROW({
+        conn.poll(LogicalAddress::PLAYBACK_DEVICE_1, Throw_e());
+    }, Exception);
+    
+    conn.close();
+}
+
+// Test ping with driver failure
+TEST_F(BusTest, PingWithDriverFailure) {
+    HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
+    
+    // Set up mock to fail on ping
+    EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _))
+        .Times(1)
+        .WillOnce(Return(HDMI_CEC_IO_SENT_BUT_NOT_ACKD));
+    
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    // Ping should throw exception when it gets NACK
+    EXPECT_THROW({
+        conn.ping(LogicalAddress::PLAYBACK_DEVICE_1, LogicalAddress::TV, Throw_e());
+    }, Exception);
+    
+    conn.close();
+}
+
+// Test send with frame length > 1 for exception path
+TEST_F(BusTest, SendLongerFrameWithFailure) {
+    HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
+    
+    // Set up mock to fail
+    EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _))
+        .Times(1)
+        .WillOnce(Return(HDMI_CEC_IO_GENERAL_ERROR));
+    
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    CECFrame frame;
+    frame.append(0x40);
+    frame.append(0x36);
+    frame.append(0x00); // Frame length > 1
+    
+    // Should not throw even with error (normal send swallows exceptions)
+    EXPECT_NO_THROW({
+        conn.send(frame, 0);
+    });
+    
+    conn.close();
+}
+
+// Test multiple consecutive async sends to exercise writer queue
+TEST_F(BusTest, ManyAsyncSends) {
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    // Send many frames asynchronously to exercise the writer queue
+    for (int i = 0; i < 20; i++) {
+        CECFrame frame;
+        frame.append(0x40);
+        frame.append(0x36);
+        EXPECT_NO_THROW(conn.sendAsync(frame));
+    }
+    
+    // Give writer time to process all frames
+    usleep(200000);
+    
+    conn.close();
+}
+
+// Test connection operations without bus started (negative test)
+TEST_F(BusTest, OperationsWithoutBusStarted) {
+    // Stop the bus first
+    LibCCEC::getInstance().term();
+    
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    
+    // Operations should throw InvalidStateException
+    EXPECT_THROW({
+        conn.open();
+    }, InvalidStateException);
+    
+    // Restart the bus for other tests
+    LibCCEC::getInstance().init("CEC_TEST");
+}
+
+// Test send with very large timeout value
+TEST_F(BusTest, SendWithLargeTimeout) {
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    CECFrame frame;
+    frame.append(0x40);
+    frame.append(0x36);
+    
+    // Test with large timeout (will succeed quickly due to mock)
+    EXPECT_NO_THROW({
+        conn.send(frame, 1000);
+    });
+    
+    conn.close();
+}
+
+// Test async send followed by immediate close to test cleanup
+TEST_F(BusTest, AsyncSendThenQuickClose) {
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    CECFrame frame;
+    frame.append(0x40);
+    frame.append(0x36);
+    
+    // Send async
+    EXPECT_NO_THROW(conn.sendAsync(frame));
+    
+    // Close immediately (writer should cleanup queue)
+    usleep(10000); // Small delay to let frame enter queue
+    EXPECT_NO_THROW(conn.close());
+}
+
+// Test broadcast send with timeout
+TEST_F(BusTest, BroadcastSendWithTimeout) {
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    CECFrame frame;
+    frame.append(0x82); // Active Source
+    frame.append(0x10);
+    frame.append(0x00);
+    
+    EXPECT_NO_THROW({
+        conn.sendTo(LogicalAddress::BROADCAST, frame, 250);
+    });
+    
+    conn.close();
+}
+
+// Test multiple timeouts with same frame
+TEST_F(BusTest, MultipleTimeoutRetries) {
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    CECFrame frame;
+    frame.append(0x40);
+    frame.append(0x83);
+    
+    // Test multiple send operations with timeout
+    EXPECT_NO_THROW(conn.send(frame, 250));
+    EXPECT_NO_THROW(conn.send(frame, 250));
+    EXPECT_NO_THROW(conn.send(frame, 250));
+    
+    conn.close();
+}

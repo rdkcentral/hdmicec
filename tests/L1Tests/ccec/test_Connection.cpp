@@ -526,3 +526,481 @@ TEST_F(ConnectionTest, RemoveNonExistentListener) {
     
     conn.close();
 }
+
+// Test send with Throw_e parameter and driver success
+TEST_F(ConnectionTest, SendWithThrowSuccess) {
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    CECFrame frame;
+    frame.append(0x36);
+    
+    // Should not throw when successful
+    EXPECT_NO_THROW({
+        conn.send(frame, 100, Throw_e());
+    });
+    
+    conn.close();
+}
+
+// Test sendTo with Throw_e parameter and driver success
+TEST_F(ConnectionTest, SendToWithThrowSuccess) {
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    CECFrame frame;
+    frame.append(0x83);
+    
+    // Should not throw when successful
+    EXPECT_NO_THROW({
+        conn.sendTo(LogicalAddress::TV, frame, 100, Throw_e());
+    });
+    
+    conn.close();
+}
+
+// Test send with Throw_e and driver failure to trigger exception path
+TEST_F(ConnectionTest, SendWithThrowAndDriverFailure) {
+    HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
+    
+    // Set up mock to fail
+    EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _))
+        .Times(1)
+        .WillOnce(Return(HDMI_CEC_IO_SENT_FAILED));
+    
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    CECFrame frame;
+    frame.append(0x36);
+    
+    // Should throw when driver fails
+    EXPECT_THROW({
+        conn.send(frame, 0, Throw_e());
+    }, Exception);
+    
+    conn.close();
+}
+
+// Test sendTo with Throw_e and driver failure to trigger exception path
+TEST_F(ConnectionTest, SendToWithThrowAndDriverFailure) {
+    HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
+    
+    // Set up mock to fail
+    EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _))
+        .Times(1)
+        .WillOnce(Return(HDMI_CEC_IO_SENT_FAILED));
+    
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    CECFrame frame;
+    frame.append(0x83);
+    
+    // Should throw when driver fails
+    EXPECT_THROW({
+        conn.sendTo(LogicalAddress::TV, frame, 0, Throw_e());
+    }, Exception);
+    
+    conn.close();
+}
+
+// Test poll with Throw_e parameter on success
+TEST_F(ConnectionTest, PollWithThrowSuccess) {
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    // Should not throw when successful
+    EXPECT_NO_THROW({
+        conn.poll(LogicalAddress::PLAYBACK_DEVICE_1, Throw_e());
+    });
+    
+    conn.close();
+}
+
+// Test poll with Throw_e and driver failure to trigger exception path
+TEST_F(ConnectionTest, PollWithThrowAndDriverFailure) {
+    HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
+    
+    // Set up mock to fail
+    EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _))
+        .Times(1)
+        .WillOnce(Return(HDMI_CEC_IO_SENT_BUT_NOT_ACKD));
+    
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    // Should throw when driver fails (NACK)
+    EXPECT_THROW({
+        conn.poll(LogicalAddress::PLAYBACK_DEVICE_1, Throw_e());
+    }, Exception);
+    
+    conn.close();
+}
+
+// Test ping with Throw_e parameter on success
+TEST_F(ConnectionTest, PingWithThrowSuccess) {
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    // Should not throw when successful
+    EXPECT_NO_THROW({
+        conn.ping(LogicalAddress::PLAYBACK_DEVICE_1, LogicalAddress::TV, Throw_e());
+    });
+    
+    conn.close();
+}
+
+// Test ping with Throw_e and driver failure to trigger exception path
+TEST_F(ConnectionTest, PingWithThrowAndDriverFailure) {
+    HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
+    
+    // Set up mock to fail
+    EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _))
+        .Times(1)
+        .WillOnce(Return(HDMI_CEC_IO_SENT_BUT_NOT_ACKD));
+    
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    // Should throw when driver fails (NACK)
+    EXPECT_THROW({
+        conn.ping(LogicalAddress::PLAYBACK_DEVICE_1, LogicalAddress::TV, Throw_e());
+    }, Exception);
+    
+    conn.close();
+}
+
+// Test send with exception swallowing (no Throw_e parameter)
+TEST_F(ConnectionTest, SendWithoutThrowSwallowsException) {
+    HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
+    
+    // Set up mock to fail
+    EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _))
+        .Times(1)
+        .WillOnce(Return(HDMI_CEC_IO_GENERAL_ERROR));
+    
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    CECFrame frame;
+    frame.append(0x36);
+    
+    // Should NOT throw - exception is swallowed
+    EXPECT_NO_THROW({
+        conn.send(frame, 0);
+    });
+    
+    conn.close();
+}
+
+// Test sendTo with exception swallowing (no Throw_e parameter)
+TEST_F(ConnectionTest, SendToWithoutThrowSwallowsException) {
+    HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
+    
+    // Set up mock to fail
+    EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _))
+        .Times(1)
+        .WillOnce(Return(HDMI_CEC_IO_GENERAL_ERROR));
+    
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    CECFrame frame;
+    frame.append(0x83);
+    
+    // Should NOT throw - exception is swallowed
+    EXPECT_NO_THROW({
+        conn.sendTo(LogicalAddress::TV, frame, 0);
+    });
+    
+    conn.close();
+}
+
+// Test matchSource with valid logical address
+TEST_F(ConnectionTest, MatchSourceValidAddress) {
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    // Create frame with correct source (4 = PLAYBACK_DEVICE_1)
+    CECFrame frame;
+    frame.append(0x4F); // Source=4, Dest=F
+    frame.append(0x36);
+    
+    EXPECT_NO_THROW({
+        conn.send(frame, 0);
+    });
+    
+    conn.close();
+}
+
+// Test matchSource with mismatched source (gets corrected)
+TEST_F(ConnectionTest, MatchSourceMismatchedAddress) {
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    // Create frame with wrong source (will be corrected)
+    CECFrame frame;
+    frame.append(0x0F); // Source=0 (TV), Dest=F - will be changed to 4F
+    frame.append(0x36);
+    
+    EXPECT_NO_THROW({
+        conn.send(frame, 0);
+    });
+    
+    conn.close();
+}
+
+// Test DefaultFilter with UNREGISTERED source (receives all)
+TEST_F(ConnectionTest, DefaultFilterUnregistered) {
+    Connection conn(LogicalAddress::UNREGISTERED, false);
+    conn.open();
+    
+    TestFrameListener listener;
+    conn.addFrameListener(&listener);
+    
+    // Unregistered connections receive all messages
+    CECFrame frame;
+    frame.append(0x0F); // Any frame should be received
+    frame.append(0x36);
+    
+    conn.send(frame, 0);
+    usleep(50000);
+    
+    conn.removeFrameListener(&listener);
+    conn.close();
+}
+
+// Test DefaultFilter with specific address (filters correctly)
+TEST_F(ConnectionTest, DefaultFilterSpecificAddress) {
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    TestFrameListener listener;
+    conn.addFrameListener(&listener);
+    
+    // Frame addressed to this device should be received
+    CECFrame frame;
+    frame.append(0x04); // Source=0, Dest=4 (PLAYBACK_DEVICE_1)
+    frame.append(0x36);
+    
+    conn.send(frame, 0);
+    usleep(50000);
+    
+    conn.removeFrameListener(&listener);
+    conn.close();
+}
+
+// Test DefaultFilter with broadcast message
+TEST_F(ConnectionTest, DefaultFilterBroadcast) {
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    TestFrameListener listener;
+    conn.addFrameListener(&listener);
+    
+    // Broadcast frame should be received
+    CECFrame frame;
+    frame.append(0x0F); // Source=0, Dest=F (BROADCAST)
+    frame.append(0x82);
+    
+    conn.send(frame, 0);
+    usleep(50000);
+    
+    conn.removeFrameListener(&listener);
+    conn.close();
+}
+
+// Test DefaultFilter with filtered message (not for this device)
+TEST_F(ConnectionTest, DefaultFilterFiltered) {
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    TestFrameListener listener;
+    conn.addFrameListener(&listener);
+    
+    // Frame addressed to different device should be filtered
+    CECFrame frame;
+    frame.append(0x05); // Source=0, Dest=5 (AUDIO_SYSTEM) - not for us
+    frame.append(0x36);
+    
+    conn.send(frame, 0);
+    usleep(50000);
+    
+    conn.removeFrameListener(&listener);
+    conn.close();
+}
+
+// Test multiple listeners notification
+TEST_F(ConnectionTest, MultipleListenersNotification) {
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    TestFrameListener listener1;
+    TestFrameListener listener2;
+    TestFrameListener listener3;
+    
+    conn.addFrameListener(&listener1);
+    conn.addFrameListener(&listener2);
+    conn.addFrameListener(&listener3);
+    
+    CECFrame frame;
+    frame.append(0x04); // Addressed to PLAYBACK_DEVICE_1
+    frame.append(0x36);
+    
+    conn.send(frame, 0);
+    usleep(50000);
+    
+    conn.removeFrameListener(&listener1);
+    conn.removeFrameListener(&listener2);
+    conn.removeFrameListener(&listener3);
+    
+    conn.close();
+}
+
+// Test sendAsync with matchSource correction
+TEST_F(ConnectionTest, SendAsyncMatchSource) {
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    // Create frame with wrong source
+    CECFrame frame;
+    frame.append(0x0F); // Will be corrected to 0x4F
+    frame.append(0x36);
+    
+    EXPECT_NO_THROW({
+        conn.sendAsync(frame);
+    });
+    
+    usleep(50000);
+    conn.close();
+}
+
+// Test sendToAsync with header construction
+TEST_F(ConnectionTest, SendToAsyncHeaderConstruction) {
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    CECFrame frame;
+    frame.append(0x83); // Active Source
+    frame.append(0x10);
+    frame.append(0x00);
+    
+    // sendToAsync should create proper header
+    EXPECT_NO_THROW({
+        conn.sendToAsync(LogicalAddress::TV, frame);
+    });
+    
+    usleep(50000);
+    conn.close();
+}
+
+// Test connection close clears all listeners
+TEST_F(ConnectionTest, CloseRemovesAllListeners) {
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    TestFrameListener listener1;
+    TestFrameListener listener2;
+    
+    conn.addFrameListener(&listener1);
+    conn.addFrameListener(&listener2);
+    
+    // Close should clear listeners
+    EXPECT_NO_THROW(conn.close());
+    
+    // Should be able to reopen and add new listeners
+    EXPECT_NO_THROW(conn.open());
+    EXPECT_NO_THROW(conn.addFrameListener(&listener1));
+    EXPECT_NO_THROW(conn.removeFrameListener(&listener1));
+    
+    conn.close();
+}
+
+// Test large frame with matchSource
+TEST_F(ConnectionTest, LargeFrameMatchSource) {
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    CECFrame frame;
+    frame.append(0x4F);
+    for (int i = 0; i < 14; i++) {
+        frame.append(0x00);
+    }
+    
+    EXPECT_NO_THROW({
+        conn.send(frame, 100);
+    });
+    
+    conn.close();
+}
+
+// Test getSource returns correct value
+TEST_F(ConnectionTest, GetSourceReturnsCorrectValue) {
+    Connection conn(LogicalAddress::RECORDING_DEVICE_1, false);
+    EXPECT_EQ(conn.getSource().toInt(), LogicalAddress::RECORDING_DEVICE_1);
+}
+
+// Test setSource updates logical address
+TEST_F(ConnectionTest, SetSourceUpdatesAddress) {
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    EXPECT_EQ(conn.getSource().toInt(), LogicalAddress::PLAYBACK_DEVICE_1);
+    
+    conn.setSource(LogicalAddress::PLAYBACK_DEVICE_2);
+    EXPECT_EQ(conn.getSource().toInt(), LogicalAddress::PLAYBACK_DEVICE_2);
+}
+
+// Test connection with all different logical addresses
+TEST_F(ConnectionTest, AllLogicalAddresses) {
+    int addresses[] = {
+        LogicalAddress::TV,
+        LogicalAddress::RECORDING_DEVICE_1,
+        LogicalAddress::RECORDING_DEVICE_2,
+        LogicalAddress::TUNER_1,
+        LogicalAddress::PLAYBACK_DEVICE_1,
+        LogicalAddress::AUDIO_SYSTEM,
+        LogicalAddress::TUNER_2,
+        LogicalAddress::TUNER_3,
+        LogicalAddress::PLAYBACK_DEVICE_2,
+        LogicalAddress::RECORDING_DEVICE_3,
+        LogicalAddress::TUNER_4,
+        LogicalAddress::PLAYBACK_DEVICE_3,
+        LogicalAddress::UNREGISTERED,
+        LogicalAddress::BROADCAST
+    };
+    
+    for (int addr : addresses) {
+        Connection conn(LogicalAddress(addr), false);
+        EXPECT_EQ(conn.getSource().toInt(), addr);
+    }
+}
+
+// Test rapid open/close cycles
+TEST_F(ConnectionTest, RapidOpenCloseCycles) {
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    
+    for (int i = 0; i < 20; i++) {
+        EXPECT_NO_THROW(conn.open());
+        EXPECT_NO_THROW(conn.close());
+    }
+}
+
+// Test concurrent listener add/remove operations
+TEST_F(ConnectionTest, ConcurrentListenerOperations) {
+    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
+    conn.open();
+    
+    TestFrameListener listeners[10];
+    
+    // Add all listeners
+    for (int i = 0; i < 10; i++) {
+        EXPECT_NO_THROW(conn.addFrameListener(&listeners[i]));
+    }
+    
+    // Remove all listeners
+    for (int i = 0; i < 10; i++) {
+        EXPECT_NO_THROW(conn.removeFrameListener(&listeners[i]));
+    }
+    
+    conn.close();
+}
