@@ -520,7 +520,7 @@ TEST_F(DriverTest, ZZZ_CloseWithFailure) {
     ::testing::Mock::VerifyAndClearExpectations(mock);
     
     // Restore state - driver is in bad state, force recovery
-    // The driver state after failed close is undefined, so try to recover
+    // The driver state after failed close is undefined, so try to recover 
     for (int i = 0; i < 3; i++) {
         try {
             driver.close();
