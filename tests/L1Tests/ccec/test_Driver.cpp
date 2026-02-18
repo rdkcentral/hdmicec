@@ -34,6 +34,9 @@ protected:
     void SetUp() override {
         // Clear any lingering mock expectations
         HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
+        if (mock == nullptr) {
+            FAIL() << "Mock instance is NULL in SetUp - test environment not properly initialized";
+        }
         ::testing::Mock::VerifyAndClearExpectations(mock);
         
         // Ensure driver is open for each test
@@ -57,7 +60,9 @@ protected:
     void TearDown() override {
         // Clear mock expectations after each test
         HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
-        ::testing::Mock::VerifyAndClearExpectations(mock);
+        if (mock != nullptr) {
+            ::testing::Mock::VerifyAndClearExpectations(mock);
+        }
         
         // Ensure driver is open after each test for other tests
         Driver &driver = Driver::getInstance();
@@ -92,6 +97,10 @@ TEST_F(DriverTest, DriverAlreadyOpen) {
     std::cout << "[DriverAlreadyOpen] Getting mock instance..." << std::endl;
     HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
     std::cout << "[DriverAlreadyOpen] Mock instance: " << (void*)mock << std::endl;
+    
+    if (mock == nullptr) {
+        FAIL() << "Mock instance is NULL - test environment not properly initialized";
+    }
     
     std::cout << "[DriverAlreadyOpen] Getting driver instance..." << std::endl;
     Driver &driver = Driver::getInstance();
