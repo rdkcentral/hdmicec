@@ -601,12 +601,22 @@ TEST_F(DriverTest, PollAddress) {
         driver.open();
     });
     
+    // Set up mock for HdmiCecTx which poll()->write() will call
+    EXPECT_CALL(*mock, HdmiCecTx(::testing::_, ::testing::_, ::testing::_, ::testing::_))
+        .Times(1)
+        .WillOnce(DoAll(
+            SetArgPointee<3>(HDMI_CEC_IO_SENT_AND_ACKD),
+            Return(HDMI_CEC_IO_SUCCESS)
+        ));
+    
     LogicalAddress from(LogicalAddress::PLAYBACK_DEVICE_1);
     LogicalAddress to(LogicalAddress::PLAYBACK_DEVICE_1);
     
     EXPECT_NO_THROW({
         driver.poll(from, to);
     });
+    
+    ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
 // Test writeAsync

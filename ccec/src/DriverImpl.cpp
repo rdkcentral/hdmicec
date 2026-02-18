@@ -204,6 +204,7 @@ void  DriverImpl::writeAsync(const CECFrame &frame)  noexcept(false)
 
     {AutoLock lock_(mutex);
     	if (status != OPENED) {
+            printf("DriverImpl::writeAsync called but driver not opened\r\n");
     		throw InvalidStateException();
     	}
 		CCEC_LOG( LOG_DEBUG, "DriverImpl::write to call HdmiCecTxAsync\r\n");
