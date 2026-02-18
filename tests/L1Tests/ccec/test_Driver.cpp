@@ -151,6 +151,12 @@ TEST_F(DriverTest, MultipleClose) {
     
     // Restore state - reopen the driver
     driver.open();
+
+
+    EXPECT_NO_THROW({
+        driver.close();
+    });
+    
 }
 
 // Test getLogicalAddress
