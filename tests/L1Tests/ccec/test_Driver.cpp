@@ -126,8 +126,12 @@ TEST_F(DriverTest, CloseAndReopen) {
 
 // Test multiple close calls
 TEST_F(DriverTest, MultipleClose) {
+    HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
+    if (mock == nullptr) {
+        GTEST_SKIP() << "Mock is nullptr - test environment not initialized";
+    }
+    
     Driver &driver = Driver::getInstance();
-
 
     // Ensure we start in a good state
     try {
@@ -136,8 +140,15 @@ TEST_F(DriverTest, MultipleClose) {
         // Already open, that's fine
     }
     
+    // Set up mock for first close
+    EXPECT_CALL(*mock, HdmiCecClose(::testing::_))
+        .Times(1)
+        .WillOnce(Return(HDMI_CEC_IO_SUCCESS));
+    
     // First close
     driver.close();
+    
+    ::testing::Mock::VerifyAndClearExpectations(mock);
     
     // Second close should not throw (handled gracefully)
     EXPECT_NO_THROW({
@@ -146,12 +157,20 @@ TEST_F(DriverTest, MultipleClose) {
     
     // Restore state - reopen the driver
     driver.open();
-
-
+    
+    // Set up mock for final close
+    EXPECT_CALL(*mock, HdmiCecClose(::testing::_))
+        .Times(1)
+        .WillOnce(Return(HDMI_CEC_IO_SUCCESS));
+    
     EXPECT_NO_THROW({
         driver.close();
     });
     
+    ::testing::Mock::VerifyAndClearExpectations(mock);
+    
+    // Reopen for next test
+    driver.open();
 }
 
 // Test getLogicalAddress
