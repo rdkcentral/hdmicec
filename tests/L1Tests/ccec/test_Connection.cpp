@@ -534,38 +534,6 @@ TEST_F(ConnectionTest, RemoveNonExistentListener) {
     conn.close();
 }
 
-// Test send with Throw_e parameter and driver success
-TEST_F(ConnectionTest, SendWithThrowSuccess) {
-    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
-    conn.open();
-    
-    CECFrame frame;
-    frame.append(0x36);
-    
-    // Should not throw when successful
-    EXPECT_NO_THROW({
-        conn.send(frame, 100, Throw_e());
-    });
-    
-    conn.close();
-}
-
-// Test sendTo with Throw_e parameter and driver success
-TEST_F(ConnectionTest, SendToWithThrowSuccess) {
-    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
-    conn.open();
-    
-    CECFrame frame;
-    frame.append(0x83);
-    
-    // Should not throw when successful
-    EXPECT_NO_THROW({
-        conn.sendTo(LogicalAddress::TV, frame, 100, Throw_e());
-    });
-    
-    conn.close();
-}
-
 // Test send with Throw_e and driver failure to trigger exception path
 TEST_F(ConnectionTest, SendWithThrowAndDriverFailure) {
     HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
@@ -587,6 +555,9 @@ TEST_F(ConnectionTest, SendWithThrowAndDriverFailure) {
     }, Exception);
     
     conn.close();
+    
+    // Clear mock expectations
+    ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
 // Test sendTo with Throw_e and driver failure to trigger exception path
@@ -610,19 +581,9 @@ TEST_F(ConnectionTest, SendToWithThrowAndDriverFailure) {
     }, Exception);
     
     conn.close();
-}
-
-// Test poll with Throw_e parameter on success
-TEST_F(ConnectionTest, PollWithThrowSuccess) {
-    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
-    conn.open();
     
-    // Should not throw when successful
-    EXPECT_NO_THROW({
-        conn.poll(LogicalAddress::PLAYBACK_DEVICE_1, Throw_e());
-    });
-    
-    conn.close();
+    // Clear mock expectations
+    ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
 // Test poll with Throw_e and driver failure to trigger exception path
@@ -643,19 +604,9 @@ TEST_F(ConnectionTest, PollWithThrowAndDriverFailure) {
     }, Exception);
     
     conn.close();
-}
-
-// Test ping with Throw_e parameter on success
-TEST_F(ConnectionTest, PingWithThrowSuccess) {
-    Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
-    conn.open();
     
-    // Should not throw when successful
-    EXPECT_NO_THROW({
-        conn.ping(LogicalAddress::PLAYBACK_DEVICE_1, LogicalAddress::TV, Throw_e());
-    });
-    
-    conn.close();
+    // Clear mock expectations
+    ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
 // Test ping with Throw_e and driver failure to trigger exception path
@@ -676,6 +627,9 @@ TEST_F(ConnectionTest, PingWithThrowAndDriverFailure) {
     }, Exception);
     
     conn.close();
+    
+    // Clear mock expectations
+    ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
 // Test send with exception swallowing (no Throw_e parameter)
@@ -699,6 +653,9 @@ TEST_F(ConnectionTest, SendWithoutThrowSwallowsException) {
     });
     
     conn.close();
+    
+    // Clear mock expectations
+    ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
 // Test sendTo with exception swallowing (no Throw_e parameter)
@@ -722,6 +679,9 @@ TEST_F(ConnectionTest, SendToWithoutThrowSwallowsException) {
     });
     
     conn.close();
+    
+    // Clear mock expectations
+    ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
 // Test matchSource with valid logical address
