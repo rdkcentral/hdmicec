@@ -21,8 +21,6 @@
 #include "hdmi_cec_driver_mock.h"
 #include "ccec/LibCCEC.hpp"
 
-using namespace CCEC;
-
 // Global test environment to set up mocks
 class CecTestEnvironment : public ::testing::Environment {
 public:
