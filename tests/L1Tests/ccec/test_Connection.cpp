@@ -20,6 +20,13 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 #include "ccec/Connection.hpp"
+#include "ccec/Exception.hpp"
+#include "hdmi_cec_driver_mock.h"
+
+using ::testing::_;
+using ::testing::Return;
+using ::testing::DoAll;
+using ::testing::SetArgPointee;
 
 class ConnectionTest : public ::testing::Test {
 protected:
