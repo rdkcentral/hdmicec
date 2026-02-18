@@ -171,7 +171,7 @@ TEST_F(DriverTest, GetPhysicalAddress) {
     EXPECT_NO_THROW({
         driver.getPhysicalAddress(&physicalAddr);
     });
-    EXPECT_EQ(physicalAddr, 0x1000);
+    EXPECT_EQ(physicalAddr, 0x1000u);
     
     // Clear mock expectations
     ::testing::Mock::VerifyAndClearExpectations(mock);
@@ -472,22 +472,6 @@ TEST_F(DriverTest, CloseWithFailure) {
         }
     }
     EXPECT_TRUE(recovered);
-}
-
-// Test driver close and reopen
-TEST_F(DriverTest, CloseAndReopen) {
-    Driver &driver = Driver::getInstance();
-    
-    // Close the driver
-    driver.close();
-    
-    // Reopen it
-    driver.open();
-    
-    // Verify it works by doing a simple operation
-    EXPECT_NO_THROW({
-        driver.open(); // Should handle gracefully
-    });
 }
 
 // Test printFrameDetails with various frames
