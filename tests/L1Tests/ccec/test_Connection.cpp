@@ -21,23 +21,23 @@
 #include <gmock/gmock.h>
 #include "ccec/Connection.hpp"
 
-
+using namespace CCEC;
 
 class ConnectionTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        // Mock or stub hardware dependencies as needed
+        // Bus is already started by global test environment
     }
 
     void TearDown() override {
-        // Cleanup
+        // Cleanup handled by global test environment
     }
 };
 
 TEST_F(ConnectionTest, ConstructorCreatesConnection) {
     EXPECT_NO_THROW({
         Connection conn(LogicalAddress::UNREGISTERED, true);
-        conn.close();  // Manually close to test if this prevents segfault
+        conn.close();
     });
 }
 

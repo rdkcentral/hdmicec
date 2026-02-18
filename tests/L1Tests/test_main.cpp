@@ -18,8 +18,42 @@
 */
 
 #include <gtest/gtest.h>
+#include "hdmi_cec_driver_mock.h"
+#include "ccec/LibCCEC.hpp"
+
+// Global test environment to set up mocks
+class CecTestEnvironment : public ::testing::Environment {
+public:
+    HdmiCecDriverMock* driverMock;
+    
+    void SetUp() override {
+        // Create and install the driver mock
+        driverMock = new HdmiCecDriverMock();
+        HdmiCecDriverMock::setInstance(driverMock);
+        
+        // Initialize the Bus so it's ready for tests
+        try {
+            CCEC::LibCCEC::getInstance().init("CEC_TEST");
+        } catch (...) {
+            // Ignore if already initialized
+        }
+    }
+    
+    void TearDown() override {
+        // Clean up
+        try {
+            CCEC::LibCCEC::getInstance().term();
+        } catch (...) {
+            // Ignore cleanup errors
+        }
+        
+        delete driverMock;
+        HdmiCecDriverMock::setInstance(nullptr);
+    }
+};
 
 int main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);
+    ::testing::AddGlobalTestEnvironment(new CecTestEnvironment);
     return RUN_ALL_TESTS();
 }
