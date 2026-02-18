@@ -99,10 +99,23 @@ void LibCCEC::init(const char *name)
 
 	check_cec_log_status();
 
-	/* Add Host-specific Initialization*/
-	Driver::getInstance().open();
+	/* Add Host-specific Initialization */
+	// Do not start the threads in Bus constructor if HAL does not support CEC to prevent 100% CPU usage issue.
+	// throw exceptions and prevent starting the worker threads if driver open fails.
+	try {
+		Driver::getInstance().open();
+	} catch (OperationNotSupportedException &e) {
+		CCEC_LOG( LOG_EXP, "LibCCEC::init Caught OperationNotSupportedException during host-specific initialization: %s\r\n", e.what());
+		throw;
+	} catch (Exception &e) {
+		CCEC_LOG( LOG_EXP, "LibCCEC::init Caught Exception during host-specific initialization: %s\r\n", e.what());
+		throw;
+	} catch (...) {
+		CCEC_LOG( LOG_EXP, "LibCCEC::init Caught Unknown Exception during host-specific initialization\r\n");
+		throw;
+	}
 	Bus::getInstance().start();
-        t2_init(const_cast<char*>("hdmicec"));
+	t2_init(const_cast<char*>("hdmicec"));
 	initialized = true;
 }
 

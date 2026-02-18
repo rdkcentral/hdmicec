@@ -81,7 +81,7 @@ void check_cec_log_status(void)
     memset(&st,0,sizeof(st));
     if((fp = fopen("/tmp/cec_log_enabled","r")) == NULL)
     {
-        printf("Error in opening cec_log_enabled filee \n");
+        printf("Error in opening cec_log_enabled file.\n");
         return;
     }
     if ((fgets(cecBuffer,buffer_length,fp)) != NULL)
@@ -96,7 +96,7 @@ void check_cec_log_status(void)
         }
     }
     fclose(fp);
-    
+
     return;
 }
 

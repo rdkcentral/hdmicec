@@ -70,8 +70,8 @@ Bus & Bus::getInstance(void)
 Bus::Bus(void) : reader(*this), writer(*this), started(false)
 {
 	CCEC_LOG( LOG_DEBUG, "Bus Instance Created\r\n");
-	Thread(this->reader).start();
-	Thread(this->writer).start();
+	/* Reader and Writer threads start via Bus::start() to prevent 100% CPU on HALs without CEC;
+	   launched from LibCCEC::init() after driver validation. */
 	CCEC_LOG( LOG_DEBUG, "Bus Instance DONE\r\n");
 }
 
@@ -93,7 +93,6 @@ void Bus::start(void)
              Thread(writer).start();
         }
 
-	Driver::getInstance().open();
 	started = true;
 }
 
@@ -116,7 +115,6 @@ CCEC_LOG( LOG_INFO, "Bus::stop is called\r\n");
 	    writer.stop(true);
 	}
 
-	Driver::getInstance().close();
 	CCEC_LOG( LOG_INFO, "Bus::stop is called reader isstop :%d writer isstop :%d \r\n",reader.isStopped(),writer.isStopped());
 }
 
@@ -406,7 +404,7 @@ void Bus::sendAsync(const CECFrame &frame)
 }
 
 /**
- * @brief This function is used to poll the logical address 
+ * @brief This function is used to poll the logical address
  * and returns the ACK or NACK received from other devices.
  * If NACK then the device can use this logical address.
  *
@@ -433,7 +431,7 @@ void Bus::poll(const LogicalAddress &from, const LogicalAddress &to)
 }
 
 /**
- * @brief This function is used to ping devices, to know whether it present 
+ * @brief This function is used to ping devices, to know whether it present
  * and returns the ACK or NACK received from other devices.
  * If ACK is received, then the device is present.
  *
