@@ -473,6 +473,9 @@ TEST_F(BusTest, SendWithDriverFailure) {
     });
     
     conn.close();
+    
+    // Clear mock expectations
+    ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
 // Test send with throw parameter when driver fails
@@ -497,6 +500,9 @@ TEST_F(BusTest, SendWithThrowOnDriverFailure) {
     }, Exception);
     
     conn.close();
+    
+    // Clear mock expectations
+    ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
 // Test sendTo with throw parameter and driver failure
@@ -520,6 +526,9 @@ TEST_F(BusTest, SendToWithThrowOnDriverFailure) {
     }, Exception);
     
     conn.close();
+    
+    // Clear mock expectations
+    ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
 // Test retry logic with timeout - eventual success
@@ -548,6 +557,9 @@ TEST_F(BusTest, SendWithTimeoutRetrySuccess) {
     });
     
     conn.close();
+    
+    // Clear mock expectations
+    ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
 // Test poll with driver failure
@@ -568,6 +580,9 @@ TEST_F(BusTest, PollWithDriverFailure) {
     }, Exception);
     
     conn.close();
+    
+    // Clear mock expectations
+    ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
 // Test ping with driver failure
@@ -588,6 +603,9 @@ TEST_F(BusTest, PingWithDriverFailure) {
     }, Exception);
     
     conn.close();
+    
+    // Clear mock expectations
+    ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
 // Test send with frame length > 1 for exception path
@@ -613,6 +631,9 @@ TEST_F(BusTest, SendLongerFrameWithFailure) {
     });
     
     conn.close();
+    
+    // Clear mock expectations
+    ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
 // Test multiple consecutive async sends to exercise writer queue
