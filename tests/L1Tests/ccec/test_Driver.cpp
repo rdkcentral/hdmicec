@@ -158,11 +158,6 @@ TEST_F(DriverTest, GetLogicalAddress) {
     HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
     Driver &driver = Driver::getInstance();
     
-    // Ensure driver is definitely open and in a good state
-    try {
-        driver.close();
-    } catch (...) {}
-    
     try {
         driver.open();
     } catch (...) {
