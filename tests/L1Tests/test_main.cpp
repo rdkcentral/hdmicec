@@ -22,15 +22,16 @@
 #include "hdmi_cec_driver_mock.h"
 #include "ccec/LibCCEC.hpp"
 
+// Create mock instance before main
+static HdmiCecDriverMock* g_driverMock = nullptr;
+
 // Global test environment to set up mocks
 class CecTestEnvironment : public ::testing::Environment {
 public:
-    HdmiCecDriverMock* driverMock;
-    
     void SetUp() override {
         // Create and install the driver mock
-        driverMock = new HdmiCecDriverMock();
-        HdmiCecDriverMock::setInstance(driverMock);
+        g_driverMock = new HdmiCecDriverMock();
+        HdmiCecDriverMock::setInstance(g_driverMock);
         
         // Initialize the Bus so it's ready for tests
         try {
@@ -48,8 +49,9 @@ public:
             // Ignore cleanup errors
         }
         
-        delete driverMock;
         HdmiCecDriverMock::setInstance(nullptr);
+        delete g_driverMock;
+        g_driverMock = nullptr;
     }
 };
 
