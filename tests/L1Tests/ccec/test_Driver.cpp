@@ -92,6 +92,11 @@ TEST_F(DriverTest, DriverAlreadyOpen) {
 }
 
 TEST_F(DriverTest, CloseAndReopen) {
+    HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
+    if (mock == nullptr) {
+        GTEST_SKIP() << "Mock is nullptr - test environment not initialized";
+    }
+    
     Driver &driver = Driver::getInstance();
     
     // Ensure we start in a good state
@@ -101,10 +106,17 @@ TEST_F(DriverTest, CloseAndReopen) {
         // Already open, that's fine
     }
     
+    // Set up mock for close
+    EXPECT_CALL(*mock, HdmiCecClose(::testing::_))
+        .Times(1)
+        .WillOnce(Return(HDMI_CEC_IO_SUCCESS));
+    
     // Close the driver
     EXPECT_NO_THROW({
         driver.close();
     });
+    
+    ::testing::Mock::VerifyAndClearExpectations(mock);
     
     // Reopen it
     EXPECT_NO_THROW({
@@ -115,13 +127,8 @@ TEST_F(DriverTest, CloseAndReopen) {
     EXPECT_NO_THROW({
         driver.open(); // Should handle gracefully
     });
-
-
-    // First close
-    driver.close();
-
-
-
+    
+    // Leave driver in OPENED state for next test
 }
 
 // Test multiple close calls
@@ -146,31 +153,21 @@ TEST_F(DriverTest, MultipleClose) {
         .WillOnce(Return(HDMI_CEC_IO_SUCCESS));
     
     // First close
-    driver.close();
-    
-    ::testing::Mock::VerifyAndClearExpectations(mock);
-    
-    // Second close should not throw (handled gracefully)
-    EXPECT_NO_THROW({
-        driver.close();
-    });
-    
-    // Restore state - reopen the driver
-    driver.open();
-    
-    // Set up mock for final close
-    EXPECT_CALL(*mock, HdmiCecClose(::testing::_))
-        .Times(1)
-        .WillOnce(Return(HDMI_CEC_IO_SUCCESS));
-    
     EXPECT_NO_THROW({
         driver.close();
     });
     
     ::testing::Mock::VerifyAndClearExpectations(mock);
     
-    // Reopen for next test
-    driver.open();
+    // Second close should not throw (handled gracefully - driver already closed)
+    EXPECT_NO_THROW({
+        driver.close();
+    });
+    
+    // Restore state - reopen the driver for next test
+    EXPECT_NO_THROW({
+        driver.open();
+    });
 }
 
 // Test getLogicalAddress
