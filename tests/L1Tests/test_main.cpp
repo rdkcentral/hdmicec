@@ -21,6 +21,8 @@
 #include "hdmi_cec_driver_mock.h"
 #include "ccec/LibCCEC.hpp"
 
+using namespace CCEC;
+
 // Global test environment to set up mocks
 class CecTestEnvironment : public ::testing::Environment {
 public:
@@ -33,7 +35,7 @@ public:
         
         // Initialize the Bus so it's ready for tests
         try {
-            CCEC::LibCCEC::getInstance().init("CEC_TEST");
+            LibCCEC::getInstance().init("CEC_TEST");
         } catch (...) {
             // Ignore if already initialized
         }
@@ -42,7 +44,7 @@ public:
     void TearDown() override {
         // Clean up
         try {
-            CCEC::LibCCEC::getInstance().term();
+            LibCCEC::getInstance().term();
         } catch (...) {
             // Ignore cleanup errors
         }
