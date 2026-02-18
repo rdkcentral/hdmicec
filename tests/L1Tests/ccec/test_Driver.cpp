@@ -38,22 +38,8 @@ protected:
             ::testing::Mock::VerifyAndClearExpectations(mock);
         }
         
-        // Ensure driver is open for each test
-        // Try multiple times as it might be in a bad state
-        Driver &driver = Driver::getInstance();
-        for (int i = 0; i < 2; i++) {
-            try {
-                driver.open();
-                break;
-            } catch (...) {
-                // Already open or in bad state, try to reset
-                try {
-                    driver.close();
-                } catch (...) {
-                    // Ignore close errors
-                }
-            }
-        }
+        // Driver should already be open from global environment
+        // Don't force open here as it causes conflicts
     }
 
     void TearDown() override {
@@ -63,21 +49,8 @@ protected:
             ::testing::Mock::VerifyAndClearExpectations(mock);
         }
         
-        // Ensure driver is open after each test for other tests
-        Driver &driver = Driver::getInstance();
-        for (int i = 0; i < 2; i++) {
-            try {
-                driver.open();
-                break;
-            } catch (...) {
-                // Try to recover
-                try {
-                    driver.close();
-                } catch (...) {
-                    // Ignore
-                }
-            }
-        }
+        // Leave driver state as-is for next test
+        // Global environment will clean up at the end
     }
 };
 
