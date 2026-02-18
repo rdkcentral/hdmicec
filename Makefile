@@ -24,7 +24,7 @@ install_lib_dir := ./install/lib
 exe_osal            := osal/
 exe_ccec            := ccec/
 exe_soc             := soc/$(PLATFORM_SOC)/common
-exe_tests           := tests
+#exe_tests           := tests
 
 executable := $(exe_soc) $(exe_osal) $(exe_ccec) $(exe_tests)
 
