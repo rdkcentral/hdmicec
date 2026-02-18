@@ -94,6 +94,11 @@ TEST_F(DriverTest, DriverAlreadyOpen) {
         driver.open();
         driver.open(); // Second open
     });
+
+    // Close to restore state
+    EXPECT_NO_THROW({
+        driver.close();
+    });
 }
 
 TEST_F(DriverTest, CloseAndReopen) {
