@@ -97,7 +97,7 @@ TEST_F(DriverTest, DriverAlreadyOpen) {
     });
 
     // Close to restore state - set up mock expectation
-    EXPECT_CALL(*mock, HdmiCecClose(_))
+    EXPECT_CALL(*mock, HdmiCecClose(::testing::_))
         .Times(1)
         .WillOnce(Return(HDMI_CEC_IO_SUCCESS));
     
@@ -505,7 +505,7 @@ TEST_F(DriverTest, ZZZ_CloseWithFailure) {
     Driver &driver = Driver::getInstance();
     
     // Set up mock to fail on close
-    EXPECT_CALL(*mock, HdmiCecClose(_))
+    EXPECT_CALL(*mock, HdmiCecClose(::testing::_))
         .Times(1)
         .WillOnce(Return(HDMI_CEC_IO_GENERAL_ERROR));
     
