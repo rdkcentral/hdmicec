@@ -95,10 +95,19 @@ TEST_F(DriverTest, DriverAlreadyOpen) {
         driver.open(); // Second open
     });
 
-    // Close to restore state
+    // Close to restore state - set up mock expectation
+    EXPECT_CALL(*mock, HdmiCecClose(_))
+        .Times(1)
+        .WillOnce(Return(HDMI_CEC_IO_SUCCESS));
+    
     EXPECT_NO_THROW({
         driver.close();
     });
+    
+    ::testing::Mock::VerifyAndClearExpectations(mock);
+    
+    // Reopen for subsequent tests
+    driver.open();
 }
 
 TEST_F(DriverTest, CloseAndReopen) {
