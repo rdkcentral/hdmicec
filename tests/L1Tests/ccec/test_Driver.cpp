@@ -32,13 +32,33 @@ using ::testing::SetArgPointee;
 class DriverTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        // Driver is accessed through singleton
+        // Ensure driver is open for each test
+        Driver &driver = Driver::getInstance();
+        try {
+            driver.open();
+        } catch (...) {
+            // Already open, ignore
+        }
     }
 
     void TearDown() override {
-        // Cleanup handled by global test environment
+        // Ensure driver is open after each test for other tests
+        Driver &driver = Driver::getInstance();
+        try {
+            driver.open();
+        } catch (...) {
+            // Already open, ignore
+        }
     }
 };
+
+// Test driver singleton access - runs first alphabetically
+TEST_F(DriverTest, AAA_DriverSingletonAccess) {
+    EXPECT_NO_THROW({
+        Driver &driver = Driver::getInstance();
+        (void)driver; // Suppress unused variable warning
+    });
+}
 
 // Test driver open (already opened by global environment)
 TEST_F(DriverTest, DriverAlreadyOpen) {
@@ -47,6 +67,7 @@ TEST_F(DriverTest, DriverAlreadyOpen) {
     // Opening again should not throw (handled gracefully)
     EXPECT_NO_THROW({
         driver.open();
+        driver.open(); // Second open
     });
 }
 
@@ -55,13 +76,14 @@ TEST_F(DriverTest, CloseAndReopen) {
     Driver &driver = Driver::getInstance();
     
     // Close the driver
-    EXPECT_NO_THROW({
-        driver.close();
-    });
+    driver.close();
     
     // Reopen it
+    driver.open();
+    
+    // Verify it works by doing a simple operation
     EXPECT_NO_THROW({
-        driver.open();
+        driver.open(); // Should handle gracefully
     });
 }
 
@@ -70,19 +92,14 @@ TEST_F(DriverTest, MultipleClose) {
     Driver &driver = Driver::getInstance();
     
     // First close
-    EXPECT_NO_THROW({
-        driver.close();
-    });
+    driver.close();
     
     // Second close should not throw (handled gracefully)
     EXPECT_NO_THROW({
         driver.close();
     });
     
-    // Reopen for other tests
-    EXPECT_NO_THROW({
-        driver.open();
-    });
+    // Reopen is handled by TearDown
 }
 
 // Test getLogicalAddress
@@ -387,7 +404,7 @@ TEST_F(DriverTest, OpenWithFailure) {
     
     ::testing::Mock::VerifyAndClearExpectations(mock);
     
-    // Reopen successfully for other tests
+    // Successfully reopen for other tests (TearDown will also try)
     driver.open();
 }
 
@@ -408,8 +425,8 @@ TEST_F(DriverTest, CloseWithFailure) {
     
     ::testing::Mock::VerifyAndClearExpectations(mock);
     
-    // Reopen for other tests
-    driver.open();
+    // Try to close cleanly (driver is in weird state, may need to reopen)
+    // TearDown will ensure it's opened
 }
 
 // Test printFrameDetails with various frames
