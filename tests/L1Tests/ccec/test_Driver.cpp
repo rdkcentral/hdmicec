@@ -96,8 +96,7 @@ TEST_F(DriverTest, DriverAlreadyOpen) {
     });
 }
 
-// Test driver close and reopen - DISABLED due to state issues
-TEST_F(DriverTest, DISABLED_CloseAndReopen) {
+TEST_F(DriverTest, CloseAndReopen) {
     Driver &driver = Driver::getInstance();
     
     // Ensure we start in a good state
@@ -121,11 +120,26 @@ TEST_F(DriverTest, DISABLED_CloseAndReopen) {
     EXPECT_NO_THROW({
         driver.open(); // Should handle gracefully
     });
+
+
+    // First close
+    driver.close();
+
+
+
 }
 
 // Test multiple close calls
 TEST_F(DriverTest, MultipleClose) {
     Driver &driver = Driver::getInstance();
+
+
+    // Ensure we start in a good state
+    try {
+        driver.open();
+    } catch (...) {
+        // Already open, that's fine
+    }
     
     // First close
     driver.close();
@@ -135,7 +149,8 @@ TEST_F(DriverTest, MultipleClose) {
         driver.close();
     });
     
-    // Reopen is handled by TearDown
+    // Restore state - reopen the driver
+    driver.open();
 }
 
 // Test getLogicalAddress
@@ -213,6 +228,15 @@ TEST_F(DriverTest, AddLogicalAddressSuccess) {
         result = driver.addLogicalAddress(addr);
     });
     EXPECT_TRUE(result);
+    
+    ::testing::Mock::VerifyAndClearExpectations(mock);
+    
+    // Clean up - remove the address we added
+    EXPECT_CALL(*mock, HdmiCecRemoveLogicalAddress(_, _))
+        .Times(1)
+        .WillOnce(Return(HDMI_CEC_IO_SUCCESS));
+    
+    driver.removeLogicalAddress(addr);
     
     // Clear mock expectations
     ::testing::Mock::VerifyAndClearExpectations(mock);
@@ -455,8 +479,10 @@ TEST_F(DriverTest, ZZZ_OpenWithFailure) {
     
     ::testing::Mock::VerifyAndClearExpectations(mock);
     
-    // Successfully reopen for other tests (TearDown will also try)
-    driver.open();
+    // Restore state - successfully reopen the driver
+    EXPECT_NO_THROW({
+        driver.open();
+    });
 }
 
 // Test close with HdmiCecClose failure - runs late to avoid breaking other tests
@@ -476,21 +502,23 @@ TEST_F(DriverTest, ZZZ_CloseWithFailure) {
     
     ::testing::Mock::VerifyAndClearExpectations(mock);
     
-    // Driver is now in a bad state - it threw but may have partially closed
-    // Force reopen by trying multiple times
-    bool recovered = false;
+    // Restore state - driver is in bad state, force recovery
+    // The driver state after failed close is undefined, so try to recover
     for (int i = 0; i < 3; i++) {
         try {
+            driver.close();
+        } catch (...) {}
+        
+        try {
             driver.open();
-            recovered = true;
-            break;
+            break; // Successfully recovered
         } catch (...) {
-            try {
-                driver.close();
-            } catch (...) {}
+            if (i == 2) {
+                // Last attempt failed, this is a problem
+                FAIL() << "Could not restore driver to valid state";
+            }
         }
     }
-    EXPECT_TRUE(recovered);
 }
 
 // Test printFrameDetails with various frames
