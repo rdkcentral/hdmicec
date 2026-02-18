@@ -34,6 +34,7 @@ run_L1Tests_SOURCES = \
     test_main.cpp \
     ccec/test_CECFrame.cpp \
     ccec/test_Connection.cpp \
+    ccec/test_Bus.cpp \
     ccec/test_LibCCEC.cpp \
     ccec/test_MessageEncoder.cpp \
     ccec/test_MessageDecoder.cpp \
