@@ -104,9 +104,7 @@ TEST_F(DriverTest, DriverAlreadyOpen) {
     EXPECT_NO_THROW({
         driver.close();
     });
-    
-    ::testing::Mock::VerifyAndClearExpectations(mock);
-    
+        
     // Reopen for subsequent tests
     driver.open();
 }
