@@ -86,7 +86,7 @@ const uint8_t * CECFrame::getBuffer(void) const {
 
 uint8_t CECFrame::at(size_t i) const {
 	if (i >= len_) {
-        CCEC_LOG( LOG_DEBUG, "Frame i=%d, len=%d\r\n", i, len_);
+        CCEC_LOG( LOG_DEBUG, "Frame i=%zu, len=%zu\r\n", i, len_);
         //int *p = NULL;
         //*p = 0xACACACAC;
 		throw std::out_of_range("Frame reads beyond maximum");

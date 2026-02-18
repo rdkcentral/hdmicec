@@ -943,8 +943,6 @@ public:
                         case CEC_SWITCH:
                             all_device_types_str.push_back("CEC Switch");
                             break;
-                        default:
-                            break;
                     }
                 }
             }
@@ -1067,9 +1065,6 @@ public:
                                 break;
                             case MEDIA_CONTEXT_MENU:
                                 rc_profile_str.push_back("Source can handle Media Context-Sensitive Menu - 0x11 ");
-                                break;
-                            default:
-                                rc_profile_str.push_back("Source cannot handle any of the UI commands");
                                 break;
                         }
                     }
@@ -1209,9 +1204,6 @@ public:
                             break;
                         case RESERVED:
                             device_features_str.push_back("Reserved");
-                            break;
-                        default:
-                            device_features_str.push_back("Device does not support any of the features");
                             break;
                     }
                 }

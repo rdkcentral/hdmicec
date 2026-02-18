@@ -118,12 +118,11 @@ void LibCCEC::term()
 	if (!initialized) {
 		throw InvalidStateException();
 	}
-
+        /* coverity[sleep : FALSE] */
 	Bus::getInstance().stop();
 	Driver::getInstance().close();
 	initialized = false;
 }
-
 /**
  * @brief This function is used to add logical address
  * to the driver, so that it can ACK if there a direct messages received.

@@ -86,7 +86,7 @@ Destructor - Destroys the EventQueue object.
 	~EventQueue(void)
 	{AutoLock lock_(mutex);
 		if (!events->empty()) {
-			printf("WARNING:  There are [%d] elements left in queue\r\n", events->size());
+			printf("WARNING:  There are [%zu] elements left in queue\r\n", events->size());
 		}
 		delete events;
 	}
