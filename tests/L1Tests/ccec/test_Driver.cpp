@@ -521,6 +521,10 @@ TEST_F(DriverTest, ZZZ_OpenWithFailure) {
 // Test close with HdmiCecClose failure - runs late to avoid breaking other tests
 TEST_F(DriverTest, ZZZ_CloseWithFailure) {
     HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
+    if (mock == nullptr) {
+        GTEST_SKIP() << "Mock is nullptr - test environment not initialized";
+    }
+    
     Driver &driver = Driver::getInstance();
     
     // Set up mock to fail on close
@@ -535,23 +539,18 @@ TEST_F(DriverTest, ZZZ_CloseWithFailure) {
     
     ::testing::Mock::VerifyAndClearExpectations(mock);
     
-    // Restore state - driver is in bad state, force recovery
-    // The driver state after failed close is undefined, so try to recover
-    for (int i = 0; i < 3; i++) {
-        try {
-            driver.close();
-        } catch (...) {}
-        
-        try {
-            driver.open();
-            break; // Successfully recovered
-        } catch (...) {
-            if (i == 2) {
-                // Last attempt failed, this is a problem
-                FAIL() << "Could not restore driver to valid state";
-            }
-        }
+    // Restore state - after failed close, driver is in undefined state
+    // Try to close again (should be no-op or succeed)
+    try {
+        driver.close();
+    } catch (...) {
+        // Ignore - driver might already be closed or in bad state
     }
+    
+    // Now reopen - this should succeed
+    EXPECT_NO_THROW({
+        driver.open();
+    });
 }
 
 // Test printFrameDetails with various frames
@@ -590,14 +589,17 @@ TEST_F(DriverTest, PrintFrameDetails) {
 
 // Test poll through driver
 TEST_F(DriverTest, PollAddress) {
+    HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
+    if (mock == nullptr) {
+        GTEST_SKIP() << "Mock is nullptr - test environment not initialized";
+    }
+    
     Driver &driver = Driver::getInstance();
     
-    // Ensure driver is open
-    try {
+    // Ensure driver is open - set up expectations if needed
+    EXPECT_NO_THROW({
         driver.open();
-    } catch (...) {
-        // Already open, that's fine
-    }
+    });
     
     LogicalAddress from(LogicalAddress::PLAYBACK_DEVICE_1);
     LogicalAddress to(LogicalAddress::PLAYBACK_DEVICE_1);
@@ -617,11 +619,9 @@ TEST_F(DriverTest, WriteAsync) {
     Driver &driver = Driver::getInstance();
     
     // Ensure driver is open
-    try {
+    EXPECT_NO_THROW({
         driver.open();
-    } catch (...) {
-        // Already open, that's fine
-    }
+    });
     
     // Set up mock for async write
     EXPECT_CALL(*mock, HdmiCecTxAsync(_, _, _))
@@ -650,11 +650,9 @@ TEST_F(DriverTest, WriteAsyncWithFailure) {
     Driver &driver = Driver::getInstance();
     
     // Ensure driver is open
-    try {
+    EXPECT_NO_THROW({
         driver.open();
-    } catch (...) {
-        // Already open, that's fine
-    }
+    });
     
     // Set up mock to fail
     EXPECT_CALL(*mock, HdmiCecTxAsync(_, _, _))
