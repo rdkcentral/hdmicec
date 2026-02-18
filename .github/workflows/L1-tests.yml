@@ -160,6 +160,8 @@ jobs:
           '*/stubs/*'
           '*/mocks/*'
           '*/googletest/*'
+          '*/tests/*'
+          '*/test_*.cpp'
           -o filtered_coverage.info
           &&
           genhtml
