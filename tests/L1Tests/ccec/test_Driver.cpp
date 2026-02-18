@@ -87,26 +87,47 @@ TEST_F(DriverTest, AAA_DriverSingletonAccess) {
 
 // Test driver open (already opened by global environment)
 TEST_F(DriverTest, DriverAlreadyOpen) {
+    std::cout << "[DriverAlreadyOpen] START" << std::endl;
+    
+    std::cout << "[DriverAlreadyOpen] Getting mock instance..." << std::endl;
     HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
+    std::cout << "[DriverAlreadyOpen] Mock instance: " << (void*)mock << std::endl;
+    
+    std::cout << "[DriverAlreadyOpen] Getting driver instance..." << std::endl;
     Driver &driver = Driver::getInstance();
+    std::cout << "[DriverAlreadyOpen] Driver instance obtained" << std::endl;
     
     // Opening again should not throw (handled gracefully)
+    std::cout << "[DriverAlreadyOpen] Calling driver.open() first time..." << std::endl;
     EXPECT_NO_THROW({
         driver.open();
+        std::cout << "[DriverAlreadyOpen] First open completed, calling second open..." << std::endl;
         driver.open(); // Second open
+        std::cout << "[DriverAlreadyOpen] Second open completed" << std::endl;
     });
 
+    std::cout << "[DriverAlreadyOpen] Setting up mock expectation for close..." << std::endl;
     // Close to restore state - set up mock expectation
     EXPECT_CALL(*mock, HdmiCecClose(::testing::_))
         .Times(1)
         .WillOnce(Return(HDMI_CEC_IO_SUCCESS));
+    std::cout << "[DriverAlreadyOpen] Mock expectation set" << std::endl;
     
+    std::cout << "[DriverAlreadyOpen] Calling driver.close()..." << std::endl;
     EXPECT_NO_THROW({
         driver.close();
+        std::cout << "[DriverAlreadyOpen] driver.close() completed" << std::endl;
     });
-        
-    // Reopen for subsequent tests
+
+    std::cout << "[DriverAlreadyOpen] Clearing mock expectations..." << std::endl;
+    ::testing::Mock::VerifyAndClearExpectations(mock);
+    std::cout << "[DriverAlreadyOpen] Mock cleared" << std::endl;
+    
+    std::cout << "[DriverAlreadyOpen] Reopening driver for subsequent tests..." << std::endl;
     driver.open();
+    std::cout << "[DriverAlreadyOpen] Driver reopened" << std::endl;
+    
+    std::cout << "[DriverAlreadyOpen] END" << std::endl;
 }
 
 TEST_F(DriverTest, CloseAndReopen) {
