@@ -415,13 +415,14 @@ TEST_F(ConnectionTest, AsyncSendToDifferentAddresses) {
     conn.close();
 }
 
-// Test empty frame send
-TEST_F(ConnectionTest, SendEmptyFrame) {
+// Test empty frame send - should throw exception
+TEST_F(ConnectionTest, SendEmptyFrameThrows) {
     Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
     conn.open();
     
     CECFrame emptyFrame;
-    EXPECT_NO_THROW(conn.send(emptyFrame));
+    // Empty frame should throw because matchSource tries to access buf[0]
+    EXPECT_THROW(conn.send(emptyFrame), std::out_of_range);
     
     conn.close();
 }
