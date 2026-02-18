@@ -41,10 +41,39 @@ protected:
     }
     
     void TearDown() override {
-        // Don't delete the mock - let the global environment manage it
-        // Just clear expectations
+        // Clear expectations
         if (mock != nullptr) {
             ::testing::Mock::VerifyAndClearExpectations(mock);
+        }
+        
+        // CRITICAL: Restore default ON_CALL behaviors that may have been overridden
+        // This is necessary because some tests use ON_CALL to change default behavior
+        if (mock != nullptr) {
+            // Restore default HdmiCecOpen behavior
+            ON_CALL(*mock, HdmiCecOpen(::testing::_))
+                .WillByDefault(::testing::Invoke(
+                    [this](int* handle) {
+                        if (handle) {
+                            *handle = mock->currentHandle;
+                            return HDMI_CEC_IO_SUCCESS;
+                        }
+                        return HDMI_CEC_IO_INVALID_ARGUMENT;
+                    }));
+            
+            // Restore default HdmiCecAddLogicalAddress behavior
+            ON_CALL(*mock, HdmiCecAddLogicalAddress(::testing::_, ::testing::_))
+                .WillByDefault(::testing::Return(HDMI_CEC_IO_SUCCESS));
+            
+            // Restore default HdmiCecGetPhysicalAddress behavior
+            ON_CALL(*mock, HdmiCecGetPhysicalAddress(::testing::_, ::testing::_))
+                .WillByDefault(::testing::Invoke(
+                    [](int handle, unsigned int* physicalAddress) {
+                        if (physicalAddress) {
+                            *physicalAddress = 0x1000;
+                            return HDMI_CEC_IO_SUCCESS;
+                        }
+                        return HDMI_CEC_IO_INVALID_ARGUMENT;
+                    }));
         }
     }
 };
