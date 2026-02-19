@@ -146,6 +146,7 @@ void  DriverImpl::close(void) noexcept(false)
 
 		int err = HdmiCecClose(nativeHandle);
 		if (err != HDMI_CEC_IO_SUCCESS) {
+            status = CLOSED;
 			throw IOException();
 		}
 
