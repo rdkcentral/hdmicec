@@ -31,8 +31,395 @@ protected:
 };
 
 TEST_F(MessageDecoderTest, DecodeValidFrame) {
-    // Create a simple test frame
+    // Create a simple test frame (IMAGE_VIEW_ON)
     uint8_t testData[] = {0x40, 0x04};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodePollingMessage) {
+    // Polling message - single byte (header only)
+    uint8_t testData[] = {0x44};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeActiveSource) {
+    // ACTIVE_SOURCE (0x82) with physical address
+    uint8_t testData[] = {0x4F, 0x82, 0x10, 0x00};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeInactiveSource) {
+    // INACTIVE_SOURCE (0x9D) with physical address
+    uint8_t testData[] = {0x40, 0x9D, 0x10, 0x00};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeTextViewOn) {
+    // TEXT_VIEW_ON (0x0D)
+    uint8_t testData[] = {0x40, 0x0D};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeRequestActiveSource) {
+    // REQUEST_ACTIVE_SOURCE (0x85)
+    uint8_t testData[] = {0x4F, 0x85};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeStandby) {
+    // STANDBY (0x36)
+    uint8_t testData[] = {0x40, 0x36};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeGetCECVersion) {
+    // GET_CEC_VERSION (0x9F)
+    uint8_t testData[] = {0x40, 0x9F};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeCECVersion) {
+    // CEC_VERSION (0x9E) with version number
+    uint8_t testData[] = {0x04, 0x9E, 0x05};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeSetMenuLanguage) {
+    // SET_MENU_LANGUAGE (0x32) with language code
+    uint8_t testData[] = {0x0F, 0x32, 0x65, 0x6E, 0x67}; // "eng"
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeGiveOSDName) {
+    // GIVE_OSD_NAME (0x46)
+    uint8_t testData[] = {0x40, 0x46};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeGivePhysicalAddress) {
+    // GIVE_PHYSICAL_ADDRESS (0x83)
+    uint8_t testData[] = {0x40, 0x83};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeReportPhysicalAddress) {
+    // REPORT_PHYSICAL_ADDRESS (0x84) with physical address and device type
+    uint8_t testData[] = {0x4F, 0x84, 0x10, 0x00, 0x04};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeGiveDeviceVendorID) {
+    // GIVE_DEVICE_VENDOR_ID (0x8C)
+    uint8_t testData[] = {0x40, 0x8C};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeDeviceVendorID) {
+    // DEVICE_VENDOR_ID (0x87) with vendor ID
+    uint8_t testData[] = {0x04, 0x87, 0x00, 0x00, 0x80};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeRoutingChange) {
+    // ROUTING_CHANGE (0x80) with old and new physical addresses
+    uint8_t testData[] = {0x0F, 0x80, 0x00, 0x00, 0x10, 0x00};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeRoutingInformation) {
+    // ROUTING_INFORMATION (0x81) with physical address
+    uint8_t testData[] = {0x0F, 0x81, 0x10, 0x00};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeSetStreamPath) {
+    // SET_STREAM_PATH (0x86) with physical address
+    uint8_t testData[] = {0x0F, 0x86, 0x10, 0x00};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeGetMenuLanguage) {
+    // GET_MENU_LANGUAGE (0x91)
+    uint8_t testData[] = {0x40, 0x91};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeSetOSDString) {
+    // SET_OSD_STRING (0x64) with display control and string
+    uint8_t testData[] = {0x40, 0x64, 0x00, 0x54, 0x65, 0x73, 0x74}; // "Test"
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeSetOSDName) {
+    // SET_OSD_NAME (0x47) with name
+    uint8_t testData[] = {0x04, 0x47, 0x54, 0x56}; // "TV"
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeUserControlPressed) {
+    // USER_CONTROL_PRESSED (0x44) with UI command
+    uint8_t testData[] = {0x40, 0x44, 0x00}; // Select button
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeUserControlReleased) {
+    // USER_CONTROL_RELEASED (0x45)
+    uint8_t testData[] = {0x40, 0x45};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeGiveDevicePowerStatus) {
+    // GIVE_DEVICE_POWER_STATUS (0x8F)
+    uint8_t testData[] = {0x40, 0x8F};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeReportPowerStatus) {
+    // REPORT_POWER_STATUS (0x90) with power status
+    uint8_t testData[] = {0x04, 0x90, 0x00}; // Power on
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeFeatureAbort) {
+    // FEATURE_ABORT (0x00) with feature opcode and abort reason
+    uint8_t testData[] = {0x04, 0x00, 0x82, 0x04};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeAbort) {
+    // ABORT (0xFF)
+    uint8_t testData[] = {0x40, 0xFF};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeInitiateArc) {
+    // INITIATE_ARC (0xC0)
+    uint8_t testData[] = {0x50, 0xC0};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeTerminateArc) {
+    // TERMINATE_ARC (0xC5)
+    uint8_t testData[] = {0x50, 0xC5};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeRequestShortAudioDescriptor) {
+    // REQUEST_SHORT_AUDIO_DESCRIPTOR (0xA4) with audio format codes
+    uint8_t testData[] = {0x50, 0xA4, 0x01};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeReportShortAudioDescriptor) {
+    // REPORT_SHORT_AUDIO_DESCRIPTOR (0xA3) with audio descriptors
+    uint8_t testData[] = {0x05, 0xA3, 0x09, 0x07, 0x15};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeSystemAudioModeRequest) {
+    // SYSTEM_AUDIO_MODE_REQUEST (0x70) with physical address
+    uint8_t testData[] = {0x05, 0x70, 0x10, 0x00};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeSetSystemAudioMode) {
+    // SET_SYSTEM_AUDIO_MODE (0x72) with status
+    uint8_t testData[] = {0x0F, 0x72, 0x01};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeReportAudioStatus) {
+    // REPORT_AUDIO_STATUS (0x7A) with audio status
+    uint8_t testData[] = {0x05, 0x7A, 0x50};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeGiveFeatures) {
+    // GIVE_FEATURES (0xA5)
+    uint8_t testData[] = {0x40, 0xA5};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeReportFeatures) {
+    // REPORT_FEATURES (0xA6) with CEC version and feature data
+    uint8_t testData[] = {0x04, 0xA6, 0x05, 0x80, 0x00, 0x00};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeRequestCurrentLatency) {
+    // REQUEST_CURRENT_LATENCY (0xA7) with physical address
+    uint8_t testData[] = {0x50, 0xA7, 0x10, 0x00};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeReportCurrentLatency) {
+    // REPORT_CURRENT_LATENCY (0xA8) with physical address and latency data
+    uint8_t testData[] = {0x05, 0xA8, 0x10, 0x00, 0x01, 0x00, 0x20};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeVendorCommand) {
+    // VENDOR_COMMAND (0x89) - should not throw
+    uint8_t testData[] = {0x40, 0x89, 0x01, 0x02, 0x03};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeVendorCommandWithID) {
+    // VENDOR_COMMAND_WITH_ID (0xA0) - should not throw
+    uint8_t testData[] = {0x40, 0xA0, 0x00, 0x00, 0x80, 0x01};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeVendorRemoteButtonDown) {
+    // VENDOR_REMOTE_BUTTON_DOWN (0x8A) - should not throw
+    uint8_t testData[] = {0x40, 0x8A, 0x01};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeVendorRemoteButtonUp) {
+    // VENDOR_REMOTE_BUTTON_UP (0x8B) - should not throw
+    uint8_t testData[] = {0x40, 0x8B};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeUnknownOpCode) {
+    // Unknown opcode (0x99) - should not throw, just log
+    uint8_t testData[] = {0x40, 0x99, 0x01};
+    CECFrame frame(testData, sizeof(testData));
+    EXPECT_NO_THROW({
+        decoder.decode(frame);
+    });
+}
+
+TEST_F(MessageDecoderTest, DecodeInvalidFrame) {
+    // Frame with invalid parameters should catch exception internally
+    uint8_t testData[] = {0x40, 0x82}; // ACTIVE_SOURCE without physical address
     CECFrame frame(testData, sizeof(testData));
     EXPECT_NO_THROW({
         decoder.decode(frame);
