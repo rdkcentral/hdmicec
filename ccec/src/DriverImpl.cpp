@@ -108,7 +108,6 @@ DriverImpl::~DriverImpl()
 void DriverImpl::open(void) noexcept(false)
 {
     {AutoLock lock_(mutex);
-        printf("DriverImpl::open called, status %d\r\n", status);
 		if (status != CLOSED) {
 			#if 0
 				throw InvalidStateException();
@@ -243,9 +242,7 @@ void  DriverImpl::write(const CECFrame &frame)  noexcept(false)
 	printFrameDetails(frame);
 
     {AutoLock lock_(mutex);
-        printf("DriverImpl::write called, status %d\r\n", status);
     	if (status != OPENED) {
-            printf("DriverImpl::write throwing InvalidStateException, status %d != %d\r\n", status, OPENED);
     		throw InvalidStateException();
     	}
 		int sendResult = HDMI_CEC_IO_SUCCESS;

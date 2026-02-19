@@ -84,7 +84,8 @@ cd tests/L1Tests
 - **Name**: `run_L1Tests`
 - **Location**: `tests/L1Tests/`
 - **Type**: Google Test executable
-- **Sources**: 10 test files + test_main.cpp
+- **Sources**: 10+ test files + test_main.cpp
+- **Total Tests**: 200+ individual test cases
 
 ## Key Features
 

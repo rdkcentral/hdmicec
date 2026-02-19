@@ -45,15 +45,18 @@ make
 tests/L1Tests/
 ├── Makefile.am           # Autotools build configuration
 ├── test_main.cpp         # Test runner entry point
-├── ccec/                 # CCEC library tests
-│   ├── test_CECFrame.cpp
-│   ├── test_Connection.cpp
-│   ├── test_LibCCEC.cpp
-│   ├── test_MessageEncoder.cpp
-│   ├── test_MessageDecoder.cpp
-│   ├── test_OpCode.cpp
-│   └── test_Operands.cpp
-└── osal/                 # OSAL library tests
+├── ccec/                 # CCEC library tests (195+ tests)
+│   ├── test_CECFrame.cpp        # 9 tests - frame construction, serialization
+│   ├── test_Connection.cpp      # 4 tests - connection management
+│   ├── test_LibCCEC.cpp         # 14 tests - singleton, init/term, addresses
+│   ├── test_MessageEncoder.cpp  # 10 tests - CEC message encoding
+│   ├── test_MessageDecoder.cpp  # 31 tests - all CEC opcodes, edge cases
+│   ├── test_OpCode.cpp          # 68 tests - all opcodes, GetOpName coverage
+│   ├── test_Operands.cpp        # 69 tests - all operand types, methods
+│   ├── test_Driver_Mock.cpp     # Mock driver tests
+│   ├── test_Driver.cpp          # Driver implementation tests
+│   └── test_Bus.cpp             # Bus communication tests
+└── osal/                 # OSAL library tests (10+ tests)
     ├── test_Mutex.cpp
     ├── test_Thread.cpp
     └── test_ConditionVariable.cpp
@@ -123,8 +126,46 @@ EXPECT_NO_THROW({code})   // code doesn't throw
 EXPECT_THROW({code}, ex)  // code throws exception ex
 ```
 
-## Notes
+## Test Coverage Details
 
-- Some tests are disabled (DISABLED_ prefix) because they require hardware access
-- Hardware-dependent tests need driver mocking implementation
+### CCEC Library Tests (195+ tests)
+
+- **test_CECFrame.cpp** (9 tests): Frame construction, copy operations, serialization, hex dump
+- **test_Connection.cpp** (4 tests): Connection lifecycle, open/close operations
+- **test_LibCCEC.cpp** (14 tests): Singleton pattern, initialization/termination, logical/physical addresses
+  - Note: 3 tests DISABLED due to thread safety (multiple init/term cycles cause race conditions in Bus threads)
+- **test_MessageEncoder.cpp** (10 tests): Encoding of all major CEC message types
+- **test_MessageDecoder.cpp** (31 tests): Decoding all 60+ CEC opcodes, polling messages, edge cases
+- **test_OpCode.cpp** (68 tests): Complete GetOpName() coverage for all CEC opcodes, OpCode class methods
+- **test_Operands.cpp** (69 tests): All operand classes (PhysicalAddress, LogicalAddress, DeviceType, Version, PowerStatus, AbortReason, OSDString, OSDName, Language, VendorID, UICommand, SystemAudioStatus, AudioStatus, RequestAudioFormat, ShortAudioDescriptor, AllDeviceTypes, RcProfile, DeviceFeatures, LatencyInfo)
+
+### OSAL Library Tests (10+ tests)
+
+- **test_Mutex.cpp**: Lock/unlock, concurrency protection
+- **test_Thread.cpp**: Thread creation, execution with Runnable
+- **test_ConditionVariable.cpp**: Notify/wait synchronization patterns
+
+## Known Issues and Notes
+
+### Disabled Tests
+
+Some LibCCEC tests are disabled (DISABLED_ prefix) due to thread safety concerns:
+- `DISABLED_TermThrowsWhenNotInitialized`
+- `DISABLED_TermSucceedsAfterInit`
+- `DISABLED_MultipleInitTermCycles`
+
+**Reason**: LibCCEC uses Bus reader/writer threads that experience race conditions when repeatedly started and stopped. The current test approach uses a single initialization in SetUp() to avoid these issues.
+
+### LibCCEC Singleton Behavior
+
+LibCCEC is a singleton shared across all test suites. The test fixture SetUp() catches `InvalidStateException` to handle cases where LibCCEC has already been initialized by other test suites (e.g., DriverTest).
+
+### Thread Timing
+
 - Thread-related tests may need timing adjustments on slow systems
+- Bus thread cleanup can take time; avoid rapid init/term cycles
+
+### Hardware Dependencies
+
+- Some Connection tests require actual CEC hardware/driver
+- Hardware-dependent tests may need driver mocking implementation for full automation
