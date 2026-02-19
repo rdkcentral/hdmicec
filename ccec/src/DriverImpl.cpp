@@ -242,6 +242,7 @@ void  DriverImpl::write(const CECFrame &frame)  noexcept(false)
 	printFrameDetails(frame);
 
     {AutoLock lock_(mutex);
+        printf("DriverImpl::write called, status %d\r\n", status);
     	if (status != OPENED) {
     		throw InvalidStateException();
     	}
