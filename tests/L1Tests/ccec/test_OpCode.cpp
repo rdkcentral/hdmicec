@@ -374,7 +374,8 @@ TEST_F(OpCodeTest, GetOpNameReportCurrentLatency) {
 }
 
 TEST_F(OpCodeTest, GetOpNameUnrecognized) {
-    EXPECT_STREQ(GetOpName(0x99), "Unrecognized Message");
+    // Use an opcode value that's not defined (0x99 is CLEAR_DIGITAL_TIMER)
+    EXPECT_STREQ(GetOpName(0xAA), "Unrecognized Message");
 }
 
 // Test OpCode methods with various opcodes
