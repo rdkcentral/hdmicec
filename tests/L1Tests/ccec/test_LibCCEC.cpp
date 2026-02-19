@@ -25,13 +25,13 @@
 
 class LibCCECTest : public ::testing::Test {
 protected:
-    static bool initialized;
-    
     void SetUp() override {
-        // Initialize once for all tests to avoid thread creation/destruction issues
-        if (!initialized) {
+        // LibCCEC may already be initialized by other test suites (DriverTest, etc.)
+        // Try to initialize, but ignore InvalidStateException if already initialized
+        try {
             LibCCEC::getInstance().init("TestCEC");
-            initialized = true;
+        } catch (const InvalidStateException&) {
+            // Already initialized - this is fine
         }
     }
 
@@ -40,9 +40,6 @@ protected:
         // LibCCEC will be cleaned up by the global test environment
     }
 };
-
-// Static member initialization
-bool LibCCECTest::initialized = false;
 
 TEST_F(LibCCECTest, GetInstanceReturnsSingleton) {
     LibCCEC& instance1 = LibCCEC::getInstance();
