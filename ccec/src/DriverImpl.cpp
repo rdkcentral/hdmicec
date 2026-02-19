@@ -244,11 +244,11 @@ void  DriverImpl::write(const CECFrame &frame)  noexcept(false)
     {AutoLock lock_(mutex);
         printf("DriverImpl::write called, status %d\r\n", status);
     	if (status != OPENED) {
+            printf("DriverImpl::write throwing InvalidStateException, status %d != %d\r\n", status, OPENED);
     		throw InvalidStateException();
     	}
 		int sendResult = HDMI_CEC_IO_SUCCESS;
 		CCEC_LOG( LOG_DEBUG, "DriverImpl::write to call HdmiCecTx\r\n");
-        printf("DriverImpl::write called, status %d\r\n", status);
 
 		int err = HdmiCecTx(nativeHandle, buf, length, &sendResult);
 
