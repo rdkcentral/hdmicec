@@ -248,6 +248,7 @@ void  DriverImpl::write(const CECFrame &frame)  noexcept(false)
     	}
 		int sendResult = HDMI_CEC_IO_SUCCESS;
 		CCEC_LOG( LOG_DEBUG, "DriverImpl::write to call HdmiCecTx\r\n");
+        printf("DriverImpl::write called, status %d\r\n", status);
 
 		int err = HdmiCecTx(nativeHandle, buf, length, &sendResult);
 
