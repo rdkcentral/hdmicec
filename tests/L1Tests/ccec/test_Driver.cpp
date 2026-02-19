@@ -547,15 +547,17 @@ TEST_F(DriverTest, ZZZ_CloseWithFailure) {
         // Ignore - driver might already be closed or in bad state
     }
     
-    // Now reopen - this should succeed
-    EXPECT_NO_THROW({
-        driver.open();
-    });
+
 }
 
 // Test printFrameDetails with various frames
 TEST_F(DriverTest, PrintFrameDetails) {
+    
     Driver &driver = Driver::getInstance();
+
+    EXPECT_NO_THROW({
+        driver.open();
+    });
     
     // Test with normal frame
     CECFrame frame1;
@@ -585,14 +587,17 @@ TEST_F(DriverTest, PrintFrameDetails) {
     EXPECT_NO_THROW({
         driver.printFrameDetails(frame3);
     });
+
+    EXPECT_NO_THROW({
+        driver.close();
+    });
+
+
 }
 
 // Test poll through driver
 TEST_F(DriverTest, PollAddress) {
     HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
-    if (mock == nullptr) {
-        GTEST_SKIP() << "Mock is nullptr - test environment not initialized";
-    }
     
     Driver &driver = Driver::getInstance();
     
@@ -617,15 +622,15 @@ TEST_F(DriverTest, PollAddress) {
     });
     
     ::testing::Mock::VerifyAndClearExpectations(mock);
+    EXPECT_NO_THROW({
+        driver.close();
+    });
 }
 
 // Test writeAsync
 TEST_F(DriverTest, WriteAsync) {
     HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
-    if (mock == nullptr) {
-        GTEST_SKIP() << "Mock is nullptr - test environment not initialized";
-    }
-    
+
     Driver &driver = Driver::getInstance();
     
     // Ensure driver is open
@@ -645,6 +650,10 @@ TEST_F(DriverTest, WriteAsync) {
     EXPECT_NO_THROW({
         driver.writeAsync(frame);
     });
+
+    EXPECT_NO_THROW({
+        driver.close();
+    });
     
     // Clear mock expectations
     ::testing::Mock::VerifyAndClearExpectations(mock);
@@ -653,9 +662,7 @@ TEST_F(DriverTest, WriteAsync) {
 // Test writeAsync with failure
 TEST_F(DriverTest, WriteAsyncWithFailure) {
     HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
-    if (mock == nullptr) {
-        GTEST_SKIP() << "Mock is nullptr - test environment not initialized";
-    }
+
     
     Driver &driver = Driver::getInstance();
     
@@ -676,6 +683,10 @@ TEST_F(DriverTest, WriteAsyncWithFailure) {
     EXPECT_THROW({
         driver.writeAsync(frame);
     }, IOException);
+
+    EXPECT_NO_THROW({
+        driver.close();
+    });
     
     // Clear mock expectations
     ::testing::Mock::VerifyAndClearExpectations(mock);
