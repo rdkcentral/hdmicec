@@ -22,7 +22,6 @@
 #include "ccec/Exception.hpp"
 #include "ccec/Operands.hpp"
 
-using namespace CCEC;
 
 class LibCCECTest : public ::testing::Test {
 protected:
