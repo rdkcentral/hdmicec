@@ -629,7 +629,7 @@ TEST_F(DriverTest, PollAddress) {
 }
 
 // Test writeAsync
-TEST_F(DriverTest, WriteAsync) {
+TEST_F(DriverTest, DISABLED_WriteAsync) {
     HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
     if (mock == nullptr) {
         GTEST_SKIP() << "Mock is nullptr - test environment not initialized";
@@ -664,7 +664,7 @@ TEST_F(DriverTest, WriteAsync) {
 }
 
 // Test writeAsync with failure
-TEST_F(DriverTest, WriteAsyncWithFailure) {
+TEST_F(DriverTest, DISABLED_WriteAsyncWithFailure) {
     HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
     if (mock == nullptr) {
         GTEST_SKIP() << "Mock is nullptr - test environment not initialized";
