@@ -37,20 +37,26 @@ Stub header for RDK telemetry system. Provides no-op macros for telemetry calls 
 TEST_F(YourTestFixture, TestSomething) {
     // Create mock instance
     HdmiCecDriverMock mock;
-    
-    // Configure mock behavior
-    mock.setPhysicalAddress(0x2000);
-    
+
+    // Configure mock behavior using Google Mock, for example:
+    // ON_CALL(mock, open(::testing::_)).WillByDefault(::testing::Return(true));
+    // EXPECT_CALL(mock, close()).Times(1);
+
     // Your test code that uses the CEC driver
     // ...
-    
-    // Inject a received message
+
+    // Inject a received message into the mock
     unsigned char msg[] = {0x40, 0x04}; // Example CEC message
     mock.injectReceivedMessage(msg, sizeof(msg));
-    
-    // Verify results
-    EXPECT_TRUE(mock.isOpened);
-    EXPECT_EQ(mock.getLogicalAddresses().size(), 1);
+
+    // Optionally, simulate a transmit result being reported by the driver
+    mock.simulateTxResult(/* txId */ 1, /* success */ true);
+
+    // Verify that the mock's callbacks/handles have been set up as expected
+    EXPECT_NE(mock.currentHandle, nullptr);
+    EXPECT_TRUE(mock.rxCallback);
+
+    // Additional EXPECT_CALL/ASSERT_* on your system-under-test can go here.
 }
 ```
 
