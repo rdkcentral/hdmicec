@@ -18,17 +18,6 @@ jobs:
   L1-tests:
     name: Build and run unit tests
     runs-on: ubuntu-22.04
-    strategy:
-      matrix:
-        compiler: [ gcc, clang ]
-        coverage: [ with-coverage, without-coverage ]
-        exclude:
-          - compiler: clang
-            coverage: with-coverage
-          - compiler: clang
-            coverage: without-coverage
-          - compiler: gcc
-            coverage: without-coverage
 
     steps:
       - name: Set up CMake
