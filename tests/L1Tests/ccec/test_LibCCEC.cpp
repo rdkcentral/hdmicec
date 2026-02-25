@@ -58,13 +58,6 @@ TEST_F(LibCCECTest, InitWithValidName) {
     });
 }
 
-TEST_F(LibCCECTest, InitWithNullName) {
-    // This test is covered by the case where name parameter can be NULL
-    // LibCCEC is already initialized with a valid name in SetUp
-    // Testing double init with NULL would cause InvalidStateException
-    EXPECT_TRUE(true); // Placeholder - NULL name handling tested separately
-}
-
 TEST_F(LibCCECTest, InitThrowsWhenAlreadyInitialized) {
     LibCCEC& lib = LibCCEC::getInstance();
     
