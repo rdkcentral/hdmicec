@@ -122,7 +122,7 @@ int main(int argc, char *argv[])
 	                }
 	                catch(Exception &e)
 	                {
-                        CCEC_LOG( LOG_EXP, \"CEC Mgr:: Caught Exception while calling LibCCEC::term()\\r\\n\");
+                        CCEC_LOG( LOG_EXP, "CEC Mgr:: Caught Exception while calling LibCCEC::term()\r\n");
                     }
                 }
 
