@@ -18,9 +18,15 @@
 */
 
 #include <gtest/gtest.h>
+#include <gmock/gmock.h>
 #include "ccec/LibCCEC.hpp"
 #include "ccec/Exception.hpp"
 #include "ccec/Operands.hpp"
+#include "hdmi_cec_driver_mock.h"
+
+using ::testing::_;
+using ::testing::Invoke;
+using ::testing::Return;
 
 
 class LibCCECTest : public ::testing::Test {
@@ -66,38 +72,21 @@ TEST_F(LibCCECTest, InitThrowsWhenAlreadyInitialized) {
     EXPECT_THROW(lib.init("TestCEC2"), InvalidStateException);
 }
 
-TEST_F(LibCCECTest, DISABLED_TermThrowsWhenNotInitialized) {
-    // Cannot test this as LibCCEC is initialized in SetUp
-    // Would require separate test binary or manual testing
-    LibCCEC& lib = LibCCEC::getInstance();
-    EXPECT_THROW(lib.term(), InvalidStateException);
-}
-
-TEST_F(LibCCECTest, DISABLED_TermSucceedsAfterInit) {
-    // Disabled to avoid thread cleanup issues
-    // LibCCEC term() stops Bus threads which can cause race conditions
-    LibCCEC& lib = LibCCEC::getInstance();
-    EXPECT_NO_THROW(lib.term());
-}
-
-TEST_F(LibCCECTest, AddLogicalAddressWithoutInit) {
-    // This test cannot be run when LibCCEC is already initialized
-    // Skip this test as the "without init" scenario is not testable
-    // in the current test fixture setup
-    GTEST_SKIP() << "Cannot test uninitialized state when LibCCEC is pre-initialized";
-}
-
 TEST_F(LibCCECTest, AddLogicalAddressAfterInit) {
+    HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
     LibCCEC& lib = LibCCEC::getInstance();
-    
-    // Already initialized in SetUp
+
+    // Verify HdmiCecAddLogicalAddress is called with PLAYBACK_DEVICE_1 (4)
+    EXPECT_CALL(*mock, HdmiCecAddLogicalAddress(_, LogicalAddress::PLAYBACK_DEVICE_1))
+        .Times(1)
+        .WillOnce(Return(HDMI_CEC_IO_SUCCESS));
+
     LogicalAddress addr(LogicalAddress::PLAYBACK_DEVICE_1);
-    
-    // Should succeed after initialization
-    EXPECT_NO_THROW({
-        int result = lib.addLogicalAddress(addr);
-        EXPECT_TRUE(result);
-    });
+    int result = 0;
+    EXPECT_NO_THROW(result = lib.addLogicalAddress(addr));
+    EXPECT_TRUE(result);
+
+    ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
 TEST_F(LibCCECTest, GetLogicalAddressWithoutInit) {
@@ -108,15 +97,22 @@ TEST_F(LibCCECTest, GetLogicalAddressWithoutInit) {
 }
 
 TEST_F(LibCCECTest, GetLogicalAddressAfterInit) {
+    HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
     LibCCEC& lib = LibCCEC::getInstance();
-    
-    // Already initialized in SetUp
-    // Should not throw after initialization (actual value depends on driver mock)
-    EXPECT_NO_THROW({
-        int logicalAddr = lib.getLogicalAddress(DeviceType::PLAYBACK_DEVICE);
-        // Driver mock should return a non-zero value
-        EXPECT_NE(logicalAddr, 0);
-    });
+
+    // Configure the mock to return a known logical address value (5 = AUDIO_SYSTEM)
+    EXPECT_CALL(*mock, HdmiCecGetLogicalAddress(_, _))
+        .Times(1)
+        .WillOnce(Invoke([](int, int* addr) -> int {
+            if (addr) *addr = LogicalAddress::AUDIO_SYSTEM; // 5
+            return HDMI_CEC_IO_SUCCESS;
+        }));
+
+    int logicalAddr = 0;
+    EXPECT_NO_THROW(logicalAddr = lib.getLogicalAddress(DeviceType::PLAYBACK_DEVICE));
+    EXPECT_EQ(logicalAddr, LogicalAddress::AUDIO_SYSTEM);
+
+    ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
 TEST_F(LibCCECTest, GetPhysicalAddressWithoutInit) {
@@ -127,53 +123,72 @@ TEST_F(LibCCECTest, GetPhysicalAddressWithoutInit) {
 }
 
 TEST_F(LibCCECTest, GetPhysicalAddressAfterInit) {
+    HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
     LibCCEC& lib = LibCCEC::getInstance();
-    
-    // Already initialized in SetUp
+
+    // Configure the mock to return a specific, known physical address
+    const unsigned int expectedPhysAddr = 0x2100;
+    EXPECT_CALL(*mock, HdmiCecGetPhysicalAddress(_, _))
+        .Times(1)
+        .WillOnce(Invoke([expectedPhysAddr](int, unsigned int* addr) -> int {
+            if (addr) *addr = expectedPhysAddr;
+            return HDMI_CEC_IO_SUCCESS;
+        }));
+
     unsigned int physAddr = 0;
-    
-    // Should succeed after initialization
     EXPECT_NO_THROW(lib.getPhysicalAddress(&physAddr));
+    EXPECT_EQ(physAddr, expectedPhysAddr);
+
+    ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
-TEST_F(LibCCECTest, DISABLED_MultipleInitTermCycles) {
-    // Disabled: Multiple init/term cycles cause Bus thread creation/destruction
-    // which leads to race conditions and segmentation faults
-    // This functionality should be tested in isolation or with proper synchronization
-    LibCCEC& lib = LibCCEC::getInstance();
-    EXPECT_NO_THROW(lib.init("TestCEC1"));
-    EXPECT_NO_THROW(lib.term());
-}
 
 TEST_F(LibCCECTest, AddMultipleLogicalAddresses) {
+    HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
     LibCCEC& lib = LibCCEC::getInstance();
-    
-    // Already initialized in SetUp
-    // Add multiple logical addresses
+
+    // Each addLogicalAddress call must reach the driver with the correct address value
+    EXPECT_CALL(*mock, HdmiCecAddLogicalAddress(_, LogicalAddress::PLAYBACK_DEVICE_1))
+        .Times(1).WillOnce(Return(HDMI_CEC_IO_SUCCESS));
+    EXPECT_CALL(*mock, HdmiCecAddLogicalAddress(_, LogicalAddress::PLAYBACK_DEVICE_2))
+        .Times(1).WillOnce(Return(HDMI_CEC_IO_SUCCESS));
+    EXPECT_CALL(*mock, HdmiCecAddLogicalAddress(_, LogicalAddress::AUDIO_SYSTEM))
+        .Times(1).WillOnce(Return(HDMI_CEC_IO_SUCCESS));
+
     LogicalAddress addr1(LogicalAddress::PLAYBACK_DEVICE_1);
     LogicalAddress addr2(LogicalAddress::PLAYBACK_DEVICE_2);
     LogicalAddress addr3(LogicalAddress::AUDIO_SYSTEM);
-    
-    EXPECT_NO_THROW({
-        EXPECT_TRUE(lib.addLogicalAddress(addr1));
-        EXPECT_TRUE(lib.addLogicalAddress(addr2));
-        EXPECT_TRUE(lib.addLogicalAddress(addr3));
-    });
+
+    EXPECT_TRUE(lib.addLogicalAddress(addr1));
+    EXPECT_TRUE(lib.addLogicalAddress(addr2));
+    EXPECT_TRUE(lib.addLogicalAddress(addr3));
+
+    ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
 TEST_F(LibCCECTest, GetLogicalAddressForDifferentDeviceTypes) {
+    HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
     LibCCEC& lib = LibCCEC::getInstance();
-    
-    // Already initialized in SetUp
-    // Test different device types
-    EXPECT_NO_THROW({
-        int addr1 = lib.getLogicalAddress(DeviceType::TV);
-        EXPECT_NE(addr1, 0);
-        
-        int addr2 = lib.getLogicalAddress(DeviceType::PLAYBACK_DEVICE);
-        EXPECT_NE(addr2, 0);
-        
-        int addr3 = lib.getLogicalAddress(DeviceType::AUDIO_SYSTEM);
-        EXPECT_NE(addr3, 0);
-    });
+
+    // Note: DriverImpl::getLogicalAddress ignores devType and always calls HdmiCecGetLogicalAddress.
+    // The three calls return distinct pre-configured values so we verify the pass-through.
+    EXPECT_CALL(*mock, HdmiCecGetLogicalAddress(_, _))
+        .Times(3)
+        .WillOnce(Invoke([](int, int* a) -> int { if (a) *a = LogicalAddress::TV;             return HDMI_CEC_IO_SUCCESS; }))
+        .WillOnce(Invoke([](int, int* a) -> int { if (a) *a = LogicalAddress::PLAYBACK_DEVICE_1; return HDMI_CEC_IO_SUCCESS; }))
+        .WillOnce(Invoke([](int, int* a) -> int { if (a) *a = LogicalAddress::AUDIO_SYSTEM;   return HDMI_CEC_IO_SUCCESS; }));
+
+    // getLogicalAddress throws InvalidStateException when the driver returns 0 (TV=0),
+    // so we test the two non-zero values and handle TV separately.
+    EXPECT_THROW(lib.getLogicalAddress(DeviceType::TV), InvalidStateException); // TV=0 triggers the guard
+
+    int addr2 = 0;
+    EXPECT_NO_THROW(addr2 = lib.getLogicalAddress(DeviceType::PLAYBACK_DEVICE));
+    EXPECT_EQ(addr2, LogicalAddress::PLAYBACK_DEVICE_1); // 4
+
+    int addr3 = 0;
+    EXPECT_NO_THROW(addr3 = lib.getLogicalAddress(DeviceType::AUDIO_SYSTEM));
+    EXPECT_EQ(addr3, LogicalAddress::AUDIO_SYSTEM); // 5
+
+    ::testing::Mock::VerifyAndClearExpectations(mock);
 }
