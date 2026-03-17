@@ -54,10 +54,7 @@ TEST_F(LibCCECTest, GetInstanceReturnsSingleton) {
 }
 
 TEST_F(LibCCECTest, InitWithValidName) {
-    LibCCEC& lib = LibCCEC::getInstance();
-    
-    // LibCCEC is already initialized in SetUp
-    // Verify we can get the instance
+    // LibCCEC is already initialized in SetUp; verify getInstance() is reachable.
     EXPECT_NO_THROW({
         LibCCEC& instance = LibCCEC::getInstance();
         (void)instance;

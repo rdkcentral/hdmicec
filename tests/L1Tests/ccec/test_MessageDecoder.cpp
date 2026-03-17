@@ -462,7 +462,10 @@ public:
     }
     void process(const CECVersion &msg, const Header &) override {
         lastProcessed = "CECVersion";
-        lastVersionValue = msg.version.toInt();
+        // Version has no toInt(); extract the raw byte by serializing into a frame.
+        CECFrame f;
+        msg.version.serialize(f);
+        lastVersionValue = static_cast<int>(f.at(0));
     }
     void process(const ReportPowerStatus &msg, const Header &) override {
         lastProcessed = "ReportPowerStatus";
