@@ -89,13 +89,6 @@ TEST_F(LibCCECTest, AddLogicalAddressAfterInit) {
     ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
-TEST_F(LibCCECTest, GetLogicalAddressWithoutInit) {
-    // This test cannot be run when LibCCEC is already initialized
-    // Skip this test as the "without init" scenario is not testable
-    // in the current test fixture setup
-    GTEST_SKIP() << "Cannot test uninitialized state when LibCCEC is pre-initialized";
-}
-
 TEST_F(LibCCECTest, GetLogicalAddressAfterInit) {
     HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
     LibCCEC& lib = LibCCEC::getInstance();
@@ -115,12 +108,6 @@ TEST_F(LibCCECTest, GetLogicalAddressAfterInit) {
     ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
-TEST_F(LibCCECTest, GetPhysicalAddressWithoutInit) {
-    // This test cannot be run when LibCCEC is already initialized
-    // Skip this test as the "without init" scenario is not testable
-    // in the current test fixture setup
-    GTEST_SKIP() << "Cannot test uninitialized state when LibCCEC is pre-initialized";
-}
 
 TEST_F(LibCCECTest, GetPhysicalAddressAfterInit) {
     HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
