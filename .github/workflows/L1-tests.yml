@@ -21,6 +21,10 @@ jobs:
   L1-tests:
     name: Build and run unit tests
     runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        compiler: [g++]
+        coverage: [with-coverage]
 
     steps:
       - name: Set up CMake
