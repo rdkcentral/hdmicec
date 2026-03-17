@@ -425,3 +425,166 @@ TEST_F(MessageDecoderTest, DecodeInvalidFrame) {
         decoder.decode(frame);
     });
 }
+
+// ============================================================================
+// Dispatch-verification tests using a TrackingProcessor that records which
+// process() overload the decoder invoked and captures key operand values.
+// ============================================================================
+
+class TrackingProcessor : public MessageProcessor {
+public:
+    std::string lastProcessed;
+    PhysicalAddress lastPhysAddress{0,0,0,0};
+    int           lastPowerStatus{-1};
+    int           lastVersionValue{-1};
+    int           lastAbortReason{-1};
+    std::string   lastOSDName;
+
+    void process(const ImageViewOn &, const Header &) override {
+        lastProcessed = "ImageViewOn";
+    }
+    void process(const TextViewOn &, const Header &) override {
+        lastProcessed = "TextViewOn";
+    }
+    void process(const ActiveSource &msg, const Header &) override {
+        lastProcessed = "ActiveSource";
+        lastPhysAddress = msg.physicalAddress;
+    }
+    void process(const InActiveSource &msg, const Header &) override {
+        lastProcessed = "InActiveSource";
+        lastPhysAddress = msg.physicalAddress;
+    }
+    void process(const Standby &, const Header &) override {
+        lastProcessed = "Standby";
+    }
+    void process(const GetCECVersion &, const Header &) override {
+        lastProcessed = "GetCECVersion";
+    }
+    void process(const CECVersion &msg, const Header &) override {
+        lastProcessed = "CECVersion";
+        lastVersionValue = msg.version.toInt();
+    }
+    void process(const ReportPowerStatus &msg, const Header &) override {
+        lastProcessed = "ReportPowerStatus";
+        lastPowerStatus = msg.status.toInt();
+    }
+    void process(const FeatureAbort &msg, const Header &) override {
+        lastProcessed = "FeatureAbort";
+        lastAbortReason = msg.reason.toInt();
+    }
+    void process(const Abort &, const Header &) override {
+        lastProcessed = "Abort";
+    }
+    void process(const Polling &, const Header &) override {
+        lastProcessed = "Polling";
+    }
+    void process(const GivePhysicalAddress &, const Header &) override {
+        lastProcessed = "GivePhysicalAddress";
+    }
+    void process(const ReportPhysicalAddress &msg, const Header &) override {
+        lastProcessed = "ReportPhysicalAddress";
+        lastPhysAddress = msg.physicalAddress;
+    }
+    void process(const SetOSDName &msg, const Header &) override {
+        lastProcessed = "SetOSDName";
+        lastOSDName = msg.osdName.toString();
+    }
+    void process(const GiveDevicePowerStatus &, const Header &) override {
+        lastProcessed = "GiveDevicePowerStatus";
+    }
+    void process(const RequestActiveSource &, const Header &) override {
+        lastProcessed = "RequestActiveSource";
+    }
+};
+
+class MessageDecoderTrackingTest : public ::testing::Test {
+protected:
+    TrackingProcessor tracking;
+    MessageDecoder decoder{tracking};
+};
+
+TEST_F(MessageDecoderTrackingTest, ImageViewOnDispatch) {
+    // from=TV(0), to=PLAYBACK_DEVICE_1(4), opcode=IMAGE_VIEW_ON(0x04)
+    uint8_t data[] = {0x04, 0x04};
+    CECFrame frame(data, sizeof(data));
+    decoder.decode(frame);
+    EXPECT_EQ(tracking.lastProcessed, "ImageViewOn");
+}
+
+TEST_F(MessageDecoderTrackingTest, StandbyDispatch) {
+    // from=PLAYBACK_DEVICE_1(4), to=TV(0), opcode=STANDBY(0x36)
+    uint8_t data[] = {0x40, 0x36};
+    CECFrame frame(data, sizeof(data));
+    decoder.decode(frame);
+    EXPECT_EQ(tracking.lastProcessed, "Standby");
+}
+
+TEST_F(MessageDecoderTrackingTest, ActiveSourceDispatchAndPhysicalAddress) {
+    // from=PLAYBACK_DEVICE_1(4), to=BROADCAST(0xF), opcode=ACTIVE_SOURCE(0x82)
+    // Physical address 1.0.0.0: byte1=0x10, byte2=0x00
+    uint8_t data[] = {0x4F, 0x82, 0x10, 0x00};
+    CECFrame frame(data, sizeof(data));
+    decoder.decode(frame);
+    EXPECT_EQ(tracking.lastProcessed, "ActiveSource");
+    EXPECT_STREQ(tracking.lastPhysAddress.toString().c_str(), "1.0.0.0");
+}
+
+TEST_F(MessageDecoderTrackingTest, ReportPowerStatusDispatchAndValue) {
+    // opcode=REPORT_POWER_STATUS(0x90), power_status=ON(0x00)
+    uint8_t data[] = {0x04, 0x90, 0x00};
+    CECFrame frame(data, sizeof(data));
+    decoder.decode(frame);
+    EXPECT_EQ(tracking.lastProcessed, "ReportPowerStatus");
+    EXPECT_EQ(tracking.lastPowerStatus, (int)PowerStatus::ON); // 0
+}
+
+TEST_F(MessageDecoderTrackingTest, CECVersionDispatchAndValue) {
+    // opcode=CEC_VERSION(0x9E), version=V_1_4(0x05)
+    uint8_t data[] = {0x04, 0x9E, 0x05};
+    CECFrame frame(data, sizeof(data));
+    decoder.decode(frame);
+    EXPECT_EQ(tracking.lastProcessed, "CECVersion");
+    EXPECT_EQ(tracking.lastVersionValue, (int)Version::V_1_4); // 5
+}
+
+TEST_F(MessageDecoderTrackingTest, FeatureAbortDispatchAndReason) {
+    // opcode=FEATURE_ABORT(0x00), feature=ACTIVE_SOURCE(0x82), reason=REFUSED(4)
+    uint8_t data[] = {0x04, 0x00, 0x82, 0x04};
+    CECFrame frame(data, sizeof(data));
+    decoder.decode(frame);
+    EXPECT_EQ(tracking.lastProcessed, "FeatureAbort");
+    EXPECT_EQ(tracking.lastAbortReason, (int)AbortReason::REFUSED); // 4
+}
+
+TEST_F(MessageDecoderTrackingTest, PollingMessageDispatch) {
+    // Single-byte frame: from=PLAYBACK_DEVICE_1(4), to=PLAYBACK_DEVICE_1(4) -> 0x44
+    uint8_t data[] = {0x44};
+    CECFrame frame(data, sizeof(data));
+    decoder.decode(frame);
+    EXPECT_EQ(tracking.lastProcessed, "Polling");
+}
+
+TEST_F(MessageDecoderTrackingTest, ReportPhysicalAddressDispatchAndValue) {
+    // opcode=REPORT_PHYSICAL_ADDRESS(0x84), addr=1.0.0.0, type=PLAYBACK_DEVICE(4)
+    uint8_t data[] = {0x4F, 0x84, 0x10, 0x00, 0x04};
+    CECFrame frame(data, sizeof(data));
+    decoder.decode(frame);
+    EXPECT_EQ(tracking.lastProcessed, "ReportPhysicalAddress");
+    EXPECT_STREQ(tracking.lastPhysAddress.toString().c_str(), "1.0.0.0");
+}
+
+TEST_F(MessageDecoderTrackingTest, GivePhysicalAddressDispatch) {
+    // opcode=GIVE_PHYSICAL_ADDRESS(0x83)
+    uint8_t data[] = {0x40, 0x83};
+    CECFrame frame(data, sizeof(data));
+    decoder.decode(frame);
+    EXPECT_EQ(tracking.lastProcessed, "GivePhysicalAddress");
+}
+
+TEST_F(MessageDecoderTrackingTest, RequestActiveSourceDispatch) {
+    // opcode=REQUEST_ACTIVE_SOURCE(0x85), broadcast
+    uint8_t data[] = {0x4F, 0x85};
+    CECFrame frame(data, sizeof(data));
+    decoder.decode(frame);
+    EXPECT_EQ(tracking.lastProcessed, "RequestActiveSource");
+}

@@ -57,5 +57,24 @@ TEST_F(ConditionVariableTest, NotifyOne) {
 TEST_F(ConditionVariableTest, TimedWait) {
     long timeout = 100;
     long result = condVar.wait(timeout);
+    // Nothing signaled the condition, so the wait timed out → returns 0.
     EXPECT_EQ(result, 0);
+}
+
+// When the condition is signaled BEFORE the timeout expires, wait(timeout)
+// must return 1 (non-zero, meaning "condition was set, did not time out").
+TEST_F(ConditionVariableTest, SignaledBeforeTimeout) {
+    condVar.reset();
+
+    std::atomic<long> result{-1};
+    std::thread waiter([&]() {
+        result = condVar.wait(2000); // wait up to 2000ms
+    });
+
+    // Give the waiter thread time to enter the wait, then signal it.
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    condVar.notify();
+
+    waiter.join();
+    EXPECT_EQ(result.load(), 1L); // signaled before timeout → returns 1
 }
