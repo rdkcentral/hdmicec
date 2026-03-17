@@ -57,7 +57,6 @@ tests/L1Tests/
 │   ├── test_Driver.cpp          # Driver implementation tests
 │   └── test_Bus.cpp             # Bus communication tests
 └── osal/                 # OSAL library tests (10+ tests)
-    ├── test_Mutex.cpp
     ├── test_Thread.cpp
     └── test_ConditionVariable.cpp
 ```
@@ -141,7 +140,6 @@ EXPECT_THROW({code}, ex)  // code throws exception ex
 
 ### OSAL Library Tests (10+ tests)
 
-- **test_Mutex.cpp**: Lock/unlock, concurrency protection
 - **test_Thread.cpp**: Thread creation, execution with Runnable
 - **test_ConditionVariable.cpp**: Notify/wait synchronization patterns
 
