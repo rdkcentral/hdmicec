@@ -23,8 +23,15 @@ jobs:
     runs-on: ubuntu-22.04
     strategy:
       matrix:
-        compiler: [g++]
-        coverage: [with-coverage]
+        compiler: [ gcc, clang ]
+        coverage: [ with-coverage, without-coverage ]
+        exclude:
+          - compiler: clang
+            coverage: with-coverage
+          - compiler: clang
+            coverage: without-coverage
+          - compiler: gcc
+            coverage: without-coverage
 
     steps:
       - name: Set up CMake
