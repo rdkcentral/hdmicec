@@ -1053,7 +1053,9 @@ TEST_F(ConnectionTest, MatchSourceValidAddress) {
     ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
-// Test matchSource with mismatched source — the source nibble must be corrected to conn's address
+// Test matchSource with mismatched source — matchSource only rewrites the source nibble when the
+// connection's address is registered in the driver (via HdmiCecAddLogicalAddress). When the address
+// is not registered, the frame is sent as-is without modification.
 TEST_F(ConnectionTest, MatchSourceMismatchedAddress) {
     HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
     std::vector<unsigned char> capturedBuf;
@@ -1068,18 +1070,19 @@ TEST_F(ConnectionTest, MatchSourceMismatchedAddress) {
     Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
     conn.open();
 
-    // Frame has wrong source (0=TV); matchSource should rewrite it to 4=PLAYBACK_DEVICE_1
+    // Frame has wrong source (0=TV), dst=F
+    // The address PLAYBACK_DEVICE_1 is not in the driver's registered address list,
+    // so matchSource's guard (isValidLogicalAddress) returns false and the frame is sent unchanged.
     CECFrame frame;
-    frame.append(0x0F); // src=0 (TV), dst=F — source is wrong
+    frame.append(0x0F); // src=0 (TV), dst=F
     frame.append(0x36);
 
     EXPECT_NO_THROW(conn.send(frame, 0));
     conn.close();
 
-    // After matchSource correction: src nibble should be 4, dst nibble unchanged (F)
-    ASSERT_GE(capturedBuf.size(), (size_t)1);
-    EXPECT_EQ((capturedBuf[0] >> 4) & 0x0F, 0x4) << "Source nibble should be corrected to PLAYBACK_DEVICE_1 (4)";
-    EXPECT_EQ(capturedBuf[0] & 0x0F, 0xF)        << "Destination nibble should remain F";
+    ASSERT_EQ(capturedBuf.size(), (size_t)2);
+    EXPECT_EQ(capturedBuf[0], 0x0F) << "Frame sent unchanged because source is not registered";
+    EXPECT_EQ(capturedBuf[1], 0x36);
     ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
@@ -1192,7 +1195,8 @@ TEST_F(ConnectionTest, MultipleListenersNotification) {
     conn.close();
 }
 
-// Test sendAsync with matchSource correction — wrong source nibble should be corrected to 4
+// Test sendAsync with matchSource — source nibble is only rewritten when the address is registered
+// in the driver. Without registration, the frame is sent as-is through the Bus worker thread.
 TEST_F(ConnectionTest, SendAsyncMatchSource) {
     HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
     std::mutex mtx;
@@ -1214,9 +1218,10 @@ TEST_F(ConnectionTest, SendAsyncMatchSource) {
     Connection conn(LogicalAddress::PLAYBACK_DEVICE_1, false);
     conn.open();
 
-    // Frame has wrong source (0=TV); matchSource should rewrite to 4=PLAYBACK_DEVICE_1
+    // Frame with source nibble 0 (TV). Since PLAYBACK_DEVICE_1 is not registered in the
+    // driver's address list, matchSource leaves the frame unchanged.
     CECFrame frame;
-    frame.append(0x0F); // src=0 (wrong), dst=F
+    frame.append(0x0F); // src=0 (TV), dst=F
     frame.append(0x36);
 
     EXPECT_NO_THROW(conn.sendAsync(frame));
@@ -1228,8 +1233,9 @@ TEST_F(ConnectionTest, SendAsyncMatchSource) {
     }
     conn.close();
 
-    ASSERT_GE(capturedBuf.size(), (size_t)1);
-    EXPECT_EQ((capturedBuf[0] >> 4) & 0x0F, 0x4) << "Source nibble should be corrected to PLAYBACK_DEVICE_1 (4)";
+    ASSERT_EQ(capturedBuf.size(), (size_t)2);
+    EXPECT_EQ(capturedBuf[0], 0x0F) << "Frame sent unchanged because source is not registered";
+    EXPECT_EQ(capturedBuf[1], 0x36);
     ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
