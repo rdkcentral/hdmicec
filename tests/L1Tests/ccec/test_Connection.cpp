@@ -1327,9 +1327,6 @@ TEST_F(ConnectionTest, LargeFrameMatchSource) {
     EXPECT_EQ(capturedBuf[0] & 0x0F, 0xF)        << "Destination nibble must be F";
     ::testing::Mock::VerifyAndClearExpectations(mock);
 }
-    
-    conn.close();
-}
 
 // Test getSource returns correct value
 TEST_F(ConnectionTest, GetSourceReturnsCorrectValue) {
