@@ -23,8 +23,6 @@ tests/
     │   ├── test_OpCode.cpp
     │   └── test_Operands.cpp
     └── osal/                     # OSAL library tests (3 files)
-        ├── test_Mutex.cpp
-        ├── test_Thread.cpp
         └── test_ConditionVariable.cpp
 ```
 

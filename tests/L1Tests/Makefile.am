@@ -42,7 +42,6 @@ run_L1Tests_SOURCES = \
     ccec/test_Operands.cpp \
     ccec/test_Driver_Mock.cpp \
     ccec/test_Driver.cpp \
-    osal/test_Thread.cpp \
     osal/test_ConditionVariable.cpp \
     $(top_srcdir)/mocks/hdmicec/hdmi_cec_driver_mock.cpp
 
