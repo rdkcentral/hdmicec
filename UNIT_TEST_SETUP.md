@@ -38,7 +38,6 @@ tests/L1Tests/
 │   ├── test_OpCode.cpp          # OpCode enum/class tests
 │   └── test_Operands.cpp        # PhysicalAddress/LogicalAddress tests
 └── osal/                         # OSAL library tests
-    ├── test_Mutex.cpp           # Mutex locking tests
     ├── test_Thread.cpp          # Thread execution tests
     └── test_ConditionVariable.cpp # Condition variable tests
 ```

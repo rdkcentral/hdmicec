@@ -38,10 +38,12 @@ TEST_F(CECFrameTest, DefaultConstructor) {
 }
 
 TEST_F(CECFrameTest, ConstructorWithHeader) {
+    // TV=0, PLAYBACK_DEVICE_1=4 => header byte = (from<<4)|to = (0<<4)|4 = 0x04
     Header header(LogicalAddress::TV, LogicalAddress::PLAYBACK_DEVICE_1);
     CECFrame frame;
     header.serialize(frame);
-    EXPECT_GT(frame.length(), (size_t)0);
+    EXPECT_EQ(frame.length(), (size_t)1);
+    EXPECT_EQ(frame.at(0), 0x04);
 }
 
 TEST_F(CECFrameTest, CopyConstructor) {
@@ -50,6 +52,10 @@ TEST_F(CECFrameTest, CopyConstructor) {
     header.serialize(frame1);
     CECFrame frame2(frame1);
     EXPECT_EQ(frame1.length(), frame2.length());
+    // Verify byte content is identical, not just the length
+    for (size_t i = 0; i < frame1.length(); i++) {
+        EXPECT_EQ(frame2.at(i), frame1.at(i)) << "Mismatch at byte " << i;
+    }
 }
 
 TEST_F(CECFrameTest, HexDumpOutput) {
@@ -138,6 +144,7 @@ TEST_F(CECFrameTest, GetBufferDirect) {
     const uint8_t *buf = frame.getBuffer();
     EXPECT_NE(buf, nullptr);
     EXPECT_EQ(buf[0], 0x40);
+    EXPECT_EQ(buf[1], 0x83);
 }
 
 TEST_F(CECFrameTest, AtMethod) {
