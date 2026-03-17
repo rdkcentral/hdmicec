@@ -328,6 +328,7 @@ TEST_F(ConnectionTest, SendToWithThrowParameter) {
 }
 
 // Test sendToAsync — verify header is constructed (src=4, dst=0 => 0x40) and opcode preserved
+// Note: sendToAsync enqueues to the Bus worker thread, which dispatches via HdmiCecTx (not HdmiCecTxAsync).
 TEST_F(ConnectionTest, SendToAsync) {
     HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
     std::mutex mtx;
@@ -335,9 +336,10 @@ TEST_F(ConnectionTest, SendToAsync) {
     std::vector<unsigned char> capturedBuf;
     bool txCalled = false;
 
-    EXPECT_CALL(*mock, HdmiCecTxAsync(_, _, _))
+    EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _))
         .Times(1)
-        .WillOnce(Invoke([&](int, const unsigned char* buf, int len) -> int {
+        .WillOnce(Invoke([&](int, const unsigned char* buf, int len, int* result) -> int {
+            if (result) *result = HDMI_CEC_IO_SENT_AND_ACKD;
             std::lock_guard<std::mutex> lk(mtx);
             capturedBuf.assign(buf, buf + len);
             txCalled = true;
@@ -356,7 +358,7 @@ TEST_F(ConnectionTest, SendToAsync) {
     {
         std::unique_lock<std::mutex> lk(mtx);
         ASSERT_TRUE(cv.wait_for(lk, std::chrono::milliseconds(500), [&]{ return txCalled; }))
-            << "HdmiCecTxAsync was not called within timeout";
+            << "HdmiCecTx was not called within timeout";
     }
     conn.close();
 
@@ -368,6 +370,7 @@ TEST_F(ConnectionTest, SendToAsync) {
 }
 
 // Test sendAsync — frame already has header bytes; verify driver receives them unchanged
+// Note: sendAsync enqueues to the Bus worker thread, which dispatches via HdmiCecTx (not HdmiCecTxAsync).
 TEST_F(ConnectionTest, SendAsync) {
     HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
     std::mutex mtx;
@@ -375,9 +378,10 @@ TEST_F(ConnectionTest, SendAsync) {
     std::vector<unsigned char> capturedBuf;
     bool txCalled = false;
 
-    EXPECT_CALL(*mock, HdmiCecTxAsync(_, _, _))
+    EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _))
         .Times(1)
-        .WillOnce(Invoke([&](int, const unsigned char* buf, int len) -> int {
+        .WillOnce(Invoke([&](int, const unsigned char* buf, int len, int* result) -> int {
+            if (result) *result = HDMI_CEC_IO_SENT_AND_ACKD;
             std::lock_guard<std::mutex> lk(mtx);
             capturedBuf.assign(buf, buf + len);
             txCalled = true;
@@ -397,7 +401,7 @@ TEST_F(ConnectionTest, SendAsync) {
     {
         std::unique_lock<std::mutex> lk(mtx);
         ASSERT_TRUE(cv.wait_for(lk, std::chrono::milliseconds(500), [&]{ return txCalled; }))
-            << "HdmiCecTxAsync was not called within timeout";
+            << "HdmiCecTx was not called within timeout";
     }
     conn.close();
 
@@ -626,16 +630,17 @@ TEST_F(ConnectionTest, CloseRemovesListeners) {
     conn.close();
 }
 
-// Test sendAsync multiple times — verify all 5 frames reach the driver
+// Test sendAsync multiple times — verify all 5 frames reach the driver via HdmiCecTx
 TEST_F(ConnectionTest, MultipleAsyncSends) {
     HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
     std::mutex mtx;
     std::condition_variable cv;
     int callCount = 0;
 
-    EXPECT_CALL(*mock, HdmiCecTxAsync(_, _, _))
+    EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _))
         .Times(5)
-        .WillRepeatedly(Invoke([&](int, const unsigned char*, int) -> int {
+        .WillRepeatedly(Invoke([&](int, const unsigned char*, int, int* result) -> int {
+            if (result) *result = HDMI_CEC_IO_SENT_AND_ACKD;
             std::lock_guard<std::mutex> lk(mtx);
             ++callCount;
             cv.notify_one();
@@ -669,9 +674,10 @@ TEST_F(ConnectionTest, AsyncSendToDifferentAddresses) {
     std::condition_variable cv;
     std::vector<unsigned char> headers;
 
-    EXPECT_CALL(*mock, HdmiCecTxAsync(_, _, _))
+    EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _))
         .Times(3)
-        .WillRepeatedly(Invoke([&](int, const unsigned char* buf, int len) -> int {
+        .WillRepeatedly(Invoke([&](int, const unsigned char* buf, int len, int* result) -> int {
+            if (result) *result = HDMI_CEC_IO_SENT_AND_ACKD;
             std::lock_guard<std::mutex> lk(mtx);
             if (len >= 1) headers.push_back(buf[0]);
             cv.notify_all();
@@ -806,27 +812,20 @@ TEST_F(ConnectionTest, ConnectionAfterSend) {
     ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
-// Test mixed sync and async operations — verify both sync (HdmiCecTx) and async (HdmiCecTxAsync) calls reach the driver
+// Test mixed sync and async operations — all 4 sends go through HdmiCecTx (the Bus async queue
+// also dispatches via the worker thread using the synchronous HdmiCecTx driver call).
 TEST_F(ConnectionTest, MixedSyncAsync) {
     HdmiCecDriverMock* mock = HdmiCecDriverMock::getInstance();
     std::mutex mtx;
     std::condition_variable cv;
-    int syncCount = 0;
-    int asyncCount = 0;
+    int callCount = 0;
 
     EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _))
-        .Times(2)
+        .Times(4)
         .WillRepeatedly(Invoke([&](int, const unsigned char*, int, int* result) -> int {
             if (result) *result = HDMI_CEC_IO_SENT_AND_ACKD;
-            ++syncCount;
-            return HDMI_CEC_IO_SUCCESS;
-        }));
-
-    EXPECT_CALL(*mock, HdmiCecTxAsync(_, _, _))
-        .Times(2)
-        .WillRepeatedly(Invoke([&](int, const unsigned char*, int) -> int {
             std::lock_guard<std::mutex> lk(mtx);
-            ++asyncCount;
+            ++callCount;
             cv.notify_all();
             return HDMI_CEC_IO_SUCCESS;
         }));
@@ -836,20 +835,19 @@ TEST_F(ConnectionTest, MixedSyncAsync) {
 
     CECFrame frame; frame.append(0x36);
 
-    EXPECT_NO_THROW(conn.send(frame, 0));
-    EXPECT_NO_THROW(conn.sendAsync(frame));
-    EXPECT_NO_THROW(conn.sendTo(LogicalAddress::TV, frame));
-    EXPECT_NO_THROW(conn.sendToAsync(LogicalAddress::TV, frame));
+    EXPECT_NO_THROW(conn.send(frame, 0));                         // sync
+    EXPECT_NO_THROW(conn.sendAsync(frame));                       // async queue → HdmiCecTx
+    EXPECT_NO_THROW(conn.sendTo(LogicalAddress::TV, frame));      // sync
+    EXPECT_NO_THROW(conn.sendToAsync(LogicalAddress::TV, frame)); // async queue → HdmiCecTx
 
     {
         std::unique_lock<std::mutex> lk(mtx);
-        ASSERT_TRUE(cv.wait_for(lk, std::chrono::milliseconds(1000), [&]{ return asyncCount == 2; }))
-            << "Async sends did not complete; asyncCount=" << asyncCount;
+        ASSERT_TRUE(cv.wait_for(lk, std::chrono::milliseconds(1000), [&]{ return callCount == 4; }))
+            << "Not all 4 sends completed; callCount=" << callCount;
     }
     conn.close();
 
-    EXPECT_EQ(syncCount, 2)  << "Expected 2 synchronous driver calls";
-    EXPECT_EQ(asyncCount, 2) << "Expected 2 asynchronous driver calls";
+    EXPECT_EQ(callCount, 4);
     ::testing::Mock::VerifyAndClearExpectations(mock);
 }
 
@@ -1202,9 +1200,10 @@ TEST_F(ConnectionTest, SendAsyncMatchSource) {
     std::vector<unsigned char> capturedBuf;
     bool txCalled = false;
 
-    EXPECT_CALL(*mock, HdmiCecTxAsync(_, _, _))
+    EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _))
         .Times(1)
-        .WillOnce(Invoke([&](int, const unsigned char* buf, int len) -> int {
+        .WillOnce(Invoke([&](int, const unsigned char* buf, int len, int* result) -> int {
+            if (result) *result = HDMI_CEC_IO_SENT_AND_ACKD;
             std::lock_guard<std::mutex> lk(mtx);
             capturedBuf.assign(buf, buf + len);
             txCalled = true;
@@ -1225,7 +1224,7 @@ TEST_F(ConnectionTest, SendAsyncMatchSource) {
     {
         std::unique_lock<std::mutex> lk(mtx);
         ASSERT_TRUE(cv.wait_for(lk, std::chrono::milliseconds(500), [&]{ return txCalled; }))
-            << "HdmiCecTxAsync was not called within timeout";
+            << "HdmiCecTx was not called within timeout";
     }
     conn.close();
 
@@ -1242,9 +1241,10 @@ TEST_F(ConnectionTest, SendToAsyncHeaderConstruction) {
     std::vector<unsigned char> capturedBuf;
     bool txCalled = false;
 
-    EXPECT_CALL(*mock, HdmiCecTxAsync(_, _, _))
+    EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _))
         .Times(1)
-        .WillOnce(Invoke([&](int, const unsigned char* buf, int len) -> int {
+        .WillOnce(Invoke([&](int, const unsigned char* buf, int len, int* result) -> int {
+            if (result) *result = HDMI_CEC_IO_SENT_AND_ACKD;
             std::lock_guard<std::mutex> lk(mtx);
             capturedBuf.assign(buf, buf + len);
             txCalled = true;
@@ -1265,7 +1265,7 @@ TEST_F(ConnectionTest, SendToAsyncHeaderConstruction) {
     {
         std::unique_lock<std::mutex> lk(mtx);
         ASSERT_TRUE(cv.wait_for(lk, std::chrono::milliseconds(500), [&]{ return txCalled; }))
-            << "HdmiCecTxAsync was not called within timeout";
+            << "HdmiCecTx was not called within timeout";
     }
     conn.close();
 
