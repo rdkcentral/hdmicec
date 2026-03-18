@@ -36,44 +36,47 @@
 #include "ccec/host/RDK.hpp"
 #include "ccec/MessageEncoder.hpp"
 #include "ccec/LibCCEC.hpp"
-#include "ccec/drivers/iarmbus/CecIARMBusMgr.h"
+#include "ccec/CECFrame.hpp"
 
 
-//The tool is to convert the hex bytes in command line to CECFrame and send it out via IARM
+
+//The tool is to convert the hex bytes in command line to CECFrame and send it out directly
 //CECCmd <hex bytes>
 //E.g. CECCmd 3F 82 10 00 /From Tuner To Broadcast, Active_Source
 
 int main(int argc, char *argv[])
 {
-
     int i = 0;
-    IARM_Bus_Init("CECClient");
-    IARM_Bus_Connect();
 
     LibCCEC::getInstance().init();
-
     sleep(1);
 
-    IARM_Result_t ret = IARM_RESULT_SUCCESS;
-    IARM_Bus_CECMgr_Send_Param_t dataToSend;
-    memset(&dataToSend, 0, sizeof(dataToSend));
-
-    if (0 != argc)
+    if (0 != argc && argc > 1)
     {
         printf("Count = %d \n Data : ", argc);
-
+        
+        CECFrame frame;
         for(i = 1; i < argc; i++)
         {
-            printf("%x ", strtol(argv[i], NULL, 16));
-            dataToSend.data[i-1] = (int)strtol(argv[i], NULL, 16);
+            unsigned char byte = (unsigned char)strtol(argv[i], NULL, 16);
+            printf("%02x ", byte);
+            frame.append(byte);
         }
+        printf("\n");
 
-        dataToSend.length = (argc - 1);
-        ret = IARM_Bus_Call(IARM_BUS_CECMGR_NAME,IARM_BUS_CECMGR_API_Send,(void *)&dataToSend, sizeof(dataToSend));
-        if( IARM_RESULT_SUCCESS != ret)
-        {
-            printf("Iarm call failed retval = %d \n", ret);
+        try {
+            // Send frame directly using Connection
+            Connection conn(LogicalAddress::UNREGISTERED, true);
+            conn.sendTo(LogicalAddress::BROADCAST, frame);
+            printf("CEC frame sent successfully\n");
         }
+        catch(Exception &e) {
+            printf("Failed to send CEC frame\n");
+        }
+    }
+    else
+    {
+        printf("Usage: CECCmd <hex byte 1> <hex byte 2> ...\n");
     }
 
     try{
@@ -81,11 +84,8 @@ int main(int argc, char *argv[])
 	}
 	catch(Exception &e)
 	{
-        CCEC_LOG( LOG_EXP, "I-ARM CEC Mgr:: Caught Exception while calling LibCCEC::term()\r\n");
+        CCEC_LOG( LOG_EXP, "CEC Mgr:: Caught Exception while calling LibCCEC::term()\r\n");
     }
-
-    IARM_Bus_Disconnect();
-    IARM_Bus_Term();
 }
 //Note: To enable yocto build for the test app, please add the folder name 'tests' in the 
 //SUBDIRS & DIST_SUBDIRS parameters in /hdmicec/Makefile.am

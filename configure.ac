@@ -64,11 +64,27 @@ AC_CHECK_FUNCS([memset strdup strerror])
 
 PKG_CHECK_MODULES([GLIB], [glib-2.0 >= 0.10.28])
 
+dnl Optional L1 unit tests support
+AC_ARG_ENABLE([l1tests],
+    AS_HELP_STRING([--enable-l1tests], [Enable L1 unit tests (requires gtest)]),
+    [enable_l1tests=$enableval],
+    [enable_l1tests=no])
+
+AM_CONDITIONAL([ENABLE_L1TESTS], [test "x$enable_l1tests" = "xyes"])
+
+if test "x$enable_l1tests" = "xyes"; then
+    PKG_CHECK_MODULES([GTEST], [gtest >= 1.10.0], [],
+        [AC_MSG_ERROR([Google Test not found. Install libgtest-dev or use --disable-l1tests])])
+    AC_SUBST([GTEST_CFLAGS])
+    AC_SUBST([GTEST_LIBS])
+fi
+
 AC_CONFIG_FILES([Makefile
 		 cfg/Makefile
                  osal/Makefile
                  osal/src/Makefile
                  ccec/Makefile
                  ccec/src/Makefile
-                 tests/Makefile])
+                 tests/Makefile
+                 tests/L1Tests/Makefile])
 AC_OUTPUT

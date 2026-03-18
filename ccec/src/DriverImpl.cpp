@@ -145,6 +145,7 @@ void  DriverImpl::close(void) noexcept(false)
 
 		int err = HdmiCecClose(nativeHandle);
 		if (err != HDMI_CEC_IO_SUCCESS) {
+            status = CLOSED;
 			throw IOException();
 		}
 
@@ -403,7 +404,7 @@ void  DriverImpl::printFrameDetails(const CECFrame &frame)  noexcept(false) {
 	try{
 		frame.getBuffer(&buf, &len);
 		Header header(frame,HEADER_OFFSET);
-		for (int i = 0; i < len; i++) {
+		for (size_t i = 0; i < len; i++) {
 			snprintf(strBuffer + strlen(strBuffer) , (sizeof(strBuffer) - strlen(strBuffer)) ,"%02X ",(uint8_t) *(buf + i));
 		}
 		if (frame.length() > OPCODE_OFFSET) {

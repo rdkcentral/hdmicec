@@ -17,7 +17,10 @@
 # limitations under the License.
 ##########################################################################
 
-SUBDIRS =
+if ENABLE_L1TESTS
+SUBDIRS = L1Tests
+endif
+
 AM_CXXFLAGS = -pthread -Wall -D_USE_DBUS -I../include \
               -I${top_srcdir}/osal/include \
               -I${top_srcdir}/host/include \
