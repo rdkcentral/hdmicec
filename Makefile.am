@@ -17,7 +17,7 @@
 # limitations under the License.
 ##########################################################################
 SUBDIRS = osal ccec
-DIST_SUBDIRS = cfg osal ccec
+DIST_SUBDIRS = cfg osal ccec tests
 
 nobase_includedir = ${includedir}/hdmicec
 nobase_include_HEADERS = ${top_srcdir}/ccec/include/ccec/Assert.hpp \

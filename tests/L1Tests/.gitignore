@@ -1,0 +1,19 @@
+# Build artifacts
+*.o
+*.lo
+*.la
+.libs/
+.deps/
+Makefile
+Makefile.in
+
+# Test executables
+run_L1Tests
+
+# Test results
+*.log
+*.trs
+*.xml
+
+# Generated files
+.dirstamp
