@@ -1,0 +1,22 @@
+name: Build Component in Native Environment
+
+on:
+  push:
+    branches: [ main, 'sprint/**', 'release/**', develop ]
+  pull_request:
+    branches: [ main, 'sprint/**', 'release/**', topic/*, feature/RDK*, develop ]
+
+jobs:
+  build-entservices-on-pr:
+    name: Build HdmiCec Component in github rdkcentral
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/rdkcentral/docker-rdk-ci:latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: native build
+        run: |
+          ./cov_build.sh
