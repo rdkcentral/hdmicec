@@ -23,6 +23,7 @@ lib_LTLIBRARIES = libRCEC.la
 
 AM_LDFLAGS = -ltelemetry_msgsender
 
+# Main RCEC library
 libRCEC_la_SOURCES = CECFrame.cpp \
                      Util.cpp \
                      DriverImpl.cpp \
@@ -31,7 +32,14 @@ libRCEC_la_SOURCES = CECFrame.cpp \
                      OpCode.cpp \
                      Connection.cpp \
                      Driver.cpp \
-                     MessageDecoder.cpp
+                     MessageDecoder.cpp \
+                     factoryImpl/HDMICecHalFactory.cpp \
+                     factoryImpl/HDMICecRdkVHAL.cpp \
+                     factoryImpl/HDMICecAidlHAL.cpp \
+                     factoryImpl/ServiceManagerCheck.cpp
 
 libRCEC_la_LDFLAGS = -lpthread
-libRCEC_la_LIBADD = -lRCECOSHal -L${top_builddir}/osal/src/.libs
+libRCEC_la_LIBADD = ${top_builddir}/osal/src/libRCECOSHal.la
+
+
+
