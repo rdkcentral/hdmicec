@@ -74,23 +74,375 @@ jobs:
           cmake --install build/googletest
 
       - name: Generate stub headers
-        # Empty headers to mute errors
-        run: >
+        run: |
+          set -e
           cd "$GITHUB_WORKSPACE/hdmicec"
-          &&
-          mkdir -p
-          stubs/rdk/iarmbus
-          stubs/ccec/drivers/iarmbus
-          &&
-          cd stubs
-          &&
-          touch
-          rdk/iarmbus/libIARM.h
-          rdk/iarmbus/libIBus.h
-          rdk/iarmbus/libIBusDaemon.h
-          ccec/drivers/iarmbus/CecIARMBusMgr.h
-          &&
-          ln -s ../../../mocks/hdmicec/hdmi_cec_driver.h ccec/drivers/hdmi_cec_driver.h
+          mkdir -p \
+          stubs/rdk/iarmbus \
+          stubs/ccec/drivers/iarmbus \
+          stubs/binder \
+          stubs/utils \
+          stubs/linux/android \
+          stubs/com/rdk/hal/hdmicec
+
+          touch \
+          stubs/rdk/iarmbus/libIARM.h \
+          stubs/rdk/iarmbus/libIBus.h \
+          stubs/rdk/iarmbus/libIBusDaemon.h \
+          stubs/ccec/drivers/iarmbus/CecIARMBusMgr.h
+
+          ln -sf ../../../mocks/hdmicec/hdmi_cec_driver.h stubs/ccec/drivers/hdmi_cec_driver.h
+
+          cat <<'EOF' > stubs/utils/String16.h
+          #ifndef STUB_UTILS_STRING16_H
+          #define STUB_UTILS_STRING16_H
+          
+          #include <string>
+          
+          namespace android {
+          class String16 {
+          public:
+            String16() = default;
+            explicit String16(const char* value) : mValue(value ? value : "") {}
+            explicit String16(const std::string& value) : mValue(value) {}
+          
+            const std::string& str() const { return mValue; }
+          
+            friend bool operator==(const String16& lhs, const String16& rhs) { return lhs.mValue == rhs.mValue; }
+            friend bool operator!=(const String16& lhs, const String16& rhs) { return !(lhs == rhs); }
+          
+          private:
+            std::string mValue;
+          };
+          }
+          
+          #endif
+          EOF
+
+          cat <<'EOF' > stubs/utils/String8.h
+          #ifndef STUB_UTILS_STRING8_H
+          #define STUB_UTILS_STRING8_H
+          
+          #include <string>
+          #include "String16.h"
+          
+          namespace android {
+          class String8 {
+          public:
+            String8() = default;
+            explicit String8(const char* value) : mValue(value ? value : "") {}
+            explicit String8(const String16& value) : mValue(value.str()) {}
+          
+            const char* c_str() const { return mValue.c_str(); }
+            const char* string() const { return mValue.c_str(); }
+          
+          private:
+            std::string mValue;
+          };
+          }
+          
+          #endif
+          EOF
+
+          cat <<'EOF' > stubs/utils/Vector.h
+          #ifndef STUB_UTILS_VECTOR_H
+          #define STUB_UTILS_VECTOR_H
+          
+          #include <vector>
+          
+          namespace android {
+          template <typename T>
+          using Vector = std::vector<T>;
+          }
+          
+          #endif
+          EOF
+
+          cat <<'EOF' > stubs/binder/IServiceManager.h
+          #ifndef STUB_BINDER_ISERVICE_MANAGER_H
+          #define STUB_BINDER_ISERVICE_MANAGER_H
+          
+          #include <memory>
+          #include <string>
+          #include <vector>
+          #include "utils/String16.h"
+          #include "utils/String8.h"
+          #include "utils/Vector.h"
+          
+          namespace android {
+          template <typename T>
+          class sp {
+          public:
+            sp() = default;
+            sp(std::nullptr_t) : mPtr(nullptr) {}
+            sp(T* ptr) : mPtr(ptr) {}
+            sp(const std::shared_ptr<T>& ptr) : mPtr(ptr) {}
+          
+            T* get() const { return mPtr.get(); }
+            T* operator->() const { return mPtr.get(); }
+            operator bool() const { return static_cast<bool>(mPtr); }
+            bool operator==(std::nullptr_t) const { return mPtr == nullptr; }
+            bool operator!=(std::nullptr_t) const { return mPtr != nullptr; }
+            sp& operator=(T* ptr) { mPtr.reset(ptr); return *this; }
+          
+          private:
+            std::shared_ptr<T> mPtr;
+          };
+          
+          class IBinder {
+          public:
+            virtual ~IBinder() = default;
+          };
+          
+          namespace binder {
+          class Status {
+          public:
+            Status() : mOk(true), mMessage("OK") {}
+            explicit Status(bool ok, std::string message = "OK") : mOk(ok), mMessage(std::move(message)) {}
+          
+            static Status ok() { return Status(true, "OK"); }
+            bool isOk() const { return mOk; }
+            String8 toString8() const { return String8(mMessage.c_str()); }
+          
+          private:
+            bool mOk;
+            std::string mMessage;
+          };
+          }
+          
+          class IServiceManager {
+          public:
+            virtual ~IServiceManager() = default;
+            virtual sp<IBinder> getService(const String16&) { return sp<IBinder>(nullptr); }
+            virtual Vector<String16> listServices() { return {}; }
+          };
+          
+          class StubServiceManager : public IServiceManager {};
+          
+          inline sp<IServiceManager> defaultServiceManager() {
+            static sp<IServiceManager> manager(new StubServiceManager());
+            return manager;
+          }
+          
+          template <typename T>
+          sp<T> interface_cast(const sp<IBinder>&) {
+            return sp<T>(new T());
+          }
+          }
+          
+          #endif
+          EOF
+
+          cat <<'EOF' > stubs/binder/ProcessState.h
+          #ifndef STUB_BINDER_PROCESS_STATE_H
+          #define STUB_BINDER_PROCESS_STATE_H
+          
+          namespace android {
+          class ProcessState {
+          public:
+            static ProcessState* self() {
+              static ProcessState instance;
+              return &instance;
+            }
+          
+            void startThreadPool() {}
+          };
+          }
+          
+          #endif
+          EOF
+
+          cat <<'EOF' > stubs/com/rdk/hal/hdmicec/SendMessageStatus.h
+          #ifndef STUB_HDMICEC_SEND_MESSAGE_STATUS_H
+          #define STUB_HDMICEC_SEND_MESSAGE_STATUS_H
+          
+          namespace com { namespace rdk { namespace hal { namespace hdmicec {
+          enum class SendMessageStatus {
+            ACK_STATE_0 = 0,
+            ACK_STATE_1 = 1,
+            BUSY = 2
+          };
+          }}}}
+          
+          #endif
+          EOF
+
+          cat <<'EOF' > stubs/com/rdk/hal/hdmicec/State.h
+          #ifndef STUB_HDMICEC_STATE_H
+          #define STUB_HDMICEC_STATE_H
+          
+          namespace com { namespace rdk { namespace hal { namespace hdmicec {
+          enum class State {
+            UNKNOWN = 0,
+            IDLE = 1,
+            ACTIVE = 2
+          };
+          }}}}
+          
+          #endif
+          EOF
+
+          cat <<'EOF' > stubs/com/rdk/hal/hdmicec/IHdmiCecEventListener.h
+          #ifndef STUB_HDMICEC_EVENT_LISTENER_H
+          #define STUB_HDMICEC_EVENT_LISTENER_H
+          
+          #include <vector>
+          #include "binder/IServiceManager.h"
+          #include "com/rdk/hal/hdmicec/SendMessageStatus.h"
+          #include "com/rdk/hal/hdmicec/State.h"
+          
+          namespace com { namespace rdk { namespace hal { namespace hdmicec {
+          class IHdmiCecEventListener : public android::IBinder {
+          public:
+            virtual ~IHdmiCecEventListener() = default;
+            virtual android::binder::Status onMessageReceived(const std::vector<uint8_t>&) { return android::binder::Status::ok(); }
+            virtual android::binder::Status onStateChanged(State, State) { return android::binder::Status::ok(); }
+            virtual android::binder::Status onMessageSent(const std::vector<uint8_t>&, SendMessageStatus) { return android::binder::Status::ok(); }
+          };
+          }}}}
+          
+          #endif
+          EOF
+
+          cat <<'EOF' > stubs/com/rdk/hal/hdmicec/BnHdmiCecEventListener.h
+          #ifndef STUB_BN_HDMICEC_EVENT_LISTENER_H
+          #define STUB_BN_HDMICEC_EVENT_LISTENER_H
+          
+          #include "com/rdk/hal/hdmicec/IHdmiCecEventListener.h"
+          
+          namespace com { namespace rdk { namespace hal { namespace hdmicec {
+          class BnHdmiCecEventListener : public IHdmiCecEventListener {};
+          }}}}
+          
+          #endif
+          EOF
+
+          cat <<'EOF' > stubs/com/rdk/hal/hdmicec/IHdmiCecController.h
+          #ifndef STUB_HDMICEC_CONTROLLER_H
+          #define STUB_HDMICEC_CONTROLLER_H
+          
+          #include <cstdint>
+          #include <vector>
+          #include "binder/IServiceManager.h"
+          #include "com/rdk/hal/hdmicec/SendMessageStatus.h"
+          
+          namespace com { namespace rdk { namespace hal { namespace hdmicec {
+          class IHdmiCecController : public android::IBinder {
+          public:
+            virtual ~IHdmiCecController() = default;
+          
+            virtual android::binder::Status addLogicalAddresses(const std::vector<int32_t>&, bool* result) {
+              if (result) { *result = true; }
+              return android::binder::Status::ok();
+            }
+          
+            virtual android::binder::Status removeLogicalAddresses(const std::vector<int32_t>&, bool* result) {
+              if (result) { *result = true; }
+              return android::binder::Status::ok();
+            }
+          
+            virtual android::binder::Status sendMessage(const std::vector<uint8_t>&, SendMessageStatus* status) {
+              if (status) { *status = SendMessageStatus::ACK_STATE_0; }
+              return android::binder::Status::ok();
+            }
+          };
+          }}}}
+          
+          #endif
+          EOF
+
+          cat <<'EOF' > stubs/com/rdk/hal/hdmicec/IHdmiCec.h
+          #ifndef STUB_HDMICEC_H
+          #define STUB_HDMICEC_H
+          
+          #include <string>
+          #include <vector>
+          #include "binder/IServiceManager.h"
+          #include "com/rdk/hal/hdmicec/IHdmiCecController.h"
+          #include "com/rdk/hal/hdmicec/IHdmiCecEventListener.h"
+          
+          namespace com { namespace rdk { namespace hal { namespace hdmicec {
+          class IHdmiCec : public android::IBinder {
+          public:
+            virtual ~IHdmiCec() = default;
+          
+            static std::string serviceName() { return "com.rdk.hal.hdmicec.IHdmiCec/default"; }
+          
+            virtual android::binder::Status open(const android::sp<IHdmiCecEventListener>&, android::sp<IHdmiCecController>* controller) {
+              if (controller) { *controller = android::sp<IHdmiCecController>(new IHdmiCecController()); }
+              return android::binder::Status::ok();
+            }
+          
+            virtual android::binder::Status close(const android::sp<IHdmiCecController>&, bool* result) {
+              if (result) { *result = true; }
+              return android::binder::Status::ok();
+            }
+          
+            virtual android::binder::Status getLogicalAddresses(std::vector<int32_t>* addresses) {
+              if (addresses) { addresses->clear(); }
+              return android::binder::Status::ok();
+            }
+          };
+          }}}}
+          
+          #endif
+          EOF
+
+          cat <<'EOF' > stubs/linux/android/binder.h
+          #ifndef STUB_LINUX_ANDROID_BINDER_H
+          #define STUB_LINUX_ANDROID_BINDER_H
+          
+          #include <cstdint>
+          #include <sys/ioctl.h>
+          
+          typedef uintptr_t binder_uintptr_t;
+          
+          struct binder_version {
+            int32_t protocol_version;
+          };
+          
+          struct binder_write_read {
+            uint64_t write_size;
+            uint64_t write_consumed;
+            binder_uintptr_t write_buffer;
+            uint64_t read_size;
+            uint64_t read_consumed;
+            binder_uintptr_t read_buffer;
+          };
+          
+          struct binder_transaction_data {
+            union {
+              uint32_t handle;
+              binder_uintptr_t ptr;
+            } target;
+            binder_uintptr_t cookie;
+            uint32_t code;
+            uint32_t flags;
+            int32_t sender_pid;
+            int32_t sender_euid;
+            uint64_t data_size;
+            uint64_t offsets_size;
+            union {
+              struct {
+                binder_uintptr_t buffer;
+                binder_uintptr_t offsets;
+              } ptr;
+              uint8_t buf[8];
+            } data;
+          };
+          
+          #define BINDER_WRITE_READ _IOWR('b', 1, struct binder_write_read)
+          #define BC_TRANSACTION 0x0
+          #define TF_ACCEPT_FDS 0x10
+          #define BR_REPLY 0x1
+          #define BR_DEAD_REPLY 0x2
+          #define BR_FAILED_REPLY 0x3
+          #define BR_TRANSACTION_COMPLETE 0x4
+          #define BR_NOOP 0x5
+          #define BR_OK 0x6
+          
+          #endif
+          EOF
           
       - name: Build hdmicec
         run: >

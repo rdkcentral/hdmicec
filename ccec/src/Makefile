@@ -97,5 +97,3 @@ library: $(OBJS)
 clean:
 	@echo "Cleaning the directory..."
 	@$(RM) $(OBJS) install
-
-

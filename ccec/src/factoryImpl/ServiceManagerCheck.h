@@ -23,6 +23,3 @@
 bool isServiceManagerAvailable();
 
 #endif // SERVICEMANAGER_CHECK_H
-
-
-

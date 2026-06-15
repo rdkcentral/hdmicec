@@ -32,7 +32,6 @@
 
 #include <list>
 #include <memory>
-
 #include "osal/Mutex.hpp"
 #include "osal/EventQueue.hpp"
 
@@ -104,4 +103,3 @@ CCEC_END_NAMESPACE
 
 /** @} */
 /** @} */
-

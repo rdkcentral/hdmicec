@@ -40,6 +40,3 @@ libRCEC_la_SOURCES = CECFrame.cpp \
 
 libRCEC_la_LDFLAGS = -lpthread
 libRCEC_la_LIBADD = ${top_builddir}/osal/src/libRCECOSHal.la
-
-
-

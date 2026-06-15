@@ -18,13 +18,12 @@
  * ServiceManagerCheck.cpp —  Checking the availability of the Android ServiceManager via Binder IPC.
  *
  */
-
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
+#include <cerrno>
 #include <vector>
-#include <iostream>
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -107,9 +106,9 @@ static BinderTransaction prepare_v7_transaction() {
     const size_t tx_words = sizeof(txn) / sizeof(uint32_t);
     tx.write_payload.reserve(1 + tx_words);
     tx.write_payload.push_back(BC_TRANSACTION_V7);
-    
-    const auto* raw_ptr = reinterpret_cast<const uint32_t*>(&txn);
-    tx.write_payload.insert(tx.write_payload.end(), raw_ptr, raw_ptr + tx_words);
+
+    tx.write_payload.resize(1 + tx_words);
+    std::memcpy(tx.write_payload.data() + 1, &txn, sizeof(txn));
     tx.read_payload.resize(256, 0);
     return tx;
 }
@@ -131,8 +130,8 @@ static BinderTransaction prepare_v8_transaction() {
     tx.write_payload.reserve(1 + tx_words);
     tx.write_payload.push_back(BC_TRANSACTION);
 
-    const auto* raw_ptr = reinterpret_cast<const uint32_t*>(&txn);
-    tx.write_payload.insert(tx.write_payload.end(), raw_ptr, raw_ptr + tx_words);
+    tx.write_payload.resize(1 + tx_words);
+    std::memcpy(tx.write_payload.data() + 1, &txn, sizeof(txn));
     tx.read_payload.resize(256, 0);
     return tx;
 }

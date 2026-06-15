@@ -22,7 +22,6 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
-#include <fstream>
 #include <string>
 #include <vector>
 
@@ -72,6 +71,24 @@ private:
     HDMICecAidlHAL *mAidlHal;
 };
 
+
+// Return the standard logical-address candidates for a given device type.
+// Used only as a fallback when AIDL reports no allocated addresses yet.
+std::vector<int32_t> preferredLogicalAddressesForDeviceType(int devType)
+{
+    // Common CEC type ids used in middleware:
+    // 0: TV, 1: RecordingDevice, 3: Tuner, 4: PlaybackDevice, 5: AudioSystem.
+    switch (devType) {
+        case 0: return std::vector<int32_t>{0}; // TV
+        case 1: return std::vector<int32_t>{1, 2, 9}; // Recorder
+        case 3: return std::vector<int32_t>{3, 6, 7, 10}; // Tuner
+        case 5: return std::vector<int32_t>{5}; // AudioSystem
+        case 4:
+        default:
+            return std::vector<int32_t>{4, 8, 11}; // PlaybackDevice fallback
+    }
+}
+
 HDMICecAidlHAL::HDMICecAidlHAL()
     : mAidlService(nullptr),
       mAidlController(nullptr),
@@ -89,51 +106,6 @@ HDMICecAidlHAL::~HDMICecAidlHAL()
     mAidlController = nullptr;
     mAidlService = nullptr;
     mEventListener = nullptr;
-}
-
-bool HDMICecAidlHAL::parseLogicalAddressField(const std::string& line, const char* field, int& value)
-{
-	const size_t keyPos = line.find(field);
-	if (keyPos == std::string::npos) {
-		return false;
-	}
-
-	const size_t valueStart = line.find_first_not_of(" \t", keyPos + strlen(field));
-	if (valueStart == std::string::npos) {
-		return false;
-	}
-
-	char* endPtr = nullptr;
-	const long parsed = std::strtol(line.c_str() + valueStart, &endPtr, 10);
-	if (endPtr == (line.c_str() + valueStart)) {
-		return false;
-	}
-
-	value = static_cast<int>(parsed);
-	return true;
-}
-
-bool HDMICecAidlHAL::isPresentInVdeviceTopology(const uint8_t destination)
-{
-	std::ifstream topology(kVdeviceTopologyDump);
-	if (!topology.is_open()) {
-		return false;
-	}
-
-	std::string line;
-	while (std::getline(topology, line)) {
-		int logicalAddr = -1;
-		if (parseLogicalAddressField(line, "Logical-1:", logicalAddr) && logicalAddr == static_cast<int>(destination)) {
-			return true;
-		}
-
-		logicalAddr = -1;
-		if (parseLogicalAddressField(line, "Logical-2:", logicalAddr) && logicalAddr == static_cast<int>(destination)) {
-			return true;
-		}
-	}
-
-	return false;
 }
 
 android::sp<IHdmiCec> HDMICecAidlHAL::getAidlService()
@@ -168,12 +140,16 @@ int HDMICecAidlHAL::open(int *handle)
 {
     CCEC_LOG(LOG_INFO, "HDMICecAidlHAL::open invoked\n");
 
+    if (handle == nullptr) {
+        CCEC_LOG(LOG_ERROR, "HDMICecAidlHAL::open failed: invalid handle pointer\r\n");
+        throw IOException();
+    }
+
     android::sp<IHdmiCec> service = getAidlService();
     if (service == nullptr) {
         CCEC_LOG(LOG_ERROR, "HDMICecAidlHAL::open failed: IHdmiCec service unavailable\r\n");
         throw IOException();
     }
-
     // Create event listener
     mEventListener = new HDMICecAidlHALEventListener(this);
 
@@ -196,7 +172,7 @@ int HDMICecAidlHAL::open(int *handle)
 int HDMICecAidlHAL::close(int handle)
 {
     CCEC_LOG(LOG_INFO, "HDMICecAidlHAL::close invoked\n");
-	(void)handle;
+    (void)handle;
 
     if (mAidlController != nullptr) {
         android::sp<IHdmiCec> service = getAidlService();
@@ -204,6 +180,7 @@ int HDMICecAidlHAL::close(int handle)
             bool result = false;
             android::binder::Status status = service->close(mAidlController, &result);
             if (!status.isOk()) {
+                CCEC_LOG(LOG_EXP, "Failed to close AIDL HdmiCec interface: %s\r\n", status.toString8().c_str());
                 CCEC_LOG(LOG_ERROR, "HDMICecAidlHAL::close failed: service->close status not OK\n");
                 throw IOException();
             }
@@ -223,18 +200,18 @@ int HDMICecAidlHAL::close(int handle)
 
 int HDMICecAidlHAL::addLogicalAddress(int handle, int logicalAddresses)
 {
+    (void)handle;
     if (mAidlController == nullptr) {
         throw IOException();
     }
-
     std::vector<int32_t> addresses;
     addresses.push_back(logicalAddresses);
     bool result = false;
     android::binder::Status status = mAidlController->addLogicalAddresses(addresses, &result);
 
     if (!status.isOk()) {
-    	CCEC_LOG(LOG_EXP, "Failed to add logical address via AIDL: %s\r\n", status.toString8().c_str());
-		throw IOException();
+        CCEC_LOG(LOG_EXP, "Failed to add logical address via AIDL: %s\r\n", status.toString8().c_str());
+        throw IOException();
     }
 
     if (!result) {
@@ -247,6 +224,7 @@ int HDMICecAidlHAL::addLogicalAddress(int handle, int logicalAddresses)
 
 int HDMICecAidlHAL::removeLogicalAddress(int handle, int logicalAddresses)
 {
+    (void)handle;
     if (mAidlController == nullptr) {
         throw IOException();
     }
@@ -255,10 +233,10 @@ int HDMICecAidlHAL::removeLogicalAddress(int handle, int logicalAddresses)
     addresses.push_back(logicalAddresses);
     bool result = false;
     android::binder::Status status = mAidlController->removeLogicalAddresses(addresses, &result);
-	if (!status.isOk() || !result) {
-		CCEC_LOG(LOG_EXP, "Failed to remove logical address via AIDL: %s\n", status.toString8().c_str());
-		throw IOException();
-	}
+    if (!status.isOk() || !result) {
+        CCEC_LOG(LOG_EXP, "Failed to remove logical address via AIDL: %s\n", status.toString8().c_str());
+        throw IOException();
+    }
 
     CCEC_LOG(LOG_DEBUG, "Successfully removed logical address via AIDL\n");
     return 0;
@@ -266,26 +244,52 @@ int HDMICecAidlHAL::removeLogicalAddress(int handle, int logicalAddresses)
 
 int HDMICecAidlHAL::getLogicalAddress(int handle, int *logicalAddress)
 {
+    (void)handle;
     if (logicalAddress == nullptr) {
         CCEC_LOG(LOG_ERROR, "HDMICecAidlHAL::getLogicalAddress invalid output pointer\r\n");
         throw IOException();
     }
 
     *logicalAddress = 0;
-
-	if (mAidlService == nullptr) {
-		android::sp<IHdmiCec> service = getAidlService();
-		if (service == nullptr) {
+    if (mAidlService == nullptr) {
+        android::sp<IHdmiCec> service = getAidlService();
+        if (service == nullptr) {
             throw IOException();
-		}
-		mAidlService = service;
-	}
+        }
+        mAidlService = service;
+    }
 
     std::vector<int32_t> addresses;
     android::binder::Status status = mAidlService->getLogicalAddresses(&addresses);
     if (status.isOk() && addresses.size() > 0) {
         *logicalAddress = addresses[0];
+    }else {
+        CCEC_LOG(LOG_WARN,
+            "DriverImpl::getLogicalAddress no allocated LA from AIDL (statusOk=%d, count=%zu). Trying fallback allocation.\r\n",
+            status.isOk() ? 1 : 0,
+            addresses.size());
+        if (mAidlController != nullptr) {
+            const std::vector<int32_t> preferred = preferredLogicalAddressesForDeviceType(*logicalAddress);
+            for (std::vector<int32_t>::const_iterator it = preferred.begin(); it != preferred.end(); ++it) {
+                std::vector<int32_t> candidate;
+                candidate.push_back(*it);
+                bool addResult = false;
+                android::binder::Status addStatus = mAidlController->addLogicalAddresses(candidate, &addResult);
+                CCEC_LOG(LOG_DEBUG,
+                    "DriverImpl::getLogicalAddress fallback addLogicalAddresses candidate=%d addOk=%d addResult=%d\r\n",
+                    candidate[0],
+                    addStatus.isOk() ? 1 : 0,
+                    addResult ? 1 : 0);
+                addresses.clear();
+                android::binder::Status retryStatus = mAidlService->getLogicalAddresses(&addresses);
+                if (retryStatus.isOk() && addresses.size() > 0) {
+                    *logicalAddress = addresses[0];
+                    break;
+                }
+            }
+        }
     }
+
     
     CCEC_LOG( LOG_DEBUG, "HDMICecAidlHAL::getLogicalAddress completed\r\n");
 
@@ -310,6 +314,14 @@ void HDMICecAidlHAL::dispatchRx(unsigned char *buf, int len)
         return;
     }
 
+    // Track initiator LA from inbound frames so 1-byte poll can be emulated
+    // locally on AIDL backends that reject 1-byte sendMessage payloads.
+    if (buf != nullptr && len >= 1) {
+        const uint8_t srcLA = static_cast<uint8_t>((buf[0] >> 4) & 0x0F);
+        if (srcLA <= 0x0E) {
+            mSeenLogicalAddresses.insert(srcLA);
+        }
+    }
     mRxCb(0, mRxCbData, buf, len);
 }
 
@@ -347,9 +359,10 @@ int HDMICecAidlHAL::setTxCallback(int handle, HdmiCecTxCallback_t cbfunc, void *
 
 int HDMICecAidlHAL::tx(int handle, const unsigned char *buf, int len, int *result)
 {
+    (void)handle;
     if (mAidlController == nullptr) {
-		throw IOException();
-	}
+        throw IOException();
+    }
 
     if (result == nullptr) {
         CCEC_LOG(LOG_ERROR, "HDMICecAidlHAL::tx invalid result pointer\n");
@@ -361,12 +374,17 @@ int HDMICecAidlHAL::tx(int handle, const unsigned char *buf, int len, int *resul
         throw IOException();
     }
 
+    if(emulateAckForPollFrames(buf, len)) {
+        *result = 0;  // HDMI_CEC_IO_SUCCESS
+        return 0;
+    }
+
     std::vector<uint8_t> message(buf, buf + len);
     SendMessageStatus sendStatus;
     android::binder::Status status = mAidlController->sendMessage(message, &sendStatus);
     if (!status.isOk()) {
         CCEC_LOG(LOG_ERROR, "AIDL sendMessage failed: %s\r\n", status.toString8().c_str());
-		throw IOException();
+        throw IOException();
     }
 
     // Map AIDL SendMessageStatus to HAL error codes
@@ -387,6 +405,7 @@ int HDMICecAidlHAL::tx(int handle, const unsigned char *buf, int len, int *resul
 
 int HDMICecAidlHAL::txAsync(int handle, const unsigned char *buf, int len)
 {
+    (void)handle;
     if (mAidlController == nullptr) {
         throw IOException();
     }
@@ -400,7 +419,7 @@ int HDMICecAidlHAL::txAsync(int handle, const unsigned char *buf, int len)
     android::binder::Status status = mAidlController->sendMessage(message, &sendStatus);
     if (!status.isOk()) {
         CCEC_LOG(LOG_ERROR, "AIDL sendMessage failed: %s\r\n", status.toString8().c_str());
-		throw IOException();
+        throw IOException();
     }
 
     if (sendStatus == SendMessageStatus::BUSY) {
@@ -415,48 +434,66 @@ int HDMICecAidlHAL::txAsync(int handle, const unsigned char *buf, int len)
     return 0;
 }
 
-bool HDMICecAidlHAL::skipFrameOfUnsupportedLength(size_t length) {
-	if (length < kAidlMinCecFrameSize || length > kAidlMaxCecFrameSize) {
-		/* AIDL sendMessage accepts only 2..16 byte CEC frames. */
-		CCEC_LOG(LOG_WARN,
-			"DriverImpl::writeAsync skipping unsupported CEC frame length=%zu on AIDL backend (valid range: 2..16).\r\n",
-			length);
-        return true;
-	}
-
-    return false;
-}
-
 bool HDMICecAidlHAL::emulateAckForPollFrames(const unsigned char *buf, int len)
 {
     if (len <= 1) {
         /*
-            * Poll frame (header only): emulate ACK based on vdevice topology file.
-            * This keeps HdmiCecSource ping-based discovery working on AIDL backend.
-            */
+         * Poll frame (header only): emulate ACK based on seen-LA cache
+         * and 2-byte probe. This keeps HdmiCecSource ping-based discovery
+         * working on AIDL backend.
+         */
         const uint8_t destination = (buf != NULL) ? (buf[0] & 0x0F) : 0xFF;
-        const bool addressPresent = (destination <= 0x0E) ? isPresentInVdeviceTopology(destination) : false;
 
-        if (addressPresent) {
-            CCEC_LOG(LOG_DEBUG,
-                "DriverImpl::write poll-frame destination=0x%X present in topology. Emulating ack.\r\n",
-                destination);
-            return true;
+        if (destination <= 0x0E) {
+            /* Check seen-LA cache first */
+            {
+                AutoLock lock_(mAidlMutex);
+                if (mSeenLogicalAddresses.count(destination) > 0) {
+                    CCEC_LOG(LOG_DEBUG,
+                        "HDMICecAidlHAL::emulateAckForPollFrames destination=0x%X present in seen-LA set. Emulating ack.\r\n",
+                        destination);
+                    return true;
+                }
+            }
+
+            /* Probe with a 2-byte directed frame (GiveDevicePowerStatus) */
+            {
+                AutoLock lock_(mAidlMutex);
+                std::vector<uint8_t> probe;
+                probe.reserve(2);
+                probe.push_back(buf ? buf[0] : 0);
+                probe.push_back(0x8F); // GiveDevicePowerStatus
+
+                SendMessageStatus probeStatus = SendMessageStatus::BUSY;
+                android::binder::Status aidlStatus = mAidlController->sendMessage(probe, &probeStatus);
+                if (aidlStatus.isOk() && probeStatus == SendMessageStatus::ACK_STATE_0) {
+                    mSeenLogicalAddresses.insert(destination);
+                    CCEC_LOG(LOG_DEBUG,
+                        "HDMICecAidlHAL::emulateAckForPollFrames destination=0x%X ACKed by 2-byte probe. Emulating ack.\r\n",
+                        destination);
+                    return true;
+                }
+
+                CCEC_LOG(LOG_DEBUG,
+                    "HDMICecAidlHAL::emulateAckForPollFrames destination=0x%X probe NACK/failed (aidlOk=%d status=%d).\r\n",
+                    destination,
+                    aidlStatus.isOk() ? 1 : 0,
+                    static_cast<int>(probeStatus));
+            }
         }
 
         CCEC_LOG(LOG_DEBUG,
-            "DriverImpl::write poll-frame destination=0x%X not present in topology. Returning no-ack.\r\n",
-            destination);
+            "HDMICecAidlHAL::emulateAckForPollFrames destination=0x%X not present. Returning no-ack.\r\n",
+            (buf != NULL) ? (buf[0] & 0x0F) : 0xFF);
         throw CECNoAckException();
     }
 
     if (static_cast<size_t>(len) > kAidlMaxCecFrameSize) {
         CCEC_LOG(LOG_EXP,
-            "DriverImpl::write blocking unsupported CEC frame length=%zu on AIDL backend (valid range: 2..16).\r\n",
+            "HDMICecAidlHAL::emulateAckForPollFrames blocking unsupported CEC frame length=%zu on AIDL backend (valid range: 2..16).\r\n",
             static_cast<size_t>(len));
         throw IOException();
     }
 
     return false;
 }
-

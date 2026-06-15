@@ -89,19 +89,6 @@ public:
      * Calls HdmiCecGetPhysicalAddress().
      */
     int getPhysicalAddress(int handle, unsigned int *physicalAddress) override;
-
-    /**
-     * @brief Determine if a received frame of the given length should be skipped
-     *        because its length is unsupported by the legacy HAL.
-     */
-    bool skipFrameOfUnsupportedLength(size_t length) override;
-
-    /**
-     * @brief Emulate ACK for Poll messages, which the legacy HAL does not support.
-     *        This allows the driver to treat Poll frames as if they were ACKed,
-     *        ensuring proper handling of device presence on the bus.
-     */
-    bool emulateAckForPollFrames(const unsigned char *buf, int len) override;
 };
 
 #endif // HDMI_CEC_RDK_V_HAL_H

@@ -21,6 +21,8 @@
 #define I_HDMI_CEC_HAL_H
 
 #include <cstddef>
+#include <cstdint>
+#include <set>
 #include "ccec/drivers/hdmi_cec_driver.h"
 
 /**
@@ -158,29 +160,6 @@ public:
      * @return HDMI_CEC_IO_SUCCESS on success, or an error code.
      */
     virtual int getPhysicalAddress(int handle, unsigned int *physicalAddress) = 0;
-
-    /**
-     * @brief Check if a frame of unsupported length should be skipped.
-     *
-     * Legacy: no-op (returns false).
-     * AIDL:   validates frame length against binder service constraints.
-     *
-     * @param[in] length  Length of the CEC frame.
-     * @return true if the frame should be skipped, false otherwise.
-     */
-    virtual bool skipFrameOfUnsupportedLength(size_t length) = 0;
-
-    /**
-     * @brief Emulate acknowledgment for poll frames.
-     *
-     * Legacy: Ignores this as the legacy HAL does not support emulating ACKs.
-     * AIDL:   Check Vdevice topology to determine emulation required or not
-     *
-     * @param[in] buf  Buffer containing the CEC frame.
-     * @param[in] len  Length of the CEC frame.
-     * @return true if acknowledgment should be emulated, false otherwise.
-     */
-    virtual bool emulateAckForPollFrames(const unsigned char *buf, int len) = 0;
 };
 
 #endif // I_HDMI_CEC_HAL_H

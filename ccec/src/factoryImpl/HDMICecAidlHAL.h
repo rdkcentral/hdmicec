@@ -23,7 +23,8 @@
 #include "IHDMICecHal.h"
 
  #include <cstdint>
- #include <string>
+#include <set>
+#include <vector>
 #include <binder/IServiceManager.h>
 #include <binder/ProcessState.h>
 #include <utils/String16.h>
@@ -55,20 +56,20 @@ public:
     int setTxCallback(int handle, HdmiCecTxCallback_t cbfunc, void *data) override;
     int tx(int handle, const unsigned char *buf, int len, int *result) override;
     int txAsync(int handle, const unsigned char *buf, int len) override;
-    bool skipFrameOfUnsupportedLength(size_t length) override;
-    bool emulateAckForPollFrames(const unsigned char *buf, int len) override;
 
 private:
     const size_t kAidlMinCecFrameSize = 2;
     const size_t kAidlMaxCecFrameSize = 16;
-    static constexpr const char* kVdeviceTopologyDump = "/tmp/hdmi_cec_device_list_info.txt";
-
-    bool parseLogicalAddressField(const std::string& line, const char* field, int& value);
-    bool isPresentInVdeviceTopology(const uint8_t destination);
     android::sp<com::rdk::hal::hdmicec::IHdmiCec> getAidlService();
     void initAidlService();
     void dispatchRx(unsigned char *buf, int len);
     void dispatchTx(int result);
+    /**
+     * @brief Emulate ACK for Poll messages
+     *        This allows the driver to treat Poll frames as if they were ACKed,
+     *        ensuring proper handling of device presence on the bus.
+     */
+    bool emulateAckForPollFrames(const unsigned char *buf, int len);
 
     android::sp<com::rdk::hal::hdmicec::IHdmiCec> mAidlService;
     android::sp<com::rdk::hal::hdmicec::IHdmiCecController> mAidlController;
@@ -78,6 +79,10 @@ private:
     void* mRxCbData;
     void* mTxCbData;
     mutable Mutex mAidlMutex;
+	// Logical addresses seen on inbound CEC frames.
+	// Used to emulate poll ACK/NACK locally because some AIDL backends
+	// reject 1-byte poll frames as invalid message size.
+	std::set<uint8_t> mSeenLogicalAddresses;
 
     friend class HDMICecAidlHALEventListener;
 };
