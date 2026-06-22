@@ -80,9 +80,9 @@ public:
 
     /**
      * @brief Get the device logical address.
-     * Calls HdmiCecGetLogicalAddress().
+     * Calls HdmiCecGetLogicalAddress(). devType is unused on legacy backend.
      */
-    int getLogicalAddress(int handle, int *logicalAddress) override;
+    int getLogicalAddress(int handle, int devType, int *logicalAddress) override;
 
     /**
      * @brief Get the device physical address.

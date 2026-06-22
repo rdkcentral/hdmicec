@@ -120,8 +120,9 @@ int HDMICecRdkVHAL::removeLogicalAddress(int handle, int logicalAddress)
  * getLogicalAddress
  * Calls HdmiCecGetLogicalAddress() to retrieve the current logical address.
  * -------------------------------------------------------------------- */
-int HDMICecRdkVHAL::getLogicalAddress(int handle, int *logicalAddress)
+int HDMICecRdkVHAL::getLogicalAddress(int handle, int devType, int *logicalAddress)
 {
+	(void)devType;
     int ret = ::HdmiCecGetLogicalAddress(handle, logicalAddress);
     CCEC_LOG(LOG_DEBUG, "HDMICecRdkVHAL::getLogicalAddress handle=%d ret=%d addr=%d\r\n",
              handle, ret, (logicalAddress ? *logicalAddress : -1));

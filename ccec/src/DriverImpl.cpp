@@ -325,7 +325,7 @@ int DriverImpl::getLogicalAddress(int devType)
 	int logicalAddress = 0;
 	CCEC_LOG( LOG_DEBUG, "DriverImpl::getLogicalAddress called for devType : %d \r\n", devType);
 
-	mHal->getLogicalAddress(nativeHandle, &logicalAddress);
+	mHal->getLogicalAddress(nativeHandle, devType, &logicalAddress);
 
 	CCEC_LOG( LOG_DEBUG, "DriverImpl::getLogicalAddress got logical Address : %d \r\n", logicalAddress);
 	return logicalAddress;

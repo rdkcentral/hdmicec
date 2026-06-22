@@ -50,7 +50,7 @@ public:
     int close(int handle) override;
     int addLogicalAddress(int handle, int logicalAddresses) override;
     int removeLogicalAddress(int handle, int logicalAddresses) override;
-    int getLogicalAddress(int handle, int *logicalAddress) override;
+    int getLogicalAddress(int handle, int devType, int *logicalAddress) override;
     int getPhysicalAddress(int handle, unsigned int *physicalAddress) override;
     int setRxCallback(int handle, HdmiCecRxCallback_t cbfunc, void *data) override;
     int setTxCallback(int handle, HdmiCecTxCallback_t cbfunc, void *data) override;

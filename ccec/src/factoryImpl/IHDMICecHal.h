@@ -141,13 +141,15 @@ public:
      * @brief Get the logical address of the device.
      *
      * Legacy: calls HdmiCecGetLogicalAddress().
-     * AIDL:   queries the logical address via binder.
+     * AIDL:   queries the logical address via binder, and may use devType
+     *         as a fallback hint when no logical address is currently allocated.
      *
      * @param[in]  handle          The driver handle.
+     * @param[in]  devType         Device type hint (TV/Recorder/Tuner/Playback/AudioSystem).
      * @param[out] logicalAddress  Pointer to store the logical address.
      * @return HDMI_CEC_IO_SUCCESS on success, or an error code.
      */
-    virtual int getLogicalAddress(int handle, int *logicalAddress) = 0;
+    virtual int getLogicalAddress(int handle, int devType, int *logicalAddress) = 0;
 
     /**
      * @brief Get the physical address of the device.

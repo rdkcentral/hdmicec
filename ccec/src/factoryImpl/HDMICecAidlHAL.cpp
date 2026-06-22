@@ -241,7 +241,7 @@ int HDMICecAidlHAL::removeLogicalAddress(int handle, int logicalAddresses)
     return 0;
 }
 
-int HDMICecAidlHAL::getLogicalAddress(int handle, int *logicalAddress)
+int HDMICecAidlHAL::getLogicalAddress(int handle, int devType, int *logicalAddress)
 {
     (void)handle;
     if (logicalAddress == nullptr) {
@@ -264,18 +264,19 @@ int HDMICecAidlHAL::getLogicalAddress(int handle, int *logicalAddress)
         *logicalAddress = addresses[0];
     }else {
         CCEC_LOG(LOG_WARN,
-            "DriverImpl::getLogicalAddress no allocated LA from AIDL (statusOk=%d, count=%zu). Trying fallback allocation.\r\n",
+            "HDMICecAidlHAL::getLogicalAddress no allocated LA from AIDL (statusOk=%d, count=%zu devType=%d). Trying fallback allocation.\r\n",
             status.isOk() ? 1 : 0,
-            addresses.size());
+            addresses.size(),
+            devType);
         if (mAidlController != nullptr) {
-            const std::vector<int32_t> preferred = preferredLogicalAddressesForDeviceType(*logicalAddress);
+            const std::vector<int32_t> preferred = preferredLogicalAddressesForDeviceType(devType);
             for (std::vector<int32_t>::const_iterator it = preferred.begin(); it != preferred.end(); ++it) {
                 std::vector<int32_t> candidate;
                 candidate.push_back(*it);
                 bool addResult = false;
                 android::binder::Status addStatus = mAidlController->addLogicalAddresses(candidate, &addResult);
                 CCEC_LOG(LOG_DEBUG,
-                    "DriverImpl::getLogicalAddress fallback addLogicalAddresses candidate=%d addOk=%d addResult=%d\r\n",
+                    "HDMICecAidlHAL::getLogicalAddress fallback addLogicalAddresses candidate=%d addOk=%d addResult=%d\r\n",
                     candidate[0],
                     addStatus.isOk() ? 1 : 0,
                     addResult ? 1 : 0);
