@@ -165,7 +165,6 @@ int HDMICecAidlHAL::open(int *handle)
 
     *handle = 1;  /* Dummy handle — AIDL uses controller object */
 
-    CCEC_LOG(LOG_INFO, "HDMICecAidlHAL::open completed successfully\r\n");
     return 0;
 }
 
@@ -218,7 +217,7 @@ int HDMICecAidlHAL::addLogicalAddress(int handle, int logicalAddresses)
         throw AddressNotAvailableException();
     }
 
-    CCEC_LOG(LOG_DEBUG, "Successfully added logical address via AIDL\n");
+    CCEC_LOG(LOG_DEBUG, "Successfully added logical address addr=%d via AIDL\n", logicalAddresses);
     return 0;
 }
 
@@ -238,7 +237,7 @@ int HDMICecAidlHAL::removeLogicalAddress(int handle, int logicalAddresses)
         throw IOException();
     }
 
-    CCEC_LOG(LOG_DEBUG, "Successfully removed logical address via AIDL\n");
+    CCEC_LOG(LOG_DEBUG, "Successfully removed logical address addr=%d via AIDL\n", logicalAddresses);
     return 0;
 }
 
@@ -427,9 +426,7 @@ int HDMICecAidlHAL::txAsync(int handle, const unsigned char *buf, int len)
         throw IOException();
     }
 
-    CCEC_LOG( LOG_DEBUG, "AIDL sendMessage completed, status: %d\r\n", static_cast<int>(sendStatus));
-
-    CCEC_LOG( LOG_DEBUG, "Send Async Completed\n");
+    CCEC_LOG( LOG_DEBUG, "AIDL txAsync completed, status: %d\r\n", static_cast<int>(sendStatus));
 
     return 0;
 }

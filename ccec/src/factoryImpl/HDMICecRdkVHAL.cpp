@@ -33,7 +33,6 @@
  * -------------------------------------------------------------------- */
 int HDMICecRdkVHAL::open(int *handle)
 {
-    CCEC_LOG(LOG_INFO, "HDMICecRdkVHAL::open\r\n");
     int ret = ::HdmiCecOpen(handle);
     CCEC_LOG(LOG_DEBUG, "HDMICecRdkVHAL::open ret=%d handle=%d\r\n", ret, (handle ? *handle : -1));
     return ret;
@@ -45,9 +44,8 @@ int HDMICecRdkVHAL::open(int *handle)
  * -------------------------------------------------------------------- */
 int HDMICecRdkVHAL::close(int handle)
 {
-    CCEC_LOG(LOG_INFO, "HDMICecRdkVHAL::close handle=%d\r\n", handle);
     int ret = ::HdmiCecClose(handle);
-    CCEC_LOG(LOG_DEBUG, "HDMICecRdkVHAL::close ret=%d\r\n", ret);
+    CCEC_LOG(LOG_DEBUG, "HDMICecRdkVHAL::close handle=%d ret=%d\r\n", handle, ret);
     return ret;
 }
 
@@ -57,9 +55,8 @@ int HDMICecRdkVHAL::close(int handle)
  * -------------------------------------------------------------------- */
 int HDMICecRdkVHAL::setRxCallback(int handle, HdmiCecRxCallback_t cbfunc, void *data)
 {
-    CCEC_LOG(LOG_INFO, "HDMICecRdkVHAL::setRxCallback handle=%d\r\n", handle);
     int ret = ::HdmiCecSetRxCallback(handle, cbfunc, data);
-    CCEC_LOG(LOG_DEBUG, "HDMICecRdkVHAL::setRxCallback ret=%d\r\n", ret);
+    CCEC_LOG(LOG_DEBUG, "HDMICecRdkVHAL::setRxCallback handle=%d ret=%d\r\n", handle, ret);
     return ret;
 }
 
@@ -69,9 +66,8 @@ int HDMICecRdkVHAL::setRxCallback(int handle, HdmiCecRxCallback_t cbfunc, void *
  * -------------------------------------------------------------------- */
 int HDMICecRdkVHAL::setTxCallback(int handle, HdmiCecTxCallback_t cbfunc, void *data)
 {
-    CCEC_LOG(LOG_INFO, "HDMICecRdkVHAL::setTxCallback handle=%d\r\n", handle);
     int ret = ::HdmiCecSetTxCallback(handle, cbfunc, data);
-    CCEC_LOG(LOG_DEBUG, "HDMICecRdkVHAL::setTxCallback ret=%d\r\n", ret);
+    CCEC_LOG(LOG_DEBUG, "HDMICecRdkVHAL::setTxCallback handle=%d ret=%d\r\n", handle, ret);
     return ret;
 }
 
@@ -81,9 +77,8 @@ int HDMICecRdkVHAL::setTxCallback(int handle, HdmiCecTxCallback_t cbfunc, void *
  * -------------------------------------------------------------------- */
 int HDMICecRdkVHAL::tx(int handle, const unsigned char *buf, int len, int *result)
 {
-    CCEC_LOG(LOG_INFO, "HDMICecRdkVHAL::tx handle=%d len=%d\r\n", handle, len);
     int ret = ::HdmiCecTx(handle, buf, len, result);
-    CCEC_LOG(LOG_DEBUG, "HDMICecRdkVHAL::tx ret=%d sendResult=%d\r\n", ret, (result ? *result : -1));
+    CCEC_LOG(LOG_DEBUG, "HDMICecRdkVHAL::tx handle=%d ret=%d sendResult=%d\r\n", handle, ret, (result ? *result : -1));
     return ret;
 }
 
@@ -93,9 +88,8 @@ int HDMICecRdkVHAL::tx(int handle, const unsigned char *buf, int len, int *resul
  * -------------------------------------------------------------------- */
 int HDMICecRdkVHAL::txAsync(int handle, const unsigned char *buf, int len)
 {
-    CCEC_LOG(LOG_INFO, "HDMICecRdkVHAL::txAsync handle=%d len=%d\r\n", handle, len);
     int ret = ::HdmiCecTxAsync(handle, buf, len);
-    CCEC_LOG(LOG_DEBUG, "HDMICecRdkVHAL::txAsync ret=%d\r\n", ret);
+    CCEC_LOG(LOG_DEBUG, "HDMICecRdkVHAL::txAsync handle=%d ret=%d\r\n", handle, ret);
     return ret;
 }
 
@@ -105,9 +99,8 @@ int HDMICecRdkVHAL::txAsync(int handle, const unsigned char *buf, int len)
  * -------------------------------------------------------------------- */
 int HDMICecRdkVHAL::addLogicalAddress(int handle, int logicalAddress)
 {
-    CCEC_LOG(LOG_INFO, "HDMICecRdkVHAL::addLogicalAddress handle=%d addr=%d\r\n", handle, logicalAddress);
     int ret = ::HdmiCecAddLogicalAddress(handle, logicalAddress);
-    CCEC_LOG(LOG_DEBUG, "HDMICecRdkVHAL::addLogicalAddress ret=%d\r\n", ret);
+    CCEC_LOG(LOG_DEBUG, "HDMICecRdkVHAL::addLogicalAddress handle=%d addr=%d ret=%d\r\n", handle, logicalAddress, ret);
     return ret;
 }
 
@@ -118,9 +111,8 @@ int HDMICecRdkVHAL::addLogicalAddress(int handle, int logicalAddress)
  * -------------------------------------------------------------------- */
 int HDMICecRdkVHAL::removeLogicalAddress(int handle, int logicalAddress)
 {
-    CCEC_LOG(LOG_INFO, "HDMICecRdkVHAL::removeLogicalAddress handle=%d addr=%d\r\n", handle, logicalAddress);
     int ret = ::HdmiCecRemoveLogicalAddress(handle, logicalAddress);
-    CCEC_LOG(LOG_DEBUG, "HDMICecRdkVHAL::removeLogicalAddress ret=%d\r\n", ret);
+    CCEC_LOG(LOG_DEBUG, "HDMICecRdkVHAL::removeLogicalAddress handle=%d addr=%d ret=%d\r\n", handle, logicalAddress, ret);
     return ret;
 }
 
@@ -130,10 +122,9 @@ int HDMICecRdkVHAL::removeLogicalAddress(int handle, int logicalAddress)
  * -------------------------------------------------------------------- */
 int HDMICecRdkVHAL::getLogicalAddress(int handle, int *logicalAddress)
 {
-    CCEC_LOG(LOG_INFO, "HDMICecRdkVHAL::getLogicalAddress handle=%d\r\n", handle);
     int ret = ::HdmiCecGetLogicalAddress(handle, logicalAddress);
-    CCEC_LOG(LOG_DEBUG, "HDMICecRdkVHAL::getLogicalAddress ret=%d addr=%d\r\n",
-             ret, (logicalAddress ? *logicalAddress : -1));
+    CCEC_LOG(LOG_DEBUG, "HDMICecRdkVHAL::getLogicalAddress handle=%d ret=%d addr=%d\r\n",
+             handle, ret, (logicalAddress ? *logicalAddress : -1));
     return ret;
 }
 
@@ -143,9 +134,8 @@ int HDMICecRdkVHAL::getLogicalAddress(int handle, int *logicalAddress)
  * -------------------------------------------------------------------- */
 int HDMICecRdkVHAL::getPhysicalAddress(int handle, unsigned int *physicalAddress)
 {
-    CCEC_LOG(LOG_INFO, "HDMICecRdkVHAL::getPhysicalAddress handle=%d\r\n", handle);
     int ret = ::HdmiCecGetPhysicalAddress(handle, physicalAddress);
-    CCEC_LOG(LOG_DEBUG, "HDMICecRdkVHAL::getPhysicalAddress ret=%d addr=0x%x\r\n",
+    CCEC_LOG(LOG_DEBUG, "HDMICecRdkVHAL::getPhysicalAddress handle=%d ret=%d addr=0x%x\r\n",
              ret, (physicalAddress ? *physicalAddress : 0));
     return ret;
 }
