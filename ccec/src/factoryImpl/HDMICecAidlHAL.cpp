@@ -27,6 +27,7 @@
 
 #include "ccec/Util.hpp"
 #include "ccec/Exception.hpp"
+#include "ccec/drivers/hdmi_cec_driver.h"
 
 using CCEC_OSAL::AutoLock;
 using android::sp;
@@ -60,8 +61,12 @@ public:
 
     android::binder::Status onMessageSent(const std::vector<uint8_t>& message, SendMessageStatus status) override {
         if (mAidlHal) {
-            int result = (status == SendMessageStatus::ACK_STATE_0) ? 1 :
-                         (status == SendMessageStatus::ACK_STATE_1) ? 2 : 3; 
+             int result = HDMI_CEC_IO_SENT_FAILED;
+             if (status == SendMessageStatus::ACK_STATE_0) {
+                 result = HDMI_CEC_IO_SENT_AND_ACKD;
+             } else if (status == SendMessageStatus::ACK_STATE_1) {
+                 result = HDMI_CEC_IO_SENT_BUT_NOT_ACKD;
+             }
             mAidlHal->dispatchTx(result);
         }
         return android::binder::Status::ok();
@@ -375,7 +380,7 @@ int HDMICecAidlHAL::tx(int handle, const unsigned char *buf, int len, int *resul
     }
 
     if(emulateAckForPollFrames(buf, len)) {
-        *result = 0;  // HDMI_CEC_IO_SUCCESS
+        *result = HDMI_CEC_IO_SUCCESS;
         return 0;
     }
 
@@ -388,13 +393,13 @@ int HDMICecAidlHAL::tx(int handle, const unsigned char *buf, int len, int *resul
     }
 
     // Map AIDL SendMessageStatus to HAL error codes
-    *result = 0;  // HDMI_CEC_IO_SUCCESS
+    *result = HDMI_CEC_IO_SUCCESS;
     if (sendStatus == SendMessageStatus::ACK_STATE_0) {
-        *result = 1; // HDMI_CEC_IO_SENT_AND_ACKD
+        *result = HDMI_CEC_IO_SENT_AND_ACKD;
     } else if (sendStatus == SendMessageStatus::ACK_STATE_1) {
-        *result = 2; // HDMI_CEC_IO_SENT_BUT_NOT_ACKD
+        *result = HDMI_CEC_IO_SENT_BUT_NOT_ACKD;
     } else if (sendStatus == SendMessageStatus::BUSY){
-        *result = 3; // HDMI_CEC_IO_SENT_FAILED
+        *result = HDMI_CEC_IO_SENT_FAILED;
         throw IOException();
     }
 
