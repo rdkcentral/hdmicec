@@ -137,7 +137,7 @@ int HDMICecRdkVHAL::getPhysicalAddress(int handle, unsigned int *physicalAddress
 {
     int ret = ::HdmiCecGetPhysicalAddress(handle, physicalAddress);
     CCEC_LOG(LOG_DEBUG, "HDMICecRdkVHAL::getPhysicalAddress handle=%d ret=%d addr=0x%x\r\n",
-             ret, (physicalAddress ? *physicalAddress : 0));
+            handle, ret, (physicalAddress ? *physicalAddress : 0));
     return ret;
 }
 

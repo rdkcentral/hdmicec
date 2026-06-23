@@ -324,6 +324,7 @@ void HDMICecAidlHAL::dispatchRx(unsigned char *buf, int len)
     if (buf != nullptr && len >= 1) {
         const uint8_t srcLA = static_cast<uint8_t>((buf[0] >> 4) & 0x0F);
         if (srcLA <= 0x0E) {
+            AutoLock lock_(mAidlMutex);
             mSeenLogicalAddresses.insert(srcLA);
         }
     }

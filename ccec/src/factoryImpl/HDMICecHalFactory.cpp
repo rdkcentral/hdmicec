@@ -44,6 +44,7 @@ static const android::String16 mServiceManagerName("manager");
 
 namespace {
     class HalFactoryUtility {
+    public:
         enum class BackendType {
             UNKNOWN,
             LEGACY,
@@ -52,7 +53,7 @@ namespace {
 
         static BackendType mBackendType;
 
-        bool isAidlServiceAvailable(const android::String16 &expectedServiceName)
+        bool isAidlServiceAvailable(const android::String16 expectedServiceName)
         {
             CCEC_LOG(LOG_INFO, "isAidlServiceAvailable invoked\r\n");
 
@@ -139,9 +140,13 @@ std::unique_ptr<IHDMICecHal> HDMICecHalFactory::Create()
 {
     CCEC_LOG(LOG_INFO, "HDMICecHalFactory::Create invoked\r\n");
 
-    if (HalFactoryUtility::isAidlServiceAvailable(IHdmiCec::serviceName().c_str())) {
-        CCEC_LOG(LOG_INFO, "HDMICecHalFactory: Aidl Service is available — using HDMICecAidlHAL\r\n");
-        return std::make_unique<HDMICecAidlHAL>();
+    try {
+        if (HalFactoryUtility::isAidlServiceAvailable(IHdmiCec::serviceName().c_str())) {
+            CCEC_LOG(LOG_INFO, "HDMICecHalFactory: Aidl Service is available — using HDMICecAidlHAL\r\n");
+            return std::make_unique<HDMICecAidlHAL>();
+        }
+    } catch (...) {
+        CCEC_LOG(LOG_ERROR, "HDMICecHalFactory: Exception thrown while creating AIDL HAL,\r\n");
     }
 
     CCEC_LOG(LOG_INFO, "HDMICecHalFactory: Aidl Service is not available — using legacy HDMICecRdkVHAL\r\n");
