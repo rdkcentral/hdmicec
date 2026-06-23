@@ -26,16 +26,6 @@
 class HDMICecHalFactory {
 public:
     static std::unique_ptr<IHDMICecHal> Create();
-
-private:
-    enum class BackendType {
-        UNKNOWN,
-        LEGACY,
-        AIDL
-    };
-
-    static BackendType mBackendType;
-    static bool isAidlServiceAvailable();
 };
 
 #endif // HDMI_CEC_HAL_FACTORY_H

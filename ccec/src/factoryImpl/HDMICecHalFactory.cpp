@@ -41,93 +41,105 @@
 using namespace com::rdk::hal::hdmicec;
 
 static const android::String16 mServiceManagerName("manager");
-HDMICecHalFactory::BackendType HDMICecHalFactory::mBackendType = HDMICecHalFactory::BackendType::UNKNOWN;
 
-bool HDMICecHalFactory::isAidlServiceAvailable()
-{
-    CCEC_LOG(LOG_INFO, "HDMICecHalFactory::isAidlServiceAvailable invoked\r\n");
+namespace {
+    class HalFactoryUtility {
+        enum class BackendType {
+            UNKNOWN,
+            LEGACY,
+            AIDL
+        };
 
-    if (mBackendType == HDMICecHalFactory::BackendType::AIDL) {
-        return true;
-    } else if (mBackendType == HDMICecHalFactory::BackendType::LEGACY) {
-        return false;
-    }
+        static BackendType mBackendType;
 
-    if (!isServiceManagerAvailable()) {
-        CCEC_LOG(LOG_INFO, "Binder driver not available; assuming legacy HDMI CEC HAL\r\n");
-        mBackendType = HDMICecHalFactory::BackendType::LEGACY;
-        return false;
-    }
+        bool isAidlServiceAvailable(const android::String16 &expectedServiceName)
+        {
+            CCEC_LOG(LOG_INFO, "isAidlServiceAvailable invoked\r\n");
 
-    android::sp<android::IServiceManager> serviceManager = android::defaultServiceManager();
-    if (serviceManager == nullptr) {
-        CCEC_LOG(LOG_ERROR, "HDMICecHalFactory::isAidlServiceAvailable failed: IServiceManager unavailable\r\n");
-        mBackendType = HDMICecHalFactory::BackendType::LEGACY;
-        return false;
-    }
+            if (mBackendType == BackendType::AIDL) {
+                return true;
+            } else if (mBackendType == BackendType::LEGACY) {
+                return false;
+            }
 
-    CCEC_LOG(LOG_INFO, "Successfully obtained IServiceManager\r\n");
+            if (!isServiceManagerAvailable()) {
+                CCEC_LOG(LOG_INFO, "Binder driver not available; falling back to legacy HAL\r\n");
+                mBackendType = BackendType::LEGACY;
+                return false;
+            }
 
-    const android::String16 expectedServiceName(IHdmiCec::serviceName().c_str());
-    android::Vector<android::String16> services = serviceManager->listServices();
-    size_t discoveredServiceCount = 0;
-    bool matched = false;
+            android::sp<android::IServiceManager> serviceManager = android::defaultServiceManager();
+            if (serviceManager == nullptr) {
+                CCEC_LOG(LOG_ERROR, "isAidlServiceAvailable failed: IServiceManager unavailable\r\n");
+                mBackendType = BackendType::LEGACY;
+                return false;
+            }
 
-    for (size_t index = 0; index < services.size(); ++index) {
-        if (services[index] != mServiceManagerName) {
-            ++discoveredServiceCount;
+            CCEC_LOG(LOG_INFO, "Successfully obtained IServiceManager\r\n");
+
+            android::Vector<android::String16> services = serviceManager->listServices();
+            size_t discoveredServiceCount = 0;
+            bool matched = false;
+
+            for (size_t index = 0; index < services.size(); ++index) {
+                if (services[index] != mServiceManagerName) {
+                    ++discoveredServiceCount;
+                }
+            }
+
+            CCEC_LOG(LOG_INFO, "isAidlServiceAvailable discovered %zu binder services\r\n", discoveredServiceCount);
+            if (discoveredServiceCount == 0) {
+                CCEC_LOG(LOG_INFO,
+                    "isAidlServiceAvailable found no binder services beyond the ServiceManager entry while searching for '%s'\r\n",
+                    android::String8(expectedServiceName).string());
+                mBackendType = BackendType::LEGACY;
+                return false;
+            }
+
+            CCEC_LOG(LOG_INFO,
+                "isAidlServiceAvailable inspecting %zu registered binder services for '%s'\r\n",
+                discoveredServiceCount, android::String8(expectedServiceName).string());
+
+            for (size_t index = 0; index < services.size(); ++index) {
+                if (services[index] == mServiceManagerName) {
+                    continue;
+                }
+
+                const android::String8 discoveredServiceName(services[index]);
+                if (services[index] == expectedServiceName) {
+                    matched = true;
+                }
+
+                CCEC_LOG(LOG_INFO,
+                    "isAidlServiceAvailable discovered binder service[%zu]='%s'\r\n",
+                    index,
+                    discoveredServiceName.string());
+            }
+
+            if (matched) {
+                CCEC_LOG(LOG_INFO,
+                    "isAidlServiceAvailable found AIDL service '%s'\r\n",
+                    android::String8(expectedServiceName).string());
+                mBackendType = BackendType::AIDL;
+                return true;
+            }
+
+            CCEC_LOG(LOG_INFO,
+                "isAidlServiceAvailable did not find AIDL service '%s'\r\n",
+                android::String8(expectedServiceName).string());
+            mBackendType = BackendType::LEGACY;
+            return false;
         }
-    }
-
-    CCEC_LOG(LOG_INFO, "HDMICecHalFactory::isAidlServiceAvailable discovered %zu binder services\r\n", discoveredServiceCount);
-    if (discoveredServiceCount == 0) {
-        CCEC_LOG(LOG_INFO,
-            "HDMICecHalFactory::isAidlServiceAvailable found no binder services beyond the ServiceManager entry while searching for '%s'\r\n",
-            android::String8(expectedServiceName).string());
-        mBackendType = HDMICecHalFactory::BackendType::LEGACY;
-        return false;
-    }
-
-    CCEC_LOG(LOG_INFO,
-        "HDMICecHalFactory::isAidlServiceAvailable inspecting %zu registered binder services for '%s'\r\n",
-        discoveredServiceCount, android::String8(expectedServiceName).string());
-
-    for (size_t index = 0; index < services.size(); ++index) {
-        if (services[index] == mServiceManagerName) {
-            continue;
-        }
-
-        const android::String8 discoveredServiceName(services[index]);
-        if (services[index] == expectedServiceName) {
-            matched = true;
-        }
-
-        CCEC_LOG(LOG_INFO,
-            "HDMICecHalFactory::isAidlServiceAvailable discovered binder service[%zu]='%s'\r\n",
-            index,
-            discoveredServiceName.string());
-    }
-
-    if (matched) {
-        CCEC_LOG(LOG_INFO,
-            "HDMICecHalFactory::isAidlServiceAvailable found HDMI CEC AIDL service '%s'\r\n",
-            android::String8(expectedServiceName).string());
-        mBackendType = HDMICecHalFactory::BackendType::AIDL;
-        return true;
-    }
-
-    CCEC_LOG(LOG_INFO,
-        "HDMICecHalFactory::isAidlServiceAvailable did not find HDMI CEC AIDL service '%s'\r\n",
-        android::String8(expectedServiceName).string());
-    mBackendType = HDMICecHalFactory::BackendType::LEGACY;
-    return false;
+    };
+    HalFactoryUtility::BackendType HalFactoryUtility::mBackendType
+                                    = HalFactoryUtility::BackendType::UNKNOWN;
 }
 
 std::unique_ptr<IHDMICecHal> HDMICecHalFactory::Create()
 {
     CCEC_LOG(LOG_INFO, "HDMICecHalFactory::Create invoked\r\n");
 
-    if (isAidlServiceAvailable()) {
+    if (HalFactoryUtility::isAidlServiceAvailable(IHdmiCec::serviceName().c_str())) {
         CCEC_LOG(LOG_INFO, "HDMICecHalFactory: Aidl Service is available — using HDMICecAidlHAL\r\n");
         return std::make_unique<HDMICecAidlHAL>();
     }
