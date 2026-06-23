@@ -53,7 +53,7 @@ namespace {
 
         static BackendType mBackendType;
 
-        bool isAidlServiceAvailable(const android::String16 expectedServiceName)
+        static bool isAidlServiceAvailable(const android::String16 &expectedServiceName)
         {
             CCEC_LOG(LOG_INFO, "isAidlServiceAvailable invoked\r\n");
 
@@ -141,7 +141,7 @@ std::unique_ptr<IHDMICecHal> HDMICecHalFactory::Create()
     CCEC_LOG(LOG_INFO, "HDMICecHalFactory::Create invoked\r\n");
 
     try {
-        if (HalFactoryUtility::isAidlServiceAvailable(IHdmiCec::serviceName().c_str())) {
+        if (HalFactoryUtility::isAidlServiceAvailable(android::String16(IHdmiCec::serviceName().c_str()))) {
             CCEC_LOG(LOG_INFO, "HDMICecHalFactory: Aidl Service is available — using HDMICecAidlHAL\r\n");
             return std::make_unique<HDMICecAidlHAL>();
         }
