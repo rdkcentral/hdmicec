@@ -131,7 +131,7 @@ graph TD
 
 ### Prerequisites & Dependencies
 
-The HDMI CEC library is designed as a standalone middleware library with minimal external dependencies. It requires a vendor-specific HAL implementation to interface with hardware and uses glib for basic utilities. The library does not directly depend on IARM, Device Settings, or Thunder framework components - these are used by applications that consume the library, not by the library itself. Build-time dependencies are limited to essential libraries that are actually invoked in the library source code.
+The HDMI CEC library is designed as a standalone middleware library with minimal external dependencies. It requires a vendor-specific HAL implementation to interface with hardware. The build system checks for `glib-2.0` via pkg-config, but the library does not currently call GLib APIs directly. The library does not directly depend on IARM, Device Settings, or Thunder framework components - these are used by applications that consume the library, not by the library itself. Build-time dependencies are limited to essential libraries that are actually invoked in the library source code.
 
 #### Threading Model
 
@@ -143,7 +143,7 @@ The HDMI CEC component implements a multi-threaded architecture with explicit se
 
 - **Worker Threads**:
   - _Bus Reader Thread_: Continuously polls Driver.read() to receive incoming CEC frames. When a frame arrives, it locks the reader mutex and iterates through all registered FrameListener instances, invoking their notify() method synchronously. Owns the frame dispatch logic.
-  - _Bus Writer Thread_: Processes an EventQueue of outgoing CECFrame pointers. Dequeues frames, invokes Driver.write() or Driver.writeAsync(), and handles transmission errors. Uses condition variables for efficient waiting when the queue is empty.
+  - _Bus Writer Thread_: Processes an EventQueue of outgoing CECFrame pointers. Dequeues frames and invokes Driver.write() (synchronous HAL transmit) in the writer thread context, and handles transmission errors. Uses condition variables for efficient waiting when the queue is empty.
 
 - **Synchronization**: 
   - Bus maintains separate reader mutex (rMutex) and writer mutex (wMutex) to protect listener lists and queue operations.
@@ -159,7 +159,7 @@ The HDMI CEC component implements a multi-threaded architecture with explicit se
 
 - **Build Dependencies**: 
   - virtual/vendor-hdmicec-hal: Vendor-specific HAL implementation that the library wraps. This is the primary interface to hardware and is directly called throughout DriverImpl.
-  - glib-2.0 (>= 0.10.28): Provides core data structures and utilities used across the library codebase.
+  - glib-2.0 (>= 0.10.28): Build-time dependency checked via pkg-config (no direct GLib API usage in this library today).
   - telemetry: Used for error event logging via t2_event_s() calls in Bus exception handling.
   - safec-common-wrapper or safec: Provides secure string operations when DISTRO_FEATURES includes 'safec', with SAFEC_DUMMY_API defined otherwise.
 
@@ -179,7 +179,7 @@ The HDMI CEC component implements a multi-threaded architecture with explicit se
 
 #### Initialization to Active State
 
-The HDMI CEC library initialization begins when an application calls LibCCEC::getInstance() which creates the singleton instance and implicitly starts the Bus singleton. The Bus constructor automatically launches reader and writer threads that immediately begin running. The application then calls LibCCEC::init() to mark the library as initialized and optionally calls Bus::start() to open the driver. When the driver opens via DriverImpl::open(), it calls HdmiCecOpen() and registers receive and transmit callbacks. For source devices, the HAL performs logical address discovery during HdmiCecOpen(). The application creates Connection instances which register FrameListener objects with the Bus to begin receiving frames.
+Initialization typically begins when an application obtains the singleton via `LibCCEC::getInstance()` and then calls `LibCCEC::init()`. The first call to `Bus::getInstance()` (performed inside `LibCCEC::init()`) constructs the Bus and starts the reader/writer threads. `LibCCEC::init()` also opens the driver and starts the Bus; consuming applications normally do not need to call `Bus::start()` directly.
 
 ```mermaid
 sequenceDiagram
@@ -191,19 +191,19 @@ sequenceDiagram
     participant Driver as DriverImpl
     participant HAL as HDMI CEC HAL
 
-    App->>LibCCEC: getInstance()
+    App->>LibCEC: getInstance()
     LibCEC->>LibCEC: Create singleton
+    LibCEC-->>App: libCCEC reference
+
+    App->>LibCEC: init(name)
+    LibCEC->>LibCEC: Set initialized flag / set log prefix / read /tmp/cec_log_enabled
     LibCEC->>Bus: getInstance()
     Bus->>Bus: Constructor
     Bus->>Reader: Create and start thread
     Bus->>Writer: Create and start thread
     Note over Reader,Writer: Threads running, waiting for driver
 
-    App->>LibCCEC: init(name)
-    LibCCEC->>LibCCEC: Set initialized flag
-    LibCCEC-->>App: Initialized
-
-    App->>Bus: start()
+    LibCEC->>Bus: start()
     Bus->>Driver: open()
     Driver->>HAL: HdmiCecOpen(&handle)
     Note over HAL: Initialize hardware<br/>Discover physical address<br/>Sources: discover logical address
@@ -272,8 +272,6 @@ sequenceDiagram
 
     App->>LibCEC: getInstance()
     Note over LibCEC: First call creates singleton
-    LibCEC->>Bus: getInstance()
-    Note over Bus: Constructor starts threads
     LibCEC-->>App: libCCEC reference
 
     App->>LibCEC: init("component")
@@ -282,9 +280,9 @@ sequenceDiagram
         LibCEC->>LibCEC: Set initialized = true
         LibCEC->>LibCEC: Set log prefix
     end
-    LibCEC-->>App: Initialized
-
-    App->>Bus: start()
+    LibCEC->>Bus: getInstance()
+    Note over Bus: Constructor starts threads
+    LibCEC->>Bus: start()
     Bus->>Driver: getInstance()
     Driver->>Driver: Create singleton
     Bus->>Driver: open()
@@ -351,10 +349,10 @@ sequenceDiagram
 
         Note over Writer: Writer thread wakes
         Writer->>Writer: Dequeue frame
-        Writer->>Driver: writeAsync(frame)
+        Writer->>Driver: write(frame)
         Driver->>Driver: Lock mutex, check status
-        Driver->>HAL: HdmiCecTxAsync(handle, buf, len)
-        HAL-->>Driver: Queued status
+        Driver->>HAL: HdmiCecTx(handle, buf, len, &result)
+        HAL-->>Driver: status, result
         Driver-->>Writer: Success or Exception
         Writer->>Writer: Delete frame
     end
