@@ -142,7 +142,7 @@ The HDMI CEC component implements a multi-threaded architecture with explicit se
 - **Main Thread**: Applications interact with the library through their own thread context when calling Connection, LibCCEC, and Driver APIs. All API calls are protected by mutexes to ensure thread safety.
 
 - **Worker Threads**:
-  - _Bus Reader Thread_: Continuously polls Driver.read() to receive incoming CEC frames. When a frame arrives, it locks the reader mutex and iterates through all registered FrameListener instances, invoking their notify() method synchronously. Owns the frame dispatch logic.
+  - _Bus Reader Thread_: Continuously waits in Driver::read() to receive incoming CEC frames. When a frame arrives, it locks the reader mutex and iterates through all registered FrameListener instances, invoking their notify() method synchronously. Owns the frame dispatch logic.
   - _Bus Writer Thread_: Processes an EventQueue of outgoing CECFrame pointers. Dequeues frames and invokes Driver.write() (synchronous HAL transmit) in the writer thread context, and handles transmission errors. Uses condition variables for efficient waiting when the queue is empty.
 
 - **Synchronization**: 
