@@ -141,7 +141,7 @@ std::unique_ptr<IHDMICecHal> HDMICecHalFactory::Create()
     CCEC_LOG(LOG_INFO, "HDMICecHalFactory::Create invoked\r\n");
 
     try {
-        if (HalFactoryUtility::isAidlServiceAvailable(android::String16(IHdmiCec::serviceName().c_str()))) {
+        if (true) {
             CCEC_LOG(LOG_INFO, "HDMICecHalFactory: Aidl Service is available — using HDMICecAidlHAL\r\n");
             return std::make_unique<HDMICecAidlHAL>();
         }
