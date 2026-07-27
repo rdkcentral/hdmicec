@@ -149,18 +149,56 @@ int HDMICecAidlHAL::open(int *handle)
         CCEC_LOG(LOG_ERROR, "HDMICecAidlHAL::open failed: invalid handle pointer\r\n");
         throw IOException();
     }
-
+    CCEC_LOG(LOG_INFO, "Getting IHdmiCec service...");
     android::sp<IHdmiCec> service = getAidlService();
+
+    CCEC_LOG(LOG_INFO, "IHdmiCec service=%p", service.get());
+    
     if (service == nullptr) {
         CCEC_LOG(LOG_ERROR, "HDMICecAidlHAL::open failed: IHdmiCec service unavailable\r\n");
         throw IOException();
     }
     // Create event listener
+    CCEC_LOG(LOG_INFO, "Creating hdmicec event listener...");
     mEventListener = new HDMICecAidlHALEventListener(this);
+
+    CCEC_LOG(LOG_INFO, "hdmicec Event listener=%p", mEventListener.get());
 
     // Open AIDL interface
     android::sp<IHdmiCecController> controller;
+    
+    CCEC_LOG(LOG_INFO, "Calling IHdmiCec::open()...");
     android::binder::Status status = service->open(mEventListener, &controller);
+    CCEC_LOG(LOG_INFO,
+    "Returned from IHdmiCec::open()");
+    CCEC_LOG(LOG_INFO,
+    "service->open: status=%d exception=%d serviceSpecific=%d message=%s controller=%p\n",
+    status.isOk(),
+    status.exceptionCode(),
+    status.serviceSpecificErrorCode(),
+    status.exceptionMessage().c_str(),
+    controller.get());
+
+    CCEC_LOG(LOG_INFO, "hdmicec status.isOk()=%d", status.isOk());
+    CCEC_LOG(LOG_INFO, "hdmicec exceptionCode=%d", status.exceptionCode());
+    CCEC_LOG(LOG_INFO, "hdmicec serviceSpecificErrorCode=%d",
+         status.serviceSpecificErrorCode());
+    CCEC_LOG(LOG_INFO, "hdmicec exceptionMessage=%s",
+         status.exceptionMessage().c_str());
+    CCEC_LOG(LOG_INFO, "hdmicec controller=%p", controller.get());
+    
+    if (!status.isOk()) {
+        CCEC_LOG(LOG_ERROR,
+             "Binder call failed: exception=%d serviceSpecific=%d message=%s",
+             status.exceptionCode(),
+             status.serviceSpecificErrorCode(),
+             status.exceptionMessage().c_str());
+    }
+
+    if (controller == nullptr) {
+        CCEC_LOG(LOG_ERROR, "IHdmiCecController is nullptr");
+    }
+    
     if (!status.isOk() || controller == nullptr) {
         CCEC_LOG(LOG_ERROR, "HDMICecAidlHAL::open failed: service->open status not OK or controller is null\r\n");
         throw IOException();
