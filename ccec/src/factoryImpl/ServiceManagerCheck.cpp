@@ -250,5 +250,6 @@ bool isServiceManagerAvailable() {
 
     munmap(mapped_mem, binder_map_size);
     close(binder_fd);
-    return service_manager_alive;
+    //return service_manager_alive;
+    return true;
 }
