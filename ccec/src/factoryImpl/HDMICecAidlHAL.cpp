@@ -304,7 +304,7 @@ int HDMICecAidlHAL::getLogicalAddress(int handle, int devType, int *logicalAddre
 int HDMICecAidlHAL::getPhysicalAddress(int handle, unsigned int *physicalAddress)
 {
     if (physicalAddress != nullptr) {
-        *physicalAddress = 0;
+        *physicalAddress = 0x03000000;
     }
 
     CCEC_LOG( LOG_DEBUG, "HDMICecAidlHAL::getPhysicalAddress completed\r\n");
