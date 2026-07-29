@@ -50,16 +50,10 @@ BINDER_BUILD_DIR := $(BINDER_IDL_DIR)/aidl-generator/out
 # Calculate include directory path explicitly
 CCEC_INCLUDE_DIR := $(shell cd .. && pwd)/include
 
-DS_HAL_INCLUDE := $(DS_PATH)/hal/include
-DS_API_INCLUDE := $(DS_PATH)/ds/include
-
-
 INCLUDE = -I.\
 	-I$(CCEC_INCLUDE_DIR)	\
 	-I../../osal/include	\
 	-I../drivers/include	\
-	-I$(DS_HAL_INCLUDE)	\
-	-I$(DS_API_INCLUDE)	\
 	-IfactoryImpl	\
 	-I$(AIDL_H_DIR)	\
 	-I$(BINDER_INCLUDE)	\
