@@ -338,15 +338,14 @@ int HDMICecAidlHAL::getPhysicalAddress(int handle, unsigned int *physicalAddress
     }
 
     *physicalAddress =
-        ((unsigned int)edidData.physicalAddressA << 12) |
-        ((unsigned int)edidData.physicalAddressB <<  8) |
-        ((unsigned int)edidData.physicalAddressC <<  4) |
-        ((unsigned int)edidData.physicalAddressD);
-
+        ((unsigned int)edidData->physicalAddressA << 24) |
+        ((unsigned int)edidData->physicalAddressB << 16) |
+        ((unsigned int)edidData->physicalAddressC <<  8) |
+        ((unsigned int)edidData->physicalAddressD);
     CCEC_LOG(LOG_INFO,
-        "HDMICecAidlHAL::getPhysicalAddress EDID addr %X.%X.%X.%X => 0x%04X\r\n",
-        edidData.physicalAddressA, edidData.physicalAddressB,
-        edidData.physicalAddressC, edidData.physicalAddressD,
+        "HDMICecAidlHAL::getPhysicalAddress EDID addr %X.%X.%X.%X => 0x%08X\r\n",
+        edidData->physicalAddressA, edidData->physicalAddressB,
+        edidData->physicalAddressC, edidData->physicalAddressD,
         *physicalAddress);
 
     CCEC_LOG(LOG_INFO, "HDMICecAidlHAL::getPhysicalAddress completed\r\n");
