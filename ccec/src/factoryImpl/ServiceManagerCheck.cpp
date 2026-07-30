@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
+#include <cstdlib>
 #include <cerrno>
 #include <vector>
 #include <fcntl.h>
@@ -232,6 +233,29 @@ static bool execute_binder_ping(const int binder_fd, const int protocol_version)
     return service_manager_alive;
 }
 
+static bool is_systemd_service_active(const char* service_name) {
+    if (service_name == nullptr || *service_name == '\0') {
+        return false;
+    }
+
+    char command[256] = {0};
+    const int written = std::snprintf(command, sizeof(command),
+                                      "systemctl is-active --quiet %s", service_name);
+    if (written <= 0 || static_cast<size_t>(written) >= sizeof(command)) {
+        CCEC_LOG(LOG_ERROR, "[-] Failed to build systemctl command for service check\n");
+        return false;
+    }
+
+    const int status = std::system(command);
+    if (status == 0) {
+        CCEC_LOG(LOG_INFO, "[+] %s is active\n", service_name);
+        return true;
+    }
+
+    CCEC_LOG(LOG_WARN, "[!] %s is not active (systemctl rc=%d)\n", service_name, status);
+    return false;
+}
+
 }  // namespace
 
 bool isServiceManagerAvailable() {
@@ -252,6 +276,7 @@ bool isServiceManagerAvailable() {
     }
     CCEC_LOG(LOG_INFO, "[+] Binder protocol version detected: %d\n", version.protocol_version);
 
+    #if 0
     const size_t binder_map_size = (version.protocol_version == 7) ? BINDER_MMAP_SIZE_V7 : BINDER_MMAP_SIZE_V8;
     CCEC_LOG(LOG_INFO, "[+] Allocating %zu bytes of shared memory. binder_fd = %d\n", binder_map_size, binder_fd);
     void* const mapped_mem = mmap(nullptr, binder_map_size, PROT_READ, MAP_PRIVATE, binder_fd, 0);
@@ -261,13 +286,21 @@ bool isServiceManagerAvailable() {
         return service_manager_alive;
     }
     CCEC_LOG(LOG_INFO, "[+] Memory mapped successfully\n");
-
+    
     const bool ping_result = execute_binder_ping(binder_fd, version.protocol_version);
-    service_manager_alive = ping_result;
-
+    if (!ping_result) {
+        CCEC_LOG(LOG_WARN, "[!] Binder ping to ServiceManager failed\n");
+    }
     munmap(mapped_mem, binder_map_size);
-    close(binder_fd);
+    #endif
+    
+    service_manager_alive = is_systemd_service_active("servicemanager.service");
+
+    if (!service_manager_alive) {
+        CCEC_LOG(LOG_WARN, "[!] servicemanager.service is not started\n");
+    }
+	
 	CCEC_LOG(LOG_INFO, "[+] service_manager_alive: %d \n",service_manager_alive);
-    //return service_manager_alive;
-    return true;
+    close(binder_fd);
+    return service_manager_alive;
 }
