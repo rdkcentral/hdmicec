@@ -251,6 +251,8 @@ int HDMICecAidlHAL::removeLogicalAddress(int handle, int logicalAddresses)
 
 int HDMICecAidlHAL::getLogicalAddress(int handle, int devType, int *logicalAddress)
 {
+    CCEC_LOG(LOG_INFO, "HDMICecAidlHAL::getLogicalAddress Enter devType=%d\r\n", devType);
+
     (void)handle;
     if (logicalAddress == nullptr) {
         CCEC_LOG(LOG_ERROR, "HDMICecAidlHAL::getLogicalAddress invalid output pointer\r\n");
@@ -259,17 +261,28 @@ int HDMICecAidlHAL::getLogicalAddress(int handle, int devType, int *logicalAddre
 
     *logicalAddress = 0;
     if (mAidlService == nullptr) {
+        CCEC_LOG(LOG_INFO, "HDMICecAidlHAL::getLogicalAddress mAidlService is null, invoking getAidlService\r\n");
         android::sp<IHdmiCec> service = getAidlService();
         if (service == nullptr) {
+            CCEC_LOG(LOG_ERROR, "HDMICecAidlHAL::getLogicalAddress getAidlService returned null\r\n");
             throw IOException();
         }
         mAidlService = service;
+        CCEC_LOG(LOG_INFO, "HDMICecAidlHAL::getLogicalAddress getAidlService completed and cached\r\n");
     }
 
     std::vector<int32_t> addresses;
+    CCEC_LOG(LOG_INFO, "HDMICecAidlHAL::getLogicalAddress invoking getLogicalAddresses (initial)\r\n");
     android::binder::Status status = mAidlService->getLogicalAddresses(&addresses);
+    CCEC_LOG(LOG_INFO,
+        "HDMICecAidlHAL::getLogicalAddress getLogicalAddresses (initial) returned statusOk=%d count=%zu\r\n",
+        status.isOk() ? 1 : 0,
+        addresses.size());
     if (status.isOk() && addresses.size() > 0) {
         *logicalAddress = addresses[0];
+        CCEC_LOG(LOG_INFO,
+            "HDMICecAidlHAL::getLogicalAddress selected LA=%d from initial getLogicalAddresses\r\n",
+            *logicalAddress);
     }else {
         CCEC_LOG(LOG_WARN,
             "HDMICecAidlHAL::getLogicalAddress no allocated LA from AIDL (statusOk=%d, count=%zu devType=%d). Trying fallback allocation.\r\n",
@@ -278,28 +291,51 @@ int HDMICecAidlHAL::getLogicalAddress(int handle, int devType, int *logicalAddre
             devType);
         if (mAidlController != nullptr) {
             const std::vector<int32_t> preferred = preferredLogicalAddressesForDeviceType(devType);
+            CCEC_LOG(LOG_INFO,
+                "HDMICecAidlHAL::getLogicalAddress fallback candidate count=%zu\r\n",
+                preferred.size());
             for (std::vector<int32_t>::const_iterator it = preferred.begin(); it != preferred.end(); ++it) {
                 std::vector<int32_t> candidate;
                 candidate.push_back(*it);
                 bool addResult = false;
+                CCEC_LOG(LOG_INFO,
+                    "HDMICecAidlHAL::getLogicalAddress invoking addLogicalAddresses candidate=%d\r\n",
+                    candidate[0]);
                 android::binder::Status addStatus = mAidlController->addLogicalAddresses(candidate, &addResult);
-                CCEC_LOG(LOG_DEBUG,
+                CCEC_LOG(LOG_INFO,
                     "HDMICecAidlHAL::getLogicalAddress fallback addLogicalAddresses candidate=%d addOk=%d addResult=%d\r\n",
                     candidate[0],
                     addStatus.isOk() ? 1 : 0,
                     addResult ? 1 : 0);
                 addresses.clear();
+                CCEC_LOG(LOG_INFO,
+                    "HDMICecAidlHAL::getLogicalAddress invoking getLogicalAddresses (retry) after candidate=%d\r\n",
+                    candidate[0]);
                 android::binder::Status retryStatus = mAidlService->getLogicalAddresses(&addresses);
+                CCEC_LOG(LOG_INFO,
+                    "HDMICecAidlHAL::getLogicalAddress getLogicalAddresses (retry) returned statusOk=%d count=%zu\r\n",
+                    retryStatus.isOk() ? 1 : 0,
+                    addresses.size());
                 if (retryStatus.isOk() && addresses.size() > 0) {
                     *logicalAddress = addresses[0];
+                    CCEC_LOG(LOG_INFO,
+                        "HDMICecAidlHAL::getLogicalAddress selected LA=%d after fallback candidate=%d\r\n",
+                        *logicalAddress,
+                        candidate[0]);
                     break;
                 }
             }
+        } else {
+            CCEC_LOG(LOG_WARN,
+                "HDMICecAidlHAL::getLogicalAddress fallback skipped because mAidlController is null\r\n");
         }
     }
 
-    
-    CCEC_LOG( LOG_DEBUG, "HDMICecAidlHAL::getLogicalAddress completed\r\n");
+    CCEC_LOG(LOG_INFO,
+        "HDMICecAidlHAL::getLogicalAddress Exit selectedLA=%d\r\n",
+        *logicalAddress);
+
+    CCEC_LOG( LOG_INFO, "HDMICecAidlHAL::getLogicalAddress completed\r\n");
 
     return 0;
 }
