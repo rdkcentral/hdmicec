@@ -236,6 +236,12 @@ bool isServiceManagerAvailable() {
     }
     CCEC_LOG(LOG_INFO, "[+] Binder protocol version detected: %d\n", version.protocol_version);
 
+    if (version.protocol_version != BINDER_CURRENT_PROTOCOL_VERSION) {
+        LOGERR("[-] Unsupported Binder protocol version: %d requires: %d\n", version.protocol_version, BINDER_CURRENT_PROTOCOL_VERSION);
+        close(binder_fd);
+        return service_manager_alive;
+    }
+
     const size_t binder_map_size = (version.protocol_version == 7) ? BINDER_MMAP_SIZE_V7 : BINDER_MMAP_SIZE_V8;
     void* const mapped_mem = mmap(nullptr, binder_map_size, PROT_READ, MAP_PRIVATE, binder_fd, 0);
     if (mapped_mem == MAP_FAILED) {
