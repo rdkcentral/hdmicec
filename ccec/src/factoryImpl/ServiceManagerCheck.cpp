@@ -275,6 +275,12 @@ bool isServiceManagerAvailable() {
         return service_manager_alive;
     }
     CCEC_LOG(LOG_INFO, "[+] Binder protocol version detected: %d\n", version.protocol_version);
+	
+	if (version.protocol_version != BINDER_CURRENT_PROTOCOL_VERSION) {
+        CCEC_LOG(LOG_ERROR, "[-] Unsupported Binder protocol version: %d requires: %d\n", version.protocol_version, BINDER_CURRENT_PROTOCOL_VERSION);
+        close(binder_fd);
+        return service_manager_alive;
+    }
 
     #if 0
     const size_t binder_map_size = (version.protocol_version == 7) ? BINDER_MMAP_SIZE_V7 : BINDER_MMAP_SIZE_V8;
