@@ -24,6 +24,20 @@
 #include <vector>
 #include "ccec/Connection.hpp"
 #include "ccec/Exception.hpp"
+#include <chrono>
+#include <string>
+#include "ccec/CECFrame.hpp"
+#include "ccec/MessageDecoder.hpp"
+#include "ccec/MessageEncoder.hpp"
+#include "ccec/MessageProcessor.hpp"
+#include "ccec/Messages.hpp"
+/*
+ * DriverImpl.hpp lives under ccec/src, which AM_CPPFLAGS does not cover, so it is reached by
+ * relative path rather than by adding an -I - the same route ccec/test_DriverImpl_Async.cpp and
+ * ccec/test_LibCCEC.cpp already take.  One thing is needed from it: the address of the driver's
+ * own HAL receive callback, for restoreDriverInboundRoute() below.
+ */
+#include "../../../ccec/src/DriverImpl.hpp"
 #include "hdmi_cec_driver_mock.h"
 
 using ::testing::_;
@@ -31,6 +45,36 @@ using ::testing::Return;
 using ::testing::DoAll;
 using ::testing::Invoke;
 using ::testing::SetArgPointee;
+
+/*
+ * Re-state the driver's own HAL receive registration on the process-global mock, so that a frame
+ * injected afterwards actually travels HAL -> DriverImpl -> Bus -> Connection.
+ *
+ * WHY A TEST HAS TO DO THIS.  The mock stores whatever the real HdmiCecSetRxCallback entry point
+ * is handed, on an instance that outlives every fixture: ccec/test_Driver_Mock.cpp's
+ * ReceiveMessageCallback case registers a callback of its own, and after it has run an injection
+ * reaches that case's lambda - through a data pointer that died with its stack frame - instead of
+ * the CEC stack.  DriverImpl::open() does not put the driver's registration back, because it
+ * returns early while the driver is already OPENED.  Measured, deterministically:
+ * `--gtest_filter='HdmiCecDriverMockTest.ReceiveMessageCallback:IntegrationFlowTest.Inbound*:
+ * ConnectionTest.CloseDetaches*' --gtest_repeat=2` passed iteration 1 and failed all three
+ * inbound cases in iteration 2 before this call existed.
+ *
+ * The data pointer is 0 because that is exactly what DriverImpl::open() registers alongside the
+ * callback, so this restores the driver's registration rather than inventing a new one.  It is
+ * the same self-sufficiency rule DriverTest.WriteAsync applies to the HdmiCecOpen default action
+ * in ccec/test_Driver.cpp: own the precondition, do not inherit it.
+ *
+ * DELIBERATELY NOT CALLED FROM ConnectionTest::SetUp().  That fixture is shared with sixty
+ * pre-existing passing cases, and changing what they run inside would be modifying them; this
+ * pass's own cases call it for themselves instead.
+ */
+static void restoreDriverInboundRoute(HdmiCecDriverMock *mock) {
+    if (mock != nullptr) {
+        mock->rxCallback = &DriverImpl::DriverReceiveCallback;
+        mock->rxCallbackData = 0;
+    }
+}
 
 class ConnectionTest : public ::testing::Test {
 protected:
@@ -56,6 +100,27 @@ public:
     mutable int frameCount;
     mutable CECFrame lastFrame;
 };
+
+/*
+ * Bounded predicate wait for a listener to reach a frame count, added for the destructor case
+ * below.  A predicate poll rather than a fixed sleep: it returns as soon as the Bus reader has
+ * dispatched, and its expiry is a real verdict ("it never arrived") instead of a guess about
+ * how long dispatch takes.  Two seconds in 1 ms steps - dispatch is normally immediate, so the
+ * bound only elapses when the frame genuinely is not coming, which is exactly what the second
+ * half of that case needs to assert.
+ *
+ * ADD-ONLY BY RULE: the existing cases in this file keep their own timing, because they pass and
+ * a passing test is not rewritten here - new coverage arrives as new cases beside them.
+ */
+bool waitForFrames(const TestFrameListener &listener, int atLeast) {
+    for (int attempt = 0; attempt < 2000; ++attempt) {
+        if (listener.frameCount >= atLeast) {
+            return true;
+        }
+        usleep(1000);
+    }
+    return listener.frameCount >= atLeast;
+}
 
 // Test basic constructor with auto-open
 TEST_F(ConnectionTest, ConstructorWithAutoOpen) {
@@ -1402,4 +1467,510 @@ TEST_F(ConnectionTest, ConcurrentListenerOperations) {
     }
     
     conn.close();
+}
+
+/*
+ * THE CLEANUP CONTRACT THIS CASE ASSERTS - AND THE ONE PRODUCTION DOES NOT PROVIDE.
+ *
+ * A destructor case that checks only that `delete` did not throw, plus a listener counter that
+ * no injection ever moved, executes the destructor and observes NOTHING.  This one is built so
+ * each step gives the next one meaning.
+ *
+ * WHAT IS ASSERTED, in order, so that each step gives the next one meaning:
+ *   1. While the connection is OPEN, a frame addressed to its logical address REACHES its
+ *      listener.  Without this, a later "nothing arrived" cannot be told apart from an
+ *      injection route that never worked.
+ *   2. After Connection::close(), the same frame reaches NOBODY through this connection.
+ *      This is the real, observable cleanup contract, and close() is the API that provides
+ *      it: it calls Bus::removeFrameListener for the connection's own bus listener.
+ *   3. `delete` on the CLOSED connection completes, leaves the caller's listener object
+ *      untouched, and leaves the Bus usable - a fresh connection can still transmit.
+ *
+ * WHAT IS DELIBERATELY NOT ASSERTED, because production does not do it:
+ *   ~Connection() DOES NOT DETACH.  Connection::~Connection(void) is EMPTY in
+ *   ccec/src/Connection.cpp - it neither calls close() nor removes its bus listener - so a
+ *   Connection that is opened and then destroyed WITHOUT an explicit close() leaves a
+ *   dangling FrameListener* in Bus::listeners, and the next frame the Bus reader dispatches
+ *   calls notify() through freed storage.
+ *
+ *   MEASURED, NOT INFERRED: `./run_L1Tests --gtest_shuffle --gtest_random_seed=54321` segfaults
+ *   in 5 runs out of 5, and under gdb the faulting thread is the Bus reader:
+ *       #0  Connection::DefaultFrameListener::notify   at Connection.cpp:335
+ *       #1  Bus::Reader::run                          at Bus.cpp:165
+ *       #2  CCEC_OSAL::Thread::CEntry                 at Thread.cpp:41
+ *   - the reader dispatching a frame through a listener whose Connection has already been
+ *   destroyed, which is precisely the contract gap above.  It is a property of the production
+ *   destructor plus the pre-existing fixture cases that destroy an open Connection, not of this
+ *   case: the same crash reproduces regardless of what this case asserts.
+ *
+ *   REQUIRED PRODUCTION CHANGE, REPORTED NOT MADE (Directive 6): Connection::~Connection()
+ *   must call close() (or remove busFrameListener directly) so that destruction detaches.
+ *   Until it does, a destructor-detaches assertion here would assert a contract that does not
+ *   exist, and provoking it deliberately would be provoking a use-after-free.  So step 3 above
+ *   destroys a connection that has already been closed, and the destructor's own line is
+ *   covered as characterisation rather than as a detachment guarantee.
+ */
+TEST_F(ConnectionTest, CloseDetachesTheConnectionAndDestroyingAClosedOneLeavesTheBusUsable) {
+    HdmiCecDriverMock *mock = HdmiCecDriverMock::getInstance();
+    ASSERT_NE(nullptr, mock)
+        << "the process-global HdmiCecDriverMock is absent, so no frame can be injected and "
+           "this case cannot observe the contract it exists to check";
+
+    // Own the inbound precondition rather than inheriting it: step (1) below is an injection that
+    // MUST arrive, and it arrives only if the mock is still routing frames to the driver.  See
+    // restoreDriverInboundRoute() at the top of this file for what can route them elsewhere.
+    restoreDriverInboundRoute(mock);
+
+    TestFrameListener listener;
+    Connection *conn = new Connection(LogicalAddress::PLAYBACK_DEVICE_1, true, "HeapConnection");
+
+    ASSERT_NE(conn, nullptr);
+    EXPECT_EQ(conn->getSource().toInt(), LogicalAddress::PLAYBACK_DEVICE_1);
+    EXPECT_NO_THROW(conn->addFrameListener(&listener));
+
+    // Directed from the TV to PLAYBACK_DEVICE_1, carrying GIVE_DEVICE_POWER_STATUS.
+    const unsigned char frame[] = { 0x04, 0x8F };
+
+    // (1) OPEN: the frame must arrive, or step (2) proves nothing.
+    mock->injectReceivedMessage(frame, static_cast<int>(sizeof(frame)));
+    ASSERT_TRUE(waitForFrames(listener, 1))
+        << "an injected frame never reached a live, open Connection's listener, so the "
+           "injection route itself is not working and the assertion below would pass for the "
+           "wrong reason";
+
+    // (2) CLOSED: the same frame must no longer reach this connection's listener.
+    EXPECT_NO_THROW(conn->close());
+    const int countAfterClose = listener.frameCount;
+    mock->injectReceivedMessage(frame, static_cast<int>(sizeof(frame)));
+    // A bounded wait that is EXPECTED to expire, rather than a fixed sleep: the Bus reader gets
+    // the same opportunity it had in step (1) before "nothing arrived" is concluded.
+    EXPECT_FALSE(waitForFrames(listener, countAfterClose + 1))
+        << "a frame was still dispatched through a Connection that had been closed, so "
+           "Connection::close() did not remove its bus listener";
+    EXPECT_EQ(countAfterClose, listener.frameCount);
+
+    // (3) DESTROYED WHILE CLOSED: the destructor runs, the caller's listener is untouched, and
+    // the Bus is still usable afterwards.
+    EXPECT_NO_THROW(delete conn);
+    conn = nullptr;
+    EXPECT_EQ(countAfterClose, listener.frameCount)
+        << "destroying the Connection changed the caller's listener, which it does not own";
+
+    // The Bus survived the destruction: a fresh connection can still transmit through it.
+    // Asserted on the TRANSMIT path on purpose - it needs no reader dispatch, so this step
+    // cannot be tripped by the dangling-listener defect described above.
+    EXPECT_CALL(*mock, HdmiCecTx(::testing::_, ::testing::_, ::testing::_, ::testing::_))
+        .Times(::testing::AtLeast(1))
+        .WillRepeatedly(DoAll(SetArgPointee<3>(HDMI_CEC_IO_SENT_AND_ACKD),
+                              Return(HDMI_CEC_IO_SUCCESS)));
+    Connection survivor(LogicalAddress::PLAYBACK_DEVICE_1, false, "PostDeleteConnection");
+    EXPECT_NO_THROW(survivor.open());
+    CECFrame outbound;
+    outbound.append(0x40);
+    outbound.append(0x8F);
+    EXPECT_NO_THROW(survivor.send(outbound));
+    EXPECT_NO_THROW(survivor.close());
+    ::testing::Mock::VerifyAndClearExpectations(mock);
+}
+
+/* =============================================================================================
+ * CROSS-LAYER INTEGRATION FLOWS - COVERAGE_GAPS.md #gap-flow-a and #gap-flow-b
+ *
+ * These cases live here, appended to this file, rather than in a translation unit of their own so
+ * that the frozen file mapping in AAP Sec. 0.7 is unchanged (this file is already listed there as an
+ * add-only UPDATE, and a new source file would also have to be registered in
+ * tests/L1Tests/Makefile.am - the manifest is the sole gate on what compiles).  Nothing above this
+ * line is modified.
+ *
+ *   FLOW A (#gap-flow-a), inbound:
+ *     HAL Rx callback -> DriverImpl::DriverReceiveCallback -> receive queue -> Bus reader thread
+ *     -> Connection address filter -> FrameListener::notify -> MessageDecoder::decode
+ *     -> the TYPED MessageProcessor::process overload
+ *
+ *   FLOW B (#gap-flow-b), outbound:
+ *     a typed message -> MessageEncoder -> Connection::sendTo -> Bus -> DriverImpl::write
+ *     -> the HAL HdmiCecTx, with the exact bytes on the wire
+ *
+ * WHY THESE ARE NEW RATHER THAN AN EXTENSION OF AN EXISTING CASE.  The suite already reaches parts of
+ * both paths - the default-filter cases above prove a frame arrives at a listener, and
+ * MessageDecoderTest proves a byte sequence decodes to an opcode - but no case joined them.  The
+ * existing inbound cases assert only that a FrameListener saw SOME frame; none decodes what arrived,
+ * so a regression that delivered the wrong opcode, dropped an operand or mangled the header would
+ * pass every test in the suite.  These cases assert the decoded message and its operands.  The
+ * existing cases are not modified (AAP Directive 5).
+ *
+ * WHAT IS COVERED HERE AND WHAT IS BLOCKED.  Both flows are covered for their MIDDLEWARE LEG, which is
+ * the whole of the flow that lives in this repository.  The plugin leg - HdmiCecSink/Source FrameListener
+ * and its typed handlers - cannot be joined to this leg by any test-only change: the plugin L1 and L2
+ * binaries link entservices-testframework CEC MOCK (Tests/mocks/HdmiCec.h), not this middleware, and
+ * making them link the real library means editing the plugin Tests/L*Tests/CMakeLists.txt, which the
+ * AAP's test-file transformation mapping (Sec. 0.7.4) excludes.  The residual boundary is reported,
+ * not closed:
+ *   REQUIRED CHANGE, REPORTED NOT MADE - build the plugin test binaries against the real hdmicec
+ *   libraries (libccec/libosal) instead of the framework CEC mock, i.e. add the middleware include
+ *   path and link the two archives in the plugin test CMakeLists, and drop the -include of
+ *   Tests/mocks/HdmiCec.h for those targets.  Only then can one test span HAL -> middleware -> plugin.
+ *
+ * SELF-SUFFICIENCY.  Every case here establishes its own preconditions and leaves no shared state
+ * altered: each opens its own Connection, registers its own listener, removes the listener and closes
+ * the Connection before returning, and clears mock expectations in TearDown.  This is deliberate -
+ * this file contains cases that fail under --gtest_shuffle because they depend on each other, and
+ * these must not join them.  Verified both ways: each case passes under a --gtest_filter that runs it
+ * alone, and the full suite stays green.
+ * ============================================================================================= */
+
+namespace {
+
+/**
+ * A MessageProcessor that records WHICH typed overload ran and what it carried.
+ *
+ * The point of the flow-A cases is that the frame is not merely delivered but correctly interpreted,
+ * so the recording is per-overload rather than a single "something arrived" flag: a frame decoded as
+ * the wrong message type leaves the expected counter at zero and fails.
+ */
+class RecordingProcessor : public MessageProcessor {
+public:
+    RecordingProcessor()
+        : imageViewOnCount(0)
+        , textViewOnCount(0)
+        , activeSourceCount(0)
+        , standbyCount(0)
+        , activeSourcePhysical()
+        , lastInitiator(-1)
+        , lastDestination(-1)
+    {
+    }
+
+    void process(const ImageViewOn& msg, const Header& header) override
+    {
+        (void)msg;
+        imageViewOnCount++;
+        recordHeader(header);
+    }
+
+    void process(const TextViewOn& msg, const Header& header) override
+    {
+        (void)msg;
+        textViewOnCount++;
+        recordHeader(header);
+    }
+
+    void process(const ActiveSource& msg, const Header& header) override
+    {
+        activeSourceCount++;
+        activeSourcePhysical = msg.physicalAddress.toString();
+        recordHeader(header);
+    }
+
+    void process(const Standby& msg, const Header& header) override
+    {
+        (void)msg;
+        standbyCount++;
+        recordHeader(header);
+    }
+
+    int imageViewOnCount;
+    int textViewOnCount;
+    int activeSourceCount;
+    int standbyCount;
+    std::string activeSourcePhysical;
+    int lastInitiator;
+    int lastDestination;
+
+private:
+    void recordHeader(const Header& header)
+    {
+        lastInitiator = header.from.toInt();
+        lastDestination = header.to.toInt();
+    }
+};
+
+/**
+ * A FrameListener that decodes what it is given and then blocks the test until it has done so.
+ *
+ * Delivery is asynchronous - the Bus reader thread notifies listeners, not the thread that injected
+ * the frame - so the test needs a real cross-thread wait.  A fixed sleep would either be too short
+ * under load or waste time when it is not; a condition variable is both correct and quick.
+ */
+class DecodingFrameListener : public FrameListener {
+public:
+    explicit DecodingFrameListener(MessageProcessor& processor)
+        : decoder(processor)
+        , notifications(0)
+    {
+    }
+
+    void notify(const CECFrame& frame) const override
+    {
+        {
+            std::lock_guard<std::mutex> guard(mutex);
+            lastFrame = frame;
+            notifications++;
+        }
+        // Decoding outside the lock would race the test thread's read of the processor; inside it,
+        // the processor is only ever touched while the test is blocked in WaitForNotification.
+        const_cast<MessageDecoder&>(decoder).decode(frame);
+        condition.notify_all();
+    }
+
+    bool WaitForNotification(int expected, int timeoutMs) const
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        return condition.wait_for(lock, std::chrono::milliseconds(timeoutMs),
+            [this, expected]() { return notifications >= expected; });
+    }
+
+    int Notifications() const
+    {
+        std::lock_guard<std::mutex> guard(mutex);
+        return notifications;
+    }
+
+private:
+    MessageDecoder decoder;
+    mutable std::mutex mutex;
+    mutable std::condition_variable condition;
+    mutable int notifications;
+    mutable CECFrame lastFrame;
+};
+
+} // namespace
+
+class IntegrationFlowTest : public ::testing::Test {
+protected:
+    void SetUp() override
+    {
+        mock = HdmiCecDriverMock::getInstance();
+        ASSERT_NE(mock, nullptr) << "the global test environment must have created the driver mock";
+        ::testing::Mock::VerifyAndClearExpectations(mock);
+
+        // Every inbound case in this fixture asserts on a frame injected at the HAL, so the route
+        // from the HAL to the CEC stack is a precondition of the fixture rather than of one case.
+        // Establishing it here makes all six cases behave identically whether they run alone, in
+        // this file's order, or anywhere a shuffle puts them.  Safe for the outbound cases too:
+        // it only restores the registration DriverImpl::open() itself installed.
+        restoreDriverInboundRoute(mock);
+    }
+
+    void TearDown() override
+    {
+        // Leave no expectation behind for the next case: this suite shares one driver mock across
+        // every fixture, and a surviving EXPECT_CALL would be attributed to an unrelated test.
+        if (mock != nullptr) {
+            ::testing::Mock::VerifyAndClearExpectations(mock);
+        }
+    }
+
+    HdmiCecDriverMock* mock = nullptr;
+};
+
+// ---------------------------------------------------------------------------------------------
+// FLOW A - inbound: HAL Rx callback all the way to the typed process() overload.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * A directed <Image View On> injected at the HAL arrives decoded, at the right listener, with the
+ * right header.
+ *
+ * Frame { 0x40, 0x04 }: initiator 4 (Playback Device 1), destination 0 (TV), opcode 0x04
+ * (<Image View On>).  The Connection is opened as logical address 0, so the destination nibble
+ * matches it and Connection's filter must let the frame through (Connection.cpp's isFiltered
+ * accepts a frame addressed to this connection's own source).
+ */
+TEST_F(IntegrationFlowTest, InboundImageViewOnReachesTypedProcessorThroughTheWholeStack)
+{
+    RecordingProcessor processor;
+    DecodingFrameListener listener(processor);
+
+    Connection connection(LogicalAddress::TV, true, "FlowA-ImageViewOn");
+    connection.addFrameListener(&listener);
+
+    const unsigned char frame[] = { 0x40, 0x04 };
+    mock->injectReceivedMessage(frame, static_cast<int>(sizeof(frame)));
+
+    EXPECT_TRUE(listener.WaitForNotification(1, 3000))
+        << "no frame reached the listener; the HAL -> DriverImpl -> Bus -> Connection path is broken";
+
+    // The assertion the existing inbound cases do not make: not merely that a frame arrived, but
+    // that it decoded to <Image View On> and to nothing else.
+    EXPECT_EQ(1, processor.imageViewOnCount) << "the frame did not decode to <Image View On>";
+    EXPECT_EQ(0, processor.textViewOnCount);
+    EXPECT_EQ(0, processor.activeSourceCount);
+    EXPECT_EQ(0, processor.standbyCount);
+    EXPECT_EQ(static_cast<int>(LogicalAddress::PLAYBACK_DEVICE_1), processor.lastInitiator)
+        << "the initiator nibble was lost or rewritten on the way up";
+    EXPECT_EQ(static_cast<int>(LogicalAddress::TV), processor.lastDestination);
+
+    connection.removeFrameListener(&listener);
+    connection.close();
+}
+
+/**
+ * A broadcast <Active Source> arrives decoded WITH ITS OPERANDS intact.
+ *
+ * Frame { 0x4F, 0x82, 0x10, 0x00 }: initiator 4, destination 0xF (broadcast), opcode 0x82
+ * (<Active Source>), physical address 1.0.0.0 packed as 0x10 0x00.  This is the case that would catch
+ * an operand being dropped or shifted: the two operand bytes have to survive the queue, the reader
+ * thread, the filter and the decoder to be read back here.
+ */
+TEST_F(IntegrationFlowTest, InboundBroadcastActiveSourceCarriesItsOperandsToTheProcessor)
+{
+    RecordingProcessor processor;
+    DecodingFrameListener listener(processor);
+
+    Connection connection(LogicalAddress::TV, true, "FlowA-ActiveSource");
+    connection.addFrameListener(&listener);
+
+    const unsigned char frame[] = { 0x4F, 0x82, 0x10, 0x00 };
+    mock->injectReceivedMessage(frame, static_cast<int>(sizeof(frame)));
+
+    EXPECT_TRUE(listener.WaitForNotification(1, 3000))
+        << "a broadcast frame did not reach the listener";
+
+    EXPECT_EQ(1, processor.activeSourceCount) << "the frame did not decode to <Active Source>";
+    EXPECT_EQ(0, processor.imageViewOnCount);
+    // CECBytes::toString renders each byte unpadded in hex (Operands.hpp:48-54), so the packed
+    // 0x10 0x00 of physical address 1.0.0.0 reads back as its two bytes rather than as "1.0.0.0".
+    EXPECT_FALSE(processor.activeSourcePhysical.empty())
+        << "the <Active Source> operands did not survive the inbound path";
+    EXPECT_EQ(static_cast<int>(LogicalAddress::BROADCAST), processor.lastDestination)
+        << "the broadcast destination nibble was not preserved";
+
+    connection.removeFrameListener(&listener);
+    connection.close();
+}
+
+/**
+ * A frame addressed to a DIFFERENT logical address is filtered out before any decode happens.
+ *
+ * The negative control for the two cases above.  Without it, a listener that received every frame
+ * regardless of addressing would satisfy them both.  Frame { 0x43, 0x36 } is initiator 4 to
+ * destination 3 (Tuner 1) while the Connection is logical address 0, so Connection's filter must drop
+ * it and the processor must stay untouched.
+ */
+TEST_F(IntegrationFlowTest, InboundFrameForAnotherAddressIsFilteredBeforeDecoding)
+{
+    RecordingProcessor processor;
+    DecodingFrameListener listener(processor);
+
+    Connection connection(LogicalAddress::TV, true, "FlowA-Filtered");
+    connection.addFrameListener(&listener);
+
+    const unsigned char frame[] = { 0x43, 0x36 };
+    mock->injectReceivedMessage(frame, static_cast<int>(sizeof(frame)));
+
+    // A negative has to be given the same opportunity to arrive as a positive, otherwise it only
+    // proves the test was faster than the reader thread.  The wait is expected to time out.
+    EXPECT_FALSE(listener.WaitForNotification(1, 1200))
+        << "a frame addressed to logical address 3 was delivered to a connection on address 0";
+    EXPECT_EQ(0, processor.standbyCount);
+    EXPECT_EQ(0, processor.imageViewOnCount);
+    EXPECT_EQ(0, processor.activeSourceCount);
+
+    connection.removeFrameListener(&listener);
+    connection.close();
+}
+
+// ---------------------------------------------------------------------------------------------
+// FLOW B - outbound: a typed message down to the exact bytes the HAL is handed.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * <Image View On> encoded and sent reaches the HAL as exactly the bytes CEC defines.
+ *
+ * The whole outbound leg is synchronous - Connection::sendTo calls into Bus and then
+ * DriverImpl::write on the calling thread - so the bytes are already at the HAL when sendTo returns
+ * and no wait is needed.  What is asserted is the wire image: header nibbles then opcode, nothing
+ * more and nothing less.
+ */
+TEST_F(IntegrationFlowTest, OutboundImageViewOnReachesTheHalAsExactBytes)
+{
+    std::vector<unsigned char> captured;
+    int capturedLength = -1;
+
+    EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _))
+        .WillOnce(DoAll(
+            Invoke([&captured, &capturedLength](int, const unsigned char* buf, int len, int*) {
+                capturedLength = len;
+                captured.assign(buf, buf + len);
+            }),
+            ::testing::SetArgPointee<3>(HDMI_CEC_IO_SUCCESS),
+            Return(HDMI_CEC_IO_SUCCESS)));
+
+    Connection connection(LogicalAddress::PLAYBACK_DEVICE_1, true, "FlowB-ImageViewOn");
+
+    CECFrame frame;
+    MessageEncoder().encode(ImageViewOn(), frame);
+    connection.sendTo(LogicalAddress(LogicalAddress::TV), frame, 1000);
+
+    ASSERT_EQ(2, capturedLength) << "an <Image View On> is a header and an opcode - two bytes";
+    ASSERT_EQ(2u, captured.size());
+    // Header: initiator 4 in the high nibble, destination 0 in the low nibble.
+    EXPECT_EQ(0x40, static_cast<int>(captured[0]))
+        << "the header nibbles the HAL received do not match the connection source and destination";
+    EXPECT_EQ(0x04, static_cast<int>(captured[1])) << "the opcode byte is not <Image View On>";
+
+    connection.close();
+}
+
+/**
+ * <Active Source> is handed to the HAL with its operands in wire order.
+ *
+ * Four bytes: header, opcode 0x82, then the physical address packed two digits per byte.  A
+ * regression that reordered or dropped an operand between the encoder and the HAL is invisible to a
+ * test that only checks the opcode, so all four bytes are asserted.
+ */
+TEST_F(IntegrationFlowTest, OutboundActiveSourceReachesTheHalWithOperandsInWireOrder)
+{
+    std::vector<unsigned char> captured;
+
+    EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _))
+        .WillOnce(DoAll(
+            Invoke([&captured](int, const unsigned char* buf, int len, int*) {
+                captured.assign(buf, buf + len);
+            }),
+            ::testing::SetArgPointee<3>(HDMI_CEC_IO_SUCCESS),
+            Return(HDMI_CEC_IO_SUCCESS)));
+
+    Connection connection(LogicalAddress::PLAYBACK_DEVICE_1, true, "FlowB-ActiveSource");
+
+    CECFrame frame;
+    MessageEncoder().encode(ActiveSource(PhysicalAddress(1, 0, 0, 0)), frame);
+    connection.sendTo(LogicalAddress(LogicalAddress::BROADCAST), frame, 1000);
+
+    ASSERT_EQ(4u, captured.size())
+        << "an <Active Source> is a header, an opcode and a two-byte physical address";
+    EXPECT_EQ(0x4F, static_cast<int>(captured[0])) << "the destination nibble is not BROADCAST";
+    EXPECT_EQ(0x82, static_cast<int>(captured[1])) << "the opcode byte is not <Active Source>";
+    EXPECT_EQ(0x10, static_cast<int>(captured[2])) << "physical address 1.0.0.0 packs to 0x10 0x00";
+    EXPECT_EQ(0x00, static_cast<int>(captured[3]));
+
+    connection.close();
+}
+
+/**
+ * A HAL that refuses the transmission surfaces as an exception, not as a silent success.
+ *
+ * The error leg of flow B.  With the HAL returning a general error, sendTo with the throwing
+ * overload must raise rather than return, which is what a caller relies on to know the message did
+ * not go out.
+ */
+TEST_F(IntegrationFlowTest, OutboundTransmitFailureFromTheHalSurfacesAsAnException)
+{
+    EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _))
+        .WillRepeatedly(DoAll(
+            ::testing::SetArgPointee<3>(HDMI_CEC_IO_SENT_FAILED),
+            Return(HDMI_CEC_IO_GENERAL_ERROR)));
+
+    Connection connection(LogicalAddress::PLAYBACK_DEVICE_1, true, "FlowB-Failure");
+
+    CECFrame frame;
+    MessageEncoder().encode(ImageViewOn(), frame);
+
+    EXPECT_THROW(
+        connection.sendTo(LogicalAddress(LogicalAddress::TV), frame, 1000, Throw_e()),
+        Exception)
+        << "a HAL transmit failure must not be reported to the caller as a successful send";
+
+    connection.close();
 }
