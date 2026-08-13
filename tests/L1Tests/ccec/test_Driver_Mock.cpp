@@ -30,7 +30,42 @@
 class HdmiCecDriverMockTest : public ::testing::Test {
 protected:
     HdmiCecDriverMock* mock;
-    
+
+    // The HAL CALLBACK REGISTRATION this fixture found on the process-global mock, captured so
+    // TearDown() can put it back.
+    //
+    // WHY THE REGISTRATION AND NOT JUST THE ON_CALL DEFAULTS.  ReceiveMessageCallback below
+    // calls the real HdmiCecSetRxCallback entry point with a callback of its own, and the mock's
+    // default action for that entry point STORES what it is handed - `rxCallback = cbfunc;
+    // rxCallbackData = data;` in hdmi_cec_driver_mock.cpp - on the mock, which is process-global
+    // and outlives every fixture.  The callback it stores is a lambda whose data pointer is a
+    // bool on that case's stack frame.  So once that case has run, the mock's inbound route no
+    // longer reaches DriverImpl::DriverReceiveCallback: every later
+    // HdmiCecDriverMock::injectReceivedMessage in this binary calls a lambda through a dead
+    // stack address instead of delivering a frame to the CEC stack.
+    //
+    // NOTHING ELSE PUTS IT BACK.  DriverImpl::open() registers the driver's callbacks exactly
+    // once, because it returns early while the driver is already OPENED (DriverImpl.cpp), and
+    // ::testing::Mock::VerifyAndClearExpectations() clears expectations, not data members.  The
+    // registration therefore stays hijacked for the rest of the run, and every inbound-frame
+    // case that runs after this fixture fails - measured, deterministically, with
+    // `--gtest_filter='HdmiCecDriverMockTest.ReceiveMessageCallback:LibCCECUninitializedTest.
+    // TermThrowsWhenNotInitialized' --gtest_repeat=2`: iteration 1 passes, iteration 2 fails.
+    // Under --gtest_shuffle the same mechanism took out nine cases across three fixtures.
+    //
+    // Capturing in SetUp() and restoring in TearDown() makes the window this fixture's own.  It
+    // is state management on the fixture only: no case in this file is modified, and every one
+    // of them still sees exactly the mock it saw before.
+    HdmiCecRxCallback_t capturedRxCallback;
+    void* capturedRxCallbackData;
+    HdmiCecTxCallback_t capturedTxCallback;
+    void* capturedTxCallbackData;
+    // Captured for the same reason: injectReceivedMessage and simulateTxResult pass
+    // currentHandle to the callback, and a case that moves it (OpenDriverWithCustomBehavior's
+    // family reads it, ExpectOpenCalled hands back 42) would otherwise leave a handle the
+    // driver never opened on a mock the whole binary shares.
+    int capturedCurrentHandle;
+
     void SetUp() override {
         // Use existing global mock if available, otherwise create one
         mock = HdmiCecDriverMock::getInstance();
@@ -38,6 +73,16 @@ protected:
             mock = new HdmiCecDriverMock();
             HdmiCecDriverMock::setInstance(mock);
         }
+
+        // Captured BEFORE any case in this fixture runs, so what is put back in TearDown() is
+        // what this fixture was handed rather than a value it invented.  On the first case of a
+        // full run that is DriverImpl's own registration, installed when the global test
+        // environment initialised the library.
+        capturedRxCallback = mock->rxCallback;
+        capturedRxCallbackData = mock->rxCallbackData;
+        capturedTxCallback = mock->txCallback;
+        capturedTxCallbackData = mock->txCallbackData;
+        capturedCurrentHandle = mock->currentHandle;
     }
     
     void TearDown() override {
@@ -45,16 +90,40 @@ protected:
         if (mock != nullptr) {
             ::testing::Mock::VerifyAndClearExpectations(mock);
         }
+
+        // Hand the inbound and outbound callback registration back exactly as SetUp() found it,
+        // so the next case in this binary - whichever it is - injects into the same CEC stack
+        // this fixture inherited.  See the member declarations above for the mechanism and for
+        // the measurement that made it necessary.
+        if (mock != nullptr) {
+            mock->rxCallback = capturedRxCallback;
+            mock->rxCallbackData = capturedRxCallbackData;
+            mock->txCallback = capturedTxCallback;
+            mock->txCallbackData = capturedTxCallbackData;
+            mock->currentHandle = capturedCurrentHandle;
+        }
         
         // CRITICAL: Restore default ON_CALL behaviors that may have been overridden
         // This is necessary because some tests use ON_CALL to change default behavior
         if (mock != nullptr) {
-            // Restore default HdmiCecOpen behavior
+            // Restore default HdmiCecOpen behavior.
+            //
+            // THE LAMBDA MUST CAPTURE NOTHING.  The action is stored on the PROCESS-GLOBAL
+            // driver mock, which outlives this fixture, so anything it captures from this
+            // object is dereferenced by every later HdmiCecOpen call - including calls made
+            // long after the fixture has been destroyed.  Capturing `this` and reading
+            // `mock->currentHandle` through it is therefore a use-after-free that is latent
+            // in the suite's default order, where the released storage still happens to be
+            // readable, and a hard crash once shuffling moves a later driver case behind
+            // this fixture.  Looking the mock up freshly inside the action gives identical
+            // behaviour with no reference to this object's lifetime at all, which is the
+            // form to keep.
             ON_CALL(*mock, HdmiCecOpen(::testing::_))
                 .WillByDefault(::testing::Invoke(
-                    [this](int* handle) {
-                        if (handle) {
-                            *handle = mock->currentHandle;
+                    [](int* handle) {
+                        HdmiCecDriverMock* current = HdmiCecDriverMock::getInstance();
+                        if (handle && current) {
+                            *handle = current->currentHandle;
                             return HDMI_CEC_IO_SUCCESS;
                         }
                         return HDMI_CEC_IO_INVALID_ARGUMENT;
