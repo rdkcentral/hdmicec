@@ -57,12 +57,6 @@ namespace {
         {
             CCEC_LOG(LOG_INFO, "isAidlServiceAvailable invoked\r\n");
 
-            if(access("/opt/legacyhalhdmicec", F_OK) == 0) {
-                CCEC_LOG(LOG_INFO, "Using legacy HAL HDMICEC\r\n");
-                mBackendType = BackendType::LEGACY;
-                return false;
-            }
-
             if (mBackendType == BackendType::AIDL) {
                 return true;
             } else if (mBackendType == BackendType::LEGACY) {
