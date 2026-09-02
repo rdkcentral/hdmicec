@@ -147,10 +147,8 @@ static BinderTransaction prepare_v8_transaction() {
 
     // Allocate the space for the read payload buffer
     tx.read_payload.resize(256, 0);
-
     return tx;
 }
-
 
 // --- Common Protocol Engine Core ---
 static bool execute_binder_ping(const int binder_fd, const int protocol_version) {
@@ -292,7 +290,7 @@ bool isServiceManagerAvailable() {
         return service_manager_alive;
     }
     CCEC_LOG(LOG_INFO, "[+] Memory mapped successfully\n");
-    
+
     const bool ping_result = execute_binder_ping(binder_fd, version.protocol_version);
     if (!ping_result) {
         CCEC_LOG(LOG_WARN, "[!] Binder ping to ServiceManager failed\n");
