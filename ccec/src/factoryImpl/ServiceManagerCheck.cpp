@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
+#include <cstdlib>
 #include <cerrno>
 #include <vector>
 #include <fcntl.h>
@@ -114,10 +115,17 @@ static BinderTransaction prepare_v7_transaction() {
 }
 
 // Helper: Generates v8 (Current System Context) structural packets
+// Explicitly pack the structure to guarantee 0 compiler padding between command and struct
+struct __attribute__((packed)) AlignedWritePayload {
+    uint32_t cmd;
+    struct binder_transaction_data txn;
+};
+
 static BinderTransaction prepare_v8_transaction() {
     BinderTransaction tx;
     tx.ioctl_command = BINDER_WRITE_READ;
 
+    // Initialize transaction data
     struct binder_transaction_data txn{};
     std::memset(&txn, 0, sizeof(txn));
     txn.target.handle = 0;          
@@ -126,12 +134,18 @@ static BinderTransaction prepare_v8_transaction() {
     txn.data_size = 0;              
     txn.offsets_size = 0;
 
-    const size_t tx_words = sizeof(txn) / sizeof(uint32_t);
-    tx.write_payload.reserve(1 + tx_words);
-    tx.write_payload.push_back(BC_TRANSACTION);
+    // Pack both the command and txn sequentially into our aligned type
+    AlignedWritePayload payload{};
+    payload.cmd = BC_TRANSACTION;
+    payload.txn = txn;
 
-    tx.write_payload.resize(1 + tx_words);
-    std::memcpy(tx.write_payload.data() + 1, &txn, sizeof(txn));
+    // Resize the payload vector to the exact byte size of the packed struct
+    tx.write_payload.resize(sizeof(payload));
+
+    // Copy the entire packed layout directly into the vector's contiguous buffer
+    std::memcpy(tx.write_payload.data(), &payload, sizeof(payload));
+
+    // Allocate the space for the read payload buffer
     tx.read_payload.resize(256, 0);
     return tx;
 }
@@ -163,17 +177,18 @@ static bool execute_binder_ping(const int binder_fd, const int protocol_version)
     } else {
         struct binder_write_read bwr{};
         std::memset(&bwr, 0, sizeof(bwr));
-        const size_t write_size = tx.write_payload.size() * sizeof(uint32_t);
-        const size_t read_size = tx.read_payload.size() * sizeof(uint32_t);
-        bwr.write_size = write_size;
+
+        // Total size is the byte length of the vector container
+        bwr.write_size = tx.write_payload.size();
         bwr.write_consumed = 0;
         bwr.write_buffer = reinterpret_cast<binder_uintptr_t>(tx.write_payload.data());
-        bwr.read_size = read_size;
+
+        bwr.read_size = tx.read_payload.size() * sizeof(uint32_t);
         bwr.read_consumed = 0;
         bwr.read_buffer = reinterpret_cast<binder_uintptr_t>(tx.read_payload.data());
 
-        const unsigned long ioctl_cmd = tx.ioctl_command;
-        if (ioctl(binder_fd, ioctl_cmd, &bwr) < 0) {
+        // 3. Execute the ioctl
+        if (ioctl(binder_fd, tx.ioctl_command, &bwr) < 0) {
             CCEC_LOG(LOG_ERROR, "[-] ioctl execution map allocation failed: %s\n", std::strerror(errno));
             return false;
         }
@@ -216,6 +231,29 @@ static bool execute_binder_ping(const int binder_fd, const int protocol_version)
     return service_manager_alive;
 }
 
+static bool is_systemd_service_active(const char* service_name) {
+    if (service_name == nullptr || *service_name == '\0') {
+        return false;
+    }
+
+    char command[256] = {0};
+    const int written = std::snprintf(command, sizeof(command),
+                                      "systemctl is-active --quiet %s", service_name);
+    if (written <= 0 || static_cast<size_t>(written) >= sizeof(command)) {
+        CCEC_LOG(LOG_ERROR, "[-] Failed to build systemctl command for service check\n");
+        return false;
+    }
+
+    const int status = std::system(command);
+    if (status == 0) {
+        CCEC_LOG(LOG_INFO, "[+] %s is active\n", service_name);
+        return true;
+    }
+
+    CCEC_LOG(LOG_WARN, "[!] %s is not active (systemctl rc=%d)\n", service_name, status);
+    return false;
+}
+
 }  // namespace
 
 bool isServiceManagerAvailable() {
@@ -236,7 +274,9 @@ bool isServiceManagerAvailable() {
     }
     CCEC_LOG(LOG_INFO, "[+] Binder protocol version detected: %d\n", version.protocol_version);
 
+    #if 0
     const size_t binder_map_size = (version.protocol_version == 7) ? BINDER_MMAP_SIZE_V7 : BINDER_MMAP_SIZE_V8;
+    CCEC_LOG(LOG_INFO, "[+] Allocating %zu bytes of shared memory. binder_fd = %d\n", binder_map_size, binder_fd);
     void* const mapped_mem = mmap(nullptr, binder_map_size, PROT_READ, MAP_PRIVATE, binder_fd, 0);
     if (mapped_mem == MAP_FAILED) {
         CCEC_LOG(LOG_ERROR, "[-] Shared address space context instantiation failed\n");
@@ -246,9 +286,19 @@ bool isServiceManagerAvailable() {
     CCEC_LOG(LOG_INFO, "[+] Memory mapped successfully\n");
 
     const bool ping_result = execute_binder_ping(binder_fd, version.protocol_version);
-    service_manager_alive = ping_result;
-
+    if (!ping_result) {
+        CCEC_LOG(LOG_WARN, "[!] Binder ping to ServiceManager failed\n");
+    }
     munmap(mapped_mem, binder_map_size);
+    #endif
+    
+    service_manager_alive = is_systemd_service_active("servicemanager.service");
+
+    if (!service_manager_alive) {
+        CCEC_LOG(LOG_WARN, "[!] servicemanager.service is not started\n");
+    }
+	
+	CCEC_LOG(LOG_INFO, "[+] service_manager_alive: %d \n",service_manager_alive);
     close(binder_fd);
     return service_manager_alive;
 }
