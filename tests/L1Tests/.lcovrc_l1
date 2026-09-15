@@ -1,0 +1,159 @@
+#
+# LCOV configuration for the HDMI-CEC middleware L1 unit-test suite (run_L1Tests).
+#
+# Pass it explicitly, since lcov only reads a configuration file named on the
+# command line or installed at ~/.lcovrc:
+#     lcov --config-file tests/L1Tests/.lcovrc_l1 -c -o coverage.info -d .
+#
+# Settings match the plugin suites' configuration so the three coverage reports
+# are directly comparable. Source-exclusion patterns and the coverage threshold
+# are not expressed here: exclusions belong to the `lcov -r` invocation that
+# applies them, and a threshold is only enforceable as a command-line check
+# (`lcov --summary <trace> --fail-under-lines 80`).
+#
+# Activation status, stated plainly: CI does not read this file.
+# `.github/workflows/L1-tests.yml` passes no `--config-file` and no `--rc`, so the
+# CI coverage step still inherits the system default and middleware branch
+# visibility is developer-opt-in. The in-tree consumer is
+# `tests/L1Tests/run_coverage.sh`, which passes this file to lcov and genhtml with
+# `--config-file` and additionally forces `--rc branch_coverage=1`.
+#
+# YOUR ~/.lcovrc IS NEITHER READ, MOVED, NOR DELETED. lcov reads $HOME/.lcovrc
+# silently on every invocation, `--version` included, so the runner has to make
+# sure no home configuration is in effect for its own calls - and it does that with
+# a PRIVATE HOME rather than by touching yours. It creates an empty mode-0700
+# directory with `mktemp -d`, verifies it holds no .lcovrc, and runs every lcov and
+# genhtml invocation with HOME pointed at it, set per command rather than exported
+# so the suite under test and the build keep the real one; the directory is removed
+# at the end. Nothing in your home directory is read, copied, moved or removed, and
+# an unset HOME is not an error. Keep it that way rather than stashing and restoring
+# `~/.lcovrc`: a restoring `mv -f` destroys any copy that reappeared during the run -
+# which a sibling runner sharing this workspace can recreate at any moment - and a
+# stash needs a trap to undo, which a private HOME does not.
+#
+# PRECEDENCE, in the order lcov applies it: `--rc branch_coverage=1` on the command
+# line wins over everything; `--config-file <this file>` is read INSTEAD OF
+# ~/.lcovrc and /etc/lcovrc; ~/.lcovrc cannot apply at all, because HOME is the
+# private empty directory; /etc/lcovrc is system-wide, out of scope, and never
+# modified. No shared or system-level lcov configuration is modified by this suite.
+#
+
+# Coverage rate limits (in %) used to colour file entries in the HTML report.
+#   HI:   hi_limit <= rate <= 100        green
+#   MED: med_limit <= rate <  hi_limit   orange
+#   LO:         0  <= rate <  med_limit  red
+# Presentation only: these choose a row colour and are not an acceptance
+# criterion, so a file rendered green here may still be below the bar a caller
+# enforces with --fail-under-lines.
+genhtml_hi_limit = 75
+genhtml_med_limit = 50
+
+# Width of line coverage field in source code view
+genhtml_line_field_width = 12
+
+# Width of branch coverage field in source code view
+genhtml_branch_field_width = 16
+
+# Width of overview image (used by --frames option of genhtml)
+genhtml_overview_width = 80
+
+# Resolution of overview navigation: this number specifies the maximum
+# difference in lines between the position a user selected from the overview
+# and the position the source code window is scrolled to (used by --frames
+# option of genhtml)
+genhtml_nav_resolution = 4
+
+# Clicking a line in the overview image should show the source code view at
+# a position a bit further up so that the requested line is not the first
+# line in the window. This number specifies that offset in lines (used by
+# --frames option of genhtml)
+genhtml_nav_offset = 10
+
+# Do not remove unused test descriptions if non-zero (same as
+# --keep-descriptions option of genhtml)
+genhtml_keep_descriptions = 0
+
+# Do not remove prefix from directory names if non-zero (same as --no-prefix
+# option of genhtml)
+genhtml_no_prefix = 0
+
+# Do not create source code view if non-zero (same as --no-source option of
+# genhtml). Kept enabled: the annotated source view is what attributes an
+# uncovered line to a specific guard clause or exception handler.
+genhtml_no_source = 0
+
+# Replace tabs with number of spaces in source view (same as --num-spaces
+# option of genhtml)
+genhtml_num_spaces = 8
+
+# Highlight lines with converted-only data if non-zero (same as --highlight
+# option of genhtml)
+# (genhtml_highlight was set here; lcov 2.x deprecates AND ignores it, so the
+#  setting has been removed rather than carried as a no-op that emits a warning.)
+# Include color legend in HTML output if non-zero (same as --legend option of
+# genhtml)
+genhtml_legend = 0
+
+# Include sorted overview pages (can be disabled by the --no-sort option of
+# genhtml)
+genhtml_sort = 1
+
+# Specify the character set of all generated HTML pages
+genhtml_charset=UTF-8
+
+# Allow HTML markup in test case description text if non-zero
+genhtml_desc_html=0
+
+# Specify if geninfo should try to automatically determine the base-directory
+# when collecting coverage data. Required here: this is an autotools build whose
+# object files sit beside their sources under ccec/src and osal/src, and
+# automatic detection is what lets one `lcov -c -d hdmicec` resolve both trees.
+geninfo_auto_base = 1
+
+# Use gcov intermediate format? Valid values are 0, 1, auto
+geninfo_intermediate = auto
+
+# Specify if exception branches should be excluded from branch coverage.
+# Left including them, as in the plugin suites, so branch figures stay
+# comparable across the three reports. Note that gcov models branches as
+# control-flow-graph arcs, and a C++ translation unit's arcs include
+# compiler-generated exception and static-destruction paths no test can drive,
+# so a low branch rate is not by itself evidence of a weak test.
+no_exception_branch = 0
+
+# Location of the insmod tool
+lcov_insmod_tool = /sbin/insmod
+
+# Location of the modprobe tool
+lcov_modprobe_tool = /sbin/modprobe
+
+# Location of the rmmod tool
+lcov_rmmod_tool = /sbin/rmmod
+
+# Location for temporary directories
+lcov_tmp_dir = /tmp
+
+# Show full paths during list operation if non-zero (same as --list-full-path
+# option of lcov)
+lcov_list_full_path = 0
+
+# Specify the maximum width for list output. This value is ignored when
+# lcov_list_full_path is non-zero.
+lcov_list_width = 80
+
+# Specify the maximum percentage of file names which may be truncated when
+# choosing a directory prefix in list output. This value is ignored when
+# lcov_list_full_path is non-zero.
+lcov_list_truncate_max = 20
+
+# Specify if function coverage data should be collected and processed.
+function_coverage = 1
+
+# Specify if branch coverage data should be collected and processed. Enabled
+# here because lcov collects no branch data by default, and this suite reports
+# branch movement alongside line coverage. This is lcov 2.x's current spelling;
+# keep it, because the legacy `lcov_branch_coverage` spelling is deprecated and
+# emits a warning on every invocation. It is only read when this file is passed
+# with --config-file, so a caller that needs branch data unconditionally should
+# also pass `--rc branch_coverage=1`.
+branch_coverage = 1

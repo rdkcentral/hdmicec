@@ -1,0 +1,34 @@
+# Build artifacts
+*.o
+*.lo
+*.la
+.libs/
+.deps/
+Makefile
+Makefile.in
+
+# Test executables
+run_L2Tests
+fake_hdmi_cec_aidl_host
+
+# Test results
+*.log
+*.trs
+*.xml
+
+# Coverage instrumentation output.
+#
+# The coverage runner configures the WHOLE tree with -fprofile-arcs -ftest-coverage, so this
+# tier's objects are instrumented too: gcc emits a .gcno beside each object at compile time and
+# the runner emits a .gcda beside it at run time.  With AUTOMAKE_OPTIONS = subdir-objects those
+# objects live next to their sources - ccec/test_DualPathIntegration.gcno sits in ccec/ - so the
+# artefacts land inside tracked source directories rather than in a build tree that is already
+# ignored wholesale.  Nothing else in the repository ignores them, verified with
+# `git check-ignore`, which is why they are named here.  Patterns without a slash match at any
+# depth, so one entry each covers this directory and ccec/.
+*.gcno
+*.gcda
+*.gcov
+
+# Generated files
+.dirstamp

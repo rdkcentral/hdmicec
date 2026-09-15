@@ -18,7 +18,7 @@
 ##########################################################################
 
 if ENABLE_L1TESTS
-SUBDIRS = L1Tests
+SUBDIRS = L1Tests L2Tests
 endif
 
 AM_CXXFLAGS = -pthread -Wall -D_USE_DBUS -I../include \

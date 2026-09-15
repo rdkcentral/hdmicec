@@ -18,6 +18,12 @@
 */
 
 #include <gtest/gtest.h>
+
+#include <cstddef>
+#include <cstdint>
+#include <exception>
+#include <string>
+
 #include "ccec/Operands.hpp"
 
 
@@ -509,4 +515,162 @@ TEST_F(OperandsTest, LatencyInfoCreation) {
         uint8_t video = latency.getVideoLatency();
         EXPECT_EQ(video, 0x20);
     });
+}
+
+/*
+ * ============= Operand base-class defaults =============
+ *
+ * Operand declares serialize(CECFrame&) pure virtual and supplies non-pure defaults for
+ * toString(), name() and validate().  Every concrete operand in Operands.hpp overrides
+ * toString(), and nothing in the middleware calls name() or validate() at all, so the three
+ * default bodies had never executed: in the baseline these cases were written against,
+ * ccec/include/ccec/Operand.hpp measured 0.0% (0/6) - the lowest figure in the middleware trace -
+ * purely because no test ever stood on the base class itself.  With the cases below in place it
+ * measures 100% (9/9).
+ *
+ * The defaults are part of the operand contract: a new operand that forgets to override
+ * toString() inherits "Not Implemented" rather than failing to compile, and validate()
+ * returning true unconditionally is what makes an un-overridden operand acceptable to any
+ * caller that validates before serialising.  Both are behaviours a reader would reasonably
+ * rely on, so both are pinned to their exact values here rather than merely executed.
+ *
+ * The fixture below is the minimum a concrete Operand can be - it implements only the pure
+ * virtual, appending one recognisable byte so the inherited serialize(void) overload can be
+ * shown to route through it - and it lives in the test, not in production.
+ */
+namespace {
+
+// A byte no operand in Operands.hpp emits, so seeing it in a frame can only mean the
+// override below ran.  Namespace scope rather than a static class member: a C++14 in-class
+// initialiser is not a definition, and passing the member to EXPECT_EQ binds it to a const
+// reference, which odr-uses it and fails to link.
+const uint8_t kMinimalOperandMarker = 0x5A;
+
+class MinimalOperand : public Operand {
+public:
+    // Declaring serialize(CECFrame&) hides the base's no-argument overload by name lookup,
+    // which is exactly the trap every concrete operand in Operands.hpp falls into; the
+    // using-declaration brings it back so both forms can be exercised from one subject.
+    using Operand::serialize;
+
+    CECFrame &serialize(CECFrame &frame) const override {
+        frame.append(kMinimalOperandMarker);
+        return frame;
+    }
+};
+
+} // namespace
+
+TEST_F(OperandsTest, OperandDefaultToStringReportsNotImplemented) {
+    MinimalOperand operand;
+
+    // The inherited default, not an override: a concrete operand that does not describe
+    // itself says so rather than returning an empty string a caller might log as success.
+    EXPECT_EQ(std::string("Not Implemented"), operand.toString());
+}
+
+TEST_F(OperandsTest, OperandDefaultNameIsOperand) {
+    MinimalOperand operand;
+
+    EXPECT_EQ(std::string("Operand"), operand.name());
+}
+
+TEST_F(OperandsTest, OperandDefaultValidateAcceptsAnOperandThatDoesNotOverrideIt) {
+    MinimalOperand operand;
+
+    // Unconditionally true is the documented default: an operand carries no constraints
+    // until it declares them, so a validating caller must not reject one that is silent.
+    EXPECT_TRUE(operand.validate());
+}
+
+TEST_F(OperandsTest, OperandSerializeWithoutAFrameRoutesThroughTheOverride) {
+    MinimalOperand operand;
+
+    // The no-argument overload is non-virtual and forwards to the pure virtual one; the
+    // marker byte is how that routing is observed rather than assumed.
+    const CECFrame frame = operand.serialize();
+
+    const uint8_t *buffer = nullptr;
+    size_t length = 0;
+    frame.getBuffer(&buffer, &length);
+    ASSERT_EQ(1u, length);
+    ASSERT_NE(nullptr, buffer);
+    EXPECT_EQ(kMinimalOperandMarker, buffer[0]);
+}
+
+/*
+ * ============= Exception hierarchy what() strings =============
+ *
+ * Exception.hpp is a header-only hierarchy of seven classes whose entire behaviour is the
+ * string each what() returns.  Three of them - OperationNotSupportedException, IOException
+ * and InvalidParamException - are already exercised, because some case somewhere prints the
+ * exception it caught.  The other four were never printed by any test, which is what left
+ * ccec/include/ccec/Exception.hpp at a measured 33.3% (4/12) in that same baseline; with the cases
+ * below it measures 100% (14/14).
+ *
+ * These strings are the diagnostic a caller sees when a CEC operation fails, so they are
+ * asserted exactly: a change to one of them changes what an operator reads in a log, and a
+ * test that only called what() and discarded the result would not notice.  Catching each by
+ * its own type through a base-class reference also pins the two properties the hierarchy
+ * exists for - that every member derives from Exception, and that what() is virtual - which
+ * a direct call on a concrete object would not show.
+ */
+TEST_F(OperandsTest, ExceptionHierarchyReportsItsOwnDiagnosticString) {
+    struct Expectation {
+        const char *what;
+        const std::exception *instance;
+    };
+
+    const Exception base;
+    const CECNoAckException noAck;
+    const OperationNotSupportedException notSupported;
+    const IOException io;
+    const InvalidStateException invalidState;
+    const InvalidParamException invalidParam;
+    const AddressNotAvailableException addressUnavailable;
+
+    const Expectation expectations[] = {
+        { "Base Exception..",                     &base },
+        { "Ack not received..",                   &noAck },
+        { "Operation Not Supported..",            &notSupported },
+        { "IO Exception..",                       &io },
+        { "Invalid State Exception..",            &invalidState },
+        { "Invalid Param Exception..",            &invalidParam },
+        { "Address Not Available Exception..",    &addressUnavailable }
+    };
+
+    for (size_t i = 0; i < sizeof(expectations) / sizeof(expectations[0]); ++i) {
+        EXPECT_STREQ(expectations[i].what, expectations[i].instance->what())
+            << "exception at index " << i << " reported the wrong diagnostic string";
+    }
+}
+
+TEST_F(OperandsTest, EveryCecExceptionIsCaughtAsTheBaseTypeAndKeepsItsOwnMessage) {
+    // Thrown and caught by base reference on purpose: this is how the middleware handles
+    // them (see DriverImpl and LibCCEC), so it is the dispatch that has to hold.
+    try {
+        throw CECNoAckException();
+    } catch (const Exception &caught) {
+        EXPECT_STREQ("Ack not received..", caught.what());
+    }
+
+    try {
+        throw InvalidStateException();
+    } catch (const Exception &caught) {
+        EXPECT_STREQ("Invalid State Exception..", caught.what());
+    }
+
+    try {
+        throw AddressNotAvailableException();
+    } catch (const Exception &caught) {
+        EXPECT_STREQ("Address Not Available Exception..", caught.what());
+    }
+
+    // std::exception is the outermost handler a caller can install, and the hierarchy has to
+    // remain reachable through it.
+    try {
+        throw IOException();
+    } catch (const std::exception &caught) {
+        EXPECT_STREQ("IO Exception..", caught.what());
+    }
 }
