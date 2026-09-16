@@ -185,6 +185,8 @@ dnl directory.  A candidate whose base variable is unset is skipped, so that it
 dnl cannot expand to an absolute /include/... path that happens to match some
 dnl unrelated host directory.
 AC_MSG_CHECKING([for the Binder SDK header root])
+AC_MSG_NOTICE([BINDER_SDK_DIR=$BINDER_SDK_DIR])
+AC_MSG_NOTICE([BINDER_SDK_INCLUDE_DIR=$BINDER_SDK_INCLUDE_DIR])
 if test -n "$BINDER_SDK_DIR" && test -d "$BINDER_SDK_DIR/include/binder_sdk"; then
     BINDER_INCLUDE_DIR="$BINDER_SDK_DIR/include/binder_sdk"
 elif test -n "$BINDER_SDK_INCLUDE_DIR" && test -d "$BINDER_SDK_INCLUDE_DIR/include/binder_sdk"; then
