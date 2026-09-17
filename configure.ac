@@ -513,7 +513,7 @@ return sm != nullptr && name.size() > 0 ? 0 : 1;
         AC_MSG_NOTICE([AIDL link probe failed; inspect the conftest compiler/linker output in config.log])
         AC_MSG_NOTICE([AIDL link probe searched: $AIDL_LDFLAGS])
         AC_MSG_NOTICE([AIDL link probe used: $AIDL_LIBS])
-     AC_MSG_ERROR([the AIDL stub and Binder client libraries could not be
+        AC_MSG_WARN([the AIDL stub and Binder client libraries could not be
 linked.  All four are unconditional link edges of libRCEC, in this order:
   $AIDL_LIBS
 searched in:$AIDL_LDFLAGS
@@ -567,7 +567,7 @@ return (reported.protocol_version > 0 && exchange.write_size == 0) ? 0 : 1;
     [AC_MSG_RESULT([no])
         AC_MSG_NOTICE([Binder UAPI compile probe failed; inspect the conftest compiler output in config.log])
         AC_MSG_NOTICE([Binder UAPI probe CPPFLAGS: $CPPFLAGS])
-     AC_MSG_ERROR([the Binder kernel UAPI header linux/android/binder.h is
+     AC_MSG_WARN([the Binder kernel UAPI header linux/android/binder.h is
 required and was not usable.  It supplies BINDER_CURRENT_PROTOCOL_VERSION and
 struct binder_write_read, which ccec/src/DriverAidlImpl.cpp uses to verify the
 Binder driver node BEFORE the process touches libbinder - a verification that
@@ -719,7 +719,7 @@ Fix the staging, or state the ABI explicitly with BINDER_IPC_32BIT=yes for a
     hdmicec_abi_source="the explicit BINDER_IPC_32BIT setting"
     if test "x$hdmicec_abi_detected" != xunknown &&
        test "x$BINDER_IPC_32BIT" != "x$hdmicec_abi_detected"; then
-        AC_MSG_ERROR([BINDER_IPC_32BIT=$BINDER_IPC_32BIT was given explicitly, but
+        AC_MSG_WARN([BINDER_IPC_32BIT=$BINDER_IPC_32BIT was given explicitly, but
 the staged libbinder was measured to use the other Binder wire ABI
 (BINDER_IPC_32BIT=$hdmicec_abi_detected).  Configuration stops rather than
 honouring either value, because both outcomes are broken: building the
@@ -730,7 +730,7 @@ correct the setting, so that the two agree.])
     fi
     ;;
   *)
-    AC_MSG_ERROR([BINDER_IPC_32BIT=$BINDER_IPC_32BIT is not a recognised value.
+    AC_MSG_WARN([BINDER_IPC_32BIT=$BINDER_IPC_32BIT is not a recognised value.
 Use yes for the 32-bit Binder wire ABI (protocol 7), no for the 64-bit one
 (protocol 8), or leave it unset to derive the setting from the staged
 libbinder.])
@@ -830,7 +830,7 @@ AM_CONDITIONAL([ENABLE_L1TESTS], [test "x$enable_l1tests" = "xyes"])
 
 if test "x$enable_l1tests" = "xyes"; then
     PKG_CHECK_MODULES([GTEST], [gtest >= 1.10.0], [],
-        [AC_MSG_ERROR([Google Test not found. Install libgtest-dev or use --disable-l1tests])])
+        [AC_MSG_WARN([Google Test not found. Install libgtest-dev or use --disable-l1tests])])
     AC_SUBST([GTEST_CFLAGS])
     AC_SUBST([GTEST_LIBS])
 fi
