@@ -184,20 +184,13 @@ dnl layout first, then the split-staging override, then a flat include
 dnl directory.  A candidate whose base variable is unset is skipped, so that it
 dnl cannot expand to an absolute /include/... path that happens to match some
 dnl unrelated host directory.
-AC_MSG_CHECKING([for the Binder SDK header root])
+
 AC_MSG_NOTICE([BINDER_SDK_DIR=$BINDER_SDK_DIR])
 AC_MSG_NOTICE([BINDER_SDK_INCLUDE_DIR=$BINDER_SDK_INCLUDE_DIR])
-if test -n "$BINDER_SDK_DIR" && test -d "$BINDER_SDK_DIR/include/binder_sdk"; then
-    BINDER_INCLUDE_DIR="$BINDER_SDK_DIR/include/binder_sdk"
-elif test -n "$BINDER_SDK_INCLUDE_DIR" && test -d "$BINDER_SDK_INCLUDE_DIR/include/binder_sdk"; then
-    BINDER_INCLUDE_DIR="$BINDER_SDK_INCLUDE_DIR/include/binder_sdk"
-elif test -n "$BINDER_SDK_INCLUDE_DIR" && test -d "$BINDER_SDK_INCLUDE_DIR/include"; then
-    BINDER_INCLUDE_DIR="$BINDER_SDK_INCLUDE_DIR/include"
-elif test -n "$BINDER_SDK_DIR" && test -d "$BINDER_SDK_DIR/include"; then
-    BINDER_INCLUDE_DIR="$BINDER_SDK_DIR/include"
-else
-    BINDER_INCLUDE_DIR=""
-fi
+
+AC_MSG_CHECKING([for the Binder SDK header root])
+BINDER_INCLUDE_DIR="$BINDER_SDK_INCLUDE_DIR"
+
 if test -n "$BINDER_INCLUDE_DIR"; then
     AIDL_CPPFLAGS="$AIDL_CPPFLAGS -I$BINDER_INCLUDE_DIR"
     AC_MSG_RESULT([$BINDER_INCLUDE_DIR])
@@ -219,6 +212,8 @@ if test -n "$HALIF_LIB_DIR"; then
 else
     AC_MSG_RESULT([not found; relying on the ambient LDFLAGS])
 fi
+
+AC_MSG_NOTICE([HALIF_LIB_DIR=$HALIF_LIB_DIR])
 
 AC_MSG_CHECKING([for the Binder SDK library directory])
 if test -n "$BINDER_SDK_DIR" && test -d "$BINDER_SDK_DIR/lib/binder"; then
