@@ -760,6 +760,21 @@ dnl protocol it implies and where it came from.
 AC_MSG_NOTICE([AIDL HDMI CEC back-end: Binder wire ABI ....... BINDER_IPC_32BIT=$BINDER_IPC_32BIT, protocol $hdmicec_abi_protocol, from $hdmicec_abi_source])
 AC_MSG_NOTICE([AIDL HDMI CEC back-end: Binder ABI flag ....... ${AIDL_ABI_CPPFLAGS:-none (64-bit wire ABI)}])
 
+dnl List the resolved staging trees recursively to make configure-time path
+dnl problems diagnosable. Missing or unset directories are skipped because
+dnl their individual probes above already report the relevant failure.
+for hdmicec_list_dir in "$BINDER_LIB_DIR" "$BINDER_SDK_DIR" \
+                        "$BINDER_SDK_INCLUDE_DIR" "$HALIF_LIB_DIR" \
+                        "$HALIF_PREFIX"; do
+    if test -n "$hdmicec_list_dir" && test -d "$hdmicec_list_dir"; then
+        AC_MSG_NOTICE([Files under $hdmicec_list_dir:])
+        find "$hdmicec_list_dir" -type f -print 2>/dev/null |
+        while IFS= read -r hdmicec_list_file; do
+            AC_MSG_NOTICE([  $hdmicec_list_file])
+        done
+    fi
+done
+
 dnl Optional L1 unit tests support
 AC_ARG_ENABLE([l1tests],
     AS_HELP_STRING([--enable-l1tests], [Enable L1 unit tests (requires gtest)]),
