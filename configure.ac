@@ -476,6 +476,22 @@ dnl String16 constructor from libutils.  Naming libcommon-v0.2.0.0-cpp on the
 dnl same command line makes the linker locate that file too, which is what
 dnl confirms the pinned 0.2.0.0 ABI is the one actually staged.  The probe is
 dnl only linked and never run, so it is safe on a host with no Binder driver.
+AC_MSG_NOTICE([AIDL link probe compiler: $CXX])
+AC_MSG_NOTICE([AIDL link probe build/host: $build/$host])
+AC_MSG_NOTICE([AIDL link probe CPPFLAGS: $CPPFLAGS])
+AC_MSG_NOTICE([AIDL link probe CXXFLAGS: $CXXFLAGS])
+AC_MSG_NOTICE([AIDL link probe LDFLAGS: $LDFLAGS $AIDL_LDFLAGS])
+AC_MSG_NOTICE([AIDL link probe LIBS: $AIDL_LIBS $hdmicec_saved_LIBS])
+for hdmicec_link_lib in hdmicec-v0.1.0.0-cpp common-v0.2.0.0-cpp binder utils; do
+    hdmicec_link_lib_found=no
+    for hdmicec_link_dir in $HALIF_LIB_DIR $BINDER_LIB_DIR; do
+        if test -f "$hdmicec_link_dir/lib$hdmicec_link_lib.so" ||
+           test -f "$hdmicec_link_dir/lib$hdmicec_link_lib.a"; then
+            hdmicec_link_lib_found=yes
+        fi
+    done
+    AC_MSG_NOTICE([AIDL direct library lib$hdmicec_link_lib: $hdmicec_link_lib_found])
+done
 AC_MSG_CHECKING([for the AIDL stub and Binder client libraries])
 AC_LINK_IFELSE([AC_LANG_PROGRAM([[
 #undef VERSION
@@ -489,6 +505,9 @@ return sm != nullptr && name.size() > 0 ? 0 : 1;
 ]])],
     [AC_MSG_RESULT([yes])],
     [AC_MSG_RESULT([no])
+        AC_MSG_NOTICE([AIDL link probe failed; inspect the conftest compiler/linker output in config.log])
+        AC_MSG_NOTICE([AIDL link probe searched: $AIDL_LDFLAGS])
+        AC_MSG_NOTICE([AIDL link probe used: $AIDL_LIBS])
      AC_MSG_ERROR([the AIDL stub and Binder client libraries could not be
 linked.  All four are unconditional link edges of libRCEC, in this order:
   $AIDL_LIBS
@@ -541,6 +560,8 @@ return (reported.protocol_version > 0 && exchange.write_size == 0) ? 0 : 1;
 ]])],
     [AC_MSG_RESULT([yes])],
     [AC_MSG_RESULT([no])
+        AC_MSG_NOTICE([Binder UAPI compile probe failed; inspect the conftest compiler output in config.log])
+        AC_MSG_NOTICE([Binder UAPI probe CPPFLAGS: $CPPFLAGS])
      AC_MSG_ERROR([the Binder kernel UAPI header linux/android/binder.h is
 required and was not usable.  It supplies BINDER_CURRENT_PROTOCOL_VERSION and
 struct binder_write_read, which ccec/src/DriverAidlImpl.cpp uses to verify the
@@ -594,6 +615,20 @@ fi
 hdmicec_abi_32bit_links=no
 hdmicec_abi_64bit_links=no
 
+AC_MSG_NOTICE([Binder ABI probe compiler: $CXX])
+AC_MSG_NOTICE([Binder ABI probe CPPFLAGS: $CPPFLAGS])
+AC_MSG_NOTICE([Binder ABI probe LDFLAGS: $LDFLAGS])
+AC_MSG_NOTICE([Binder ABI probe LIBS: $LIBS])
+for hdmicec_runtime_lib in binder utils log base cutils cutils_sockets; do
+    hdmicec_runtime_lib_found=no
+    if test -n "$BINDER_LIB_DIR" &&
+       { test -f "$BINDER_LIB_DIR/lib$hdmicec_runtime_lib.so" ||
+         test -f "$BINDER_LIB_DIR/lib$hdmicec_runtime_lib.a"; }; then
+        hdmicec_runtime_lib_found=yes
+    fi
+    AC_MSG_NOTICE([Binder ABI library lib$hdmicec_runtime_lib: $hdmicec_runtime_lib_found])
+done
+
 AC_MSG_CHECKING([whether the staged libbinder was built for the 32-bit Binder wire ABI])
 AC_LINK_IFELSE([AC_LANG_PROGRAM([[
 #undef VERSION
@@ -638,6 +673,8 @@ return 0;
 
 LDFLAGS=$hdmicec_abi_saved_LDFLAGS
 
+AC_MSG_NOTICE([Binder ABI probe result: 32-bit=$hdmicec_abi_32bit_links, 64-bit=$hdmicec_abi_64bit_links])
+
 dnl Exactly one probe must resolve.  Both resolving, or neither, means the question
 dnl was not actually answered - a stub library, a mixed staging directory, or a
 dnl linker that resolved nothing - and a wrong answer here is worse than no answer,
@@ -654,6 +691,8 @@ hdmicec_abi_source="the staged libbinder"
 case "x$BINDER_IPC_32BIT" in
   x)
     if test "x$hdmicec_abi_detected" = xunknown; then
+                AC_MSG_NOTICE([Binder ABI detection failed; inspect the two ABI conftest link diagnostics in config.log])
+                AC_MSG_NOTICE([Binder ABI probe searched: $AIDL_LDFLAGS])
         AC_MSG_ERROR([the Binder wire ABI of the staged libbinder could not be
 determined.  Exactly one of the two probes above had to resolve
 android::Parcel::ipcSetDataReference against
