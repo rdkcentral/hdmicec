@@ -493,6 +493,11 @@ for hdmicec_link_lib in hdmicec-v0.1.0.0-cpp common-v0.2.0.0-cpp binder utils; d
     AC_MSG_NOTICE([AIDL direct library lib$hdmicec_link_lib: $hdmicec_link_lib_found])
 done
 AC_MSG_CHECKING([for the AIDL stub and Binder client libraries])
+AC_MSG_NOTICE([AIDL library file formats:])
+file "$HALIF_LIB_DIR/libhdmicec-v0.1.0.0-cpp.so" 2>&1
+file "$HALIF_LIB_DIR/libcommon-v0.2.0.0-cpp.so" 2>&1
+file "$BINDER_LIB_DIR/libbinder.so" 2>&1
+file "$BINDER_LIB_DIR/libutils.so" 2>&1
 AC_LINK_IFELSE([AC_LANG_PROGRAM([[
 #undef VERSION
 #include <com/rdk/hal/hdmicec/IHdmiCec.h>
