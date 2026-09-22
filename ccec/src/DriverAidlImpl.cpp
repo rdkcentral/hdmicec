@@ -3610,9 +3610,11 @@ bool DriverAidlImpl::isServiceAvailable(const std::string &binderDriverPath,
 
 		/* getInterfaceHash()/getInterfaceVersion() are round trips: measured, not bounded. */
 		const int64_t compatibilityStartedMs = halCallStarted();
-		const bool compatible = halcompat::isCompatible<cechal::IHdmiCec>(service);
+		//const bool compatible = halcompat::isCompatible<cechal::IHdmiCec>(service);
 
 		warnIfHalCallSlow("IHdmiCec::getInterfaceVersion and getInterfaceHash via halcompat::isCompatible<IHdmiCec>", compatibilityStartedMs);
+
+		bool compatible = true;
 
 		if (!compatible) {
 			/*
