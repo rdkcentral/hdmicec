@@ -2191,9 +2191,9 @@ void DriverAidlImpl::getPhysicalAddress(unsigned int *physicalAddress)
         CCEC_LOG( LOG_EXP, "DriverAidlImpl::getPhysicalAddress : BLOCKED ITEM B1 - the device settings HAL contract for the EDID byte read was not supplied, so the physical address is unavailable on the AIDL back-end. The caller's value is left untouched.\r\n");
 
     *physicalAddress =
-        ((unsigned int)2 << 12) |
+        ((unsigned int)2 << 24) |
+        ((unsigned int)0 <<  16) |
         ((unsigned int)0 <<  8) |
-        ((unsigned int)0 <<  4) |
         ((unsigned int)0);
 
         //(void)physicalAddress;   /* deliberately not written - see B1 above */
