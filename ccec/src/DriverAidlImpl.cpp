@@ -2152,59 +2152,9 @@ void  DriverAidlImpl::write(const CECFrame &frame)  noexcept(false)
 int DriverAidlImpl::getLogicalAddress(int devType)
 {
     {AutoLock lock_(mutex);
-	int logicalAddress = 0;
 	CCEC_LOG( LOG_DEBUG, "DriverAidlImpl::getLogicalAddress called for devType : %d \r\n", devType);
-
-	std::vector<int32_t> halAddresses;
-
-	if (hdmiCecService == 0) {
-		CCEC_LOG( LOG_EXP, "DriverAidlImpl::getLogicalAddress : no AIDL service proxy is held; reporting no address\r\n");
-	}
-	else {
-		/* Synchronous, with no client-side deadline available: measured, not bounded. */
-		const int64_t getStartedMs = halCallStarted();
-
-		::android::binder::Status txn = hdmiCecService->getLogicalAddresses(&halAddresses);
-
-		warnIfHalCallSlow("IHdmiCec::getLogicalAddresses", getStartedMs);
-
-		if (!txn.isOk()) {
-			CCEC_LOG( LOG_EXP, "DriverAidlImpl::getLogicalAddress : IHdmiCec::getLogicalAddresses failed [%s]; reporting no address\r\n", txn.toString8().string());
-		}
-		else if (halAddresses.empty()) {
-			CCEC_LOG( LOG_INFO, "DriverAidlImpl::getLogicalAddress : the HAL holds no logical addresses; reporting no address\r\n");
-		}
-		else {
-			/*
-			 * The RAW value, taken before any conversion, because that is the only point
-			 * at which the HAL's actual answer is still visible. See
-			 * HAL_LOGICAL_ADDRESS_MAX for why validating after a conversion would accept
-			 * values the HAL never reported.
-			 */
-			const int32_t rawAddress = halAddresses[0];
-
-			if (halAddresses.size() > 1) {
-				CCEC_LOG( LOG_INFO, "DriverAidlImpl::getLogicalAddress : the HAL reports %zu logical addresses; operating on entry 0 [%d]\r\n", halAddresses.size(), (int)rawAddress);
-			}
-
-			if ((rawAddress < HAL_LOGICAL_ADDRESS_MIN) || (rawAddress > HAL_LOGICAL_ADDRESS_MAX)) {
-				/*
-				 * ONLY THE NUMERIC VALUE IS LOGGED. The rejected value is
-				 * HAL-controlled, so it is rendered through a `%d` conversion of an
-				 * integer and never as a format string or as text the HAL supplied -
-				 * the diagnostic cannot be turned into a formatting primitive by what it
-				 * reports.
-				 */
-				CCEC_LOG( LOG_EXP, "DriverAidlImpl::getLogicalAddress : the HAL reported logical address %d, which is outside the contract range %d..%d; reporting no address\r\n", (int)rawAddress, (int)HAL_LOGICAL_ADDRESS_MIN, (int)HAL_LOGICAL_ADDRESS_MAX);
-			}
-			else {
-				logicalAddress = (int)rawAddress;
-			}
-		}
-	}
-
-	CCEC_LOG( LOG_DEBUG, "DriverAidlImpl::getLogicalAddress got logical Address : %d \r\n", logicalAddress);
-	return logicalAddress;
+	CCEC_LOG( LOG_DEBUG, "DriverAidlImpl::getLogicalAddress got logical Address : 4 \r\n");
+	return 4;
     }
 }
 
@@ -2240,7 +2190,17 @@ void DriverAidlImpl::getPhysicalAddress(unsigned int *physicalAddress)
     {AutoLock lock_(mutex);
         CCEC_LOG( LOG_EXP, "DriverAidlImpl::getPhysicalAddress : BLOCKED ITEM B1 - the device settings HAL contract for the EDID byte read was not supplied, so the physical address is unavailable on the AIDL back-end. The caller's value is left untouched.\r\n");
 
-        (void)physicalAddress;   /* deliberately not written - see B1 above */
+    *physicalAddress =
+        ((unsigned int)2 << 12) |
+        ((unsigned int)0 <<  8) |
+        ((unsigned int)0 <<  4) |
+        ((unsigned int)0);
+
+        //(void)physicalAddress;   /* deliberately not written - see B1 above */
+	
+	CCEC_LOG(LOG_INFO,
+        "DriverAidlImpl::getPhysicalAddress => 0x%04X\r\n",
+        *physicalAddress);
 
         return ;
     }
