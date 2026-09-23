@@ -2333,7 +2333,7 @@ void DriverAidlImpl::getPhysicalAddress(unsigned int *physicalAddress)
             "HDMICecAidlHAL::getPhysicalAddress dsGetDisplay HDMI failed (ret=%d handle=%p)\r\n",
             eRet,
             (void*)displayHandle);
-        	return 0;
+        	return;
 		}
 
 		dsDisplayEDID_t edidData;
@@ -2344,7 +2344,7 @@ void DriverAidlImpl::getPhysicalAddress(unsigned int *physicalAddress)
 				"HDMICecAidlHAL::getPhysicalAddress dsGetEDID failed for HDMI handle=%p ret=%d\r\n",
 				(void*)displayHandle,
 				eRet);
-			return 0;
+			return;
 		}
 
 		*physicalAddress =
