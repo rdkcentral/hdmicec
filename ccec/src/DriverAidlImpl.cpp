@@ -150,6 +150,9 @@
 #include "ccec/Exception.hpp"
 #include "ccec/OpCode.hpp"
 
+//For parsing EDID information from the display and getting the physical address
+#include "dsDisplay.h"
+
 using CCEC_OSAL::AutoLock;
 
 /**
@@ -1255,6 +1258,7 @@ public:
 	 */
 	::android::binder::Status onMessageReceived(const ::std::vector<uint8_t> &message) override
 	{
+		CCEC_LOG( LOG_INFO, "DriverAidlImpl::EventListener::onMessageReceived  : message size = %zu\r\n", message.size());
 		/*
 		 * Length check first, before the lock and before anything is allocated. An empty
 		 * message from an out-of-process HAL would otherwise become an empty frame on the
@@ -1298,7 +1302,7 @@ public:
 
 				renderReceivedMessageHex(message.data(), message.size(), messageText);
 
-				CCEC_LOG( LOG_DEBUG, ">>> DriverAidlImpl::EventListener::onMessageReceived : %zu bytes : %s\r\n", message.size(), messageText);
+				CCEC_LOG( LOG_INFO, ">>> DriverAidlImpl::EventListener::onMessageReceived : %zu bytes : %s\r\n", message.size(), messageText);
 
 				/*
 				 * Ownership is explicit, because the queue can refuse.
@@ -1491,6 +1495,7 @@ public:
 	 */
 	::android::binder::Status onMessageSent(const ::std::vector<uint8_t> &message, cechal::SendMessageStatus status) override
 	{
+		CCEC_LOG( LOG_INFO, "DriverAidlImpl::EventListener::onMessageSent : message size = %zu\r\n", message.size());
 		/*
 		 * THE WHOLE BODY IS CONTAINED, for the reason onStateChanged() states: a `oneway`
 		 * callback has no caller to receive a fault, so an escaping exception would unwind
@@ -1518,7 +1523,7 @@ public:
 				snprintf(rendered + written, sizeof(rendered) - written, "...");
 			}
 
-			CCEC_LOG( LOG_DEBUG, "======== onMessageSent received. Result: %s, message length: %zu, message bytes: %s\r\n", cechal::toString(status).c_str(), message.size(), rendered);
+			CCEC_LOG( LOG_INFO, "======== onMessageSent received. Result: %s, message length: %zu, message bytes: %s\r\n", cechal::toString(status).c_str(), message.size(), rendered);
 		}
 		catch(...) {
 			/*
@@ -2100,6 +2105,23 @@ void  DriverAidlImpl::write(const CECFrame &frame)  noexcept(false)
     CCEC_LOG( LOG_DEBUG, "Send Completed\r\n");
 }
 
+// Return the standard logical-address candidates for a given device type.
+// Used only as a fallback when AIDL reports no allocated addresses yet.
+std::vector<int32_t> preferredLogicalAddressesForDeviceType(int devType)
+{
+    // Common CEC type ids used in middleware:
+    // 0: TV, 1: RecordingDevice, 3: Tuner, 4: PlaybackDevice, 5: AudioSystem.
+    switch (devType) {
+        case 0: return std::vector<int32_t>{0}; // TV
+        case 1: return std::vector<int32_t>{1, 2, 9}; // Recorder
+        case 3: return std::vector<int32_t>{3, 6, 7, 10}; // Tuner
+        case 5: return std::vector<int32_t>{5}; // AudioSystem
+        case 4:
+        default:
+            return std::vector<int32_t>{4, 8, 11}; // PlaybackDevice fallback
+    }
+}
+
 /**
  * @copydoc CCEC::DriverAidlImpl::getLogicalAddress
  *
@@ -2151,11 +2173,101 @@ void  DriverAidlImpl::write(const CECFrame &frame)  noexcept(false)
  */
 int DriverAidlImpl::getLogicalAddress(int devType)
 {
-    {AutoLock lock_(mutex);
-	CCEC_LOG( LOG_DEBUG, "DriverAidlImpl::getLogicalAddress called for devType : %d \r\n", devType);
-	CCEC_LOG( LOG_DEBUG, "DriverAidlImpl::getLogicalAddress got logical Address : 4 \r\n");
-	return 4;
-    }
+	#if 1
+		{AutoLock lock_(mutex);
+		int logicalAddress = 0;
+		CCEC_LOG( LOG_INFO, "DriverAidlImpl::getLogicalAddress called for devType : %d \r\n", devType);
+
+		std::vector<int32_t> halAddresses;
+
+		if (hdmiCecService == 0) {
+			CCEC_LOG( LOG_EXP, "DriverAidlImpl::getLogicalAddress : no AIDL service proxy is held; reporting no address\r\n");
+		}
+		else {
+			/* Synchronous, with no client-side deadline available: measured, not bounded. */
+			const int64_t getStartedMs = halCallStarted();
+
+			::android::binder::Status txn = hdmiCecService->getLogicalAddresses(&halAddresses);
+
+			warnIfHalCallSlow("IHdmiCec::getLogicalAddresses", getStartedMs);
+
+			if (!txn.isOk()) {
+				CCEC_LOG( LOG_EXP, "DriverAidlImpl::getLogicalAddress : IHdmiCec::getLogicalAddresses failed [%s]; reporting no address\r\n", txn.toString8().string());
+			}
+			else if (halAddresses.empty()) {
+				CCEC_LOG( LOG_INFO, "DriverAidlImpl::getLogicalAddress : the HAL holds no logical addresses\r\n");
+				const std::vector<int32_t> preferred = preferredLogicalAddressesForDeviceType(devType);
+				for (std::vector<int32_t>::const_iterator it = preferred.begin(); it != preferred.end(); ++it) {
+					try {
+						const LogicalAddress candidate(*it);
+
+						if (addLogicalAddress(candidate)) {
+							CCEC_LOG( LOG_INFO, "DriverAidlImpl::getLogicalAddress got logical Address : %d \r\n", *it);
+							return *it;
+						}
+					}
+					catch (AddressNotAvailableException &) {
+						CCEC_LOG( LOG_INFO, "DriverAidlImpl::getLogicalAddress : preferred logical address %d is unavailable\r\n", *it);
+					}
+				}
+			}
+			else {
+				/*
+				* The RAW value, taken before any conversion, because that is the only point
+				* at which the HAL's actual answer is still visible. See
+				* HAL_LOGICAL_ADDRESS_MAX for why validating after a conversion would accept
+				* values the HAL never reported.
+				*/
+				const int32_t rawAddress = halAddresses[0];
+
+				if (halAddresses.size() > 1) {
+					CCEC_LOG( LOG_INFO, "DriverAidlImpl::getLogicalAddress : the HAL reports %zu logical addresses; operating on entry 0 [%d]\r\n", halAddresses.size(), (int)rawAddress);
+				}
+
+				if ((rawAddress < HAL_LOGICAL_ADDRESS_MIN) || (rawAddress > HAL_LOGICAL_ADDRESS_MAX)) {
+					/*
+					* ONLY THE NUMERIC VALUE IS LOGGED. The rejected value is
+					* HAL-controlled, so it is rendered through a `%d` conversion of an
+					* integer and never as a format string or as text the HAL supplied -
+					* the diagnostic cannot be turned into a formatting primitive by what it
+					* reports.
+					*/
+					CCEC_LOG( LOG_EXP, "DriverAidlImpl::getLogicalAddress : the HAL reported logical address %d, which is outside the contract range %d..%d; reporting no address\r\n", (int)rawAddress, (int)HAL_LOGICAL_ADDRESS_MIN, (int)HAL_LOGICAL_ADDRESS_MAX);
+				}
+				else {
+					logicalAddress = (int)rawAddress;
+				}
+			}
+		}
+
+		CCEC_LOG( LOG_INFO, "DriverAidlImpl::getLogicalAddress got logical Address : %d \r\n", logicalAddress);
+		return logicalAddress;
+		}
+	#else
+		{AutoLock lock_(mutex);
+		int logicalAddress = 0;
+		CCEC_LOG( LOG_DEBUG, "DriverAidlImpl::getLogicalAddress called for devType : %d \r\n", devType);
+
+		const std::vector<int32_t> preferred = preferredLogicalAddressesForDeviceType(devType);
+		for (std::vector<int32_t>::const_iterator it = preferred.begin(); it != preferred.end(); ++it) {
+			try {
+				const LogicalAddress candidate(*it);
+
+				if (addLogicalAddress(candidate)) {
+					CCEC_LOG( LOG_DEBUG, "DriverAidlImpl::getLogicalAddress got logical Address : %d \r\n", *it);
+					return *it;
+				}
+			}
+			catch (AddressNotAvailableException &) {
+				CCEC_LOG( LOG_INFO, "DriverAidlImpl::getLogicalAddress : preferred logical address %d is unavailable\r\n", *it);
+			}
+		}
+
+		CCEC_LOG( LOG_EXP, "DriverAidlImpl::getLogicalAddress : no preferred logical address is available for devType %d\r\n", devType);
+		return 0;
+		}
+	#endif
+    
 }
 
 /**
@@ -2187,6 +2299,7 @@ int DriverAidlImpl::getLogicalAddress(int devType)
  */
 void DriverAidlImpl::getPhysicalAddress(unsigned int *physicalAddress)
 {
+	#if 0
     {AutoLock lock_(mutex);
         CCEC_LOG( LOG_EXP, "DriverAidlImpl::getPhysicalAddress : BLOCKED ITEM B1 - the device settings HAL contract for the EDID byte read was not supplied, so the physical address is unavailable on the AIDL back-end. The caller's value is left untouched.\r\n");
 
@@ -2204,6 +2317,52 @@ void DriverAidlImpl::getPhysicalAddress(unsigned int *physicalAddress)
 
         return ;
     }
+	#else
+	{AutoLock lock_(mutex);
+    
+		if (physicalAddress == nullptr) {
+			CCEC_LOG(LOG_ERROR, "HDMICecAidlHAL::getPhysicalAddress invalid output pointer\r\n");
+			throw IOException();
+    	}
+
+		*physicalAddress = 0;
+		intptr_t displayHandle = 0;
+    	dsError_t eRet = dsGetDisplay(dsVIDEOPORT_TYPE_HDMI, 0, &displayHandle);
+    	if (eRet != dsERR_NONE || displayHandle == 0) {
+        	CCEC_LOG(LOG_ERROR,
+            "HDMICecAidlHAL::getPhysicalAddress dsGetDisplay HDMI failed (ret=%d handle=%p)\r\n",
+            eRet,
+            (void*)displayHandle);
+        	return 0;
+		}
+
+		dsDisplayEDID_t edidData;
+		memset(&edidData, 0, sizeof(edidData));
+		eRet = dsGetEDID(displayHandle, &edidData);
+		if (eRet != dsERR_NONE) {
+			CCEC_LOG(LOG_ERROR,
+				"HDMICecAidlHAL::getPhysicalAddress dsGetEDID failed for HDMI handle=%p ret=%d\r\n",
+				(void*)displayHandle,
+				eRet);
+			return 0;
+		}
+
+		*physicalAddress =
+			((unsigned int)edidData.physicalAddressA << 24) |
+			((unsigned int)edidData.physicalAddressB << 16) |
+			((unsigned int)edidData.physicalAddressC <<  8) |
+			((unsigned int)edidData.physicalAddressD);
+
+		CCEC_LOG(LOG_INFO,
+			"HDMICecAidlHAL::getPhysicalAddress EDID addr %X.%X.%X.%X => 0x%08X\r\n",
+			edidData.physicalAddressA, edidData.physicalAddressB,
+			edidData.physicalAddressC, edidData.physicalAddressD,
+			*physicalAddress);
+
+        return ;
+    }
+
+	#endif
 }
 
 
