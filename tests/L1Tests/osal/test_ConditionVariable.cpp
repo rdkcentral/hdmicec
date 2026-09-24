@@ -27,12 +27,14 @@
 using namespace CCEC_OSAL;
 
 TEST(EventQueueTest, ReportsQueueSaturation) {
-    EventQueue<int> queue(1);
+    EventQueue<int *> queue(1);
+    int admitted = 1;
+    int rejected = 2;
 
-    EXPECT_NO_THROW(queue.offer(1));
-    EXPECT_THROW(queue.offer(2), InvalidStateException);
+    EXPECT_NO_THROW(queue.offer(&admitted));
+    EXPECT_THROW(queue.offer(&rejected), InvalidStateException);
     EXPECT_EQ(queue.size(), 1u);
-    EXPECT_EQ(queue.poll(), 1);
+    EXPECT_EQ(queue.poll(), &admitted);
 }
 
 class ConditionVariableTest : public ::testing::Test {
