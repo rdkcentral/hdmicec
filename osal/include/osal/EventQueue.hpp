@@ -42,6 +42,7 @@
 #include <deque>
 
 #include "OSAL.hpp"
+#include "Exception.hpp"
 #include "Mutex.hpp"
 #include "ConditionVariable.hpp"
 
@@ -169,6 +170,7 @@ on the queue will come out of wait state and will consume the event.
 
     	if (events->size() == cap) {
 			/* @TODO Throw Exception */
+			throw InvalidStateException();
 		}
 		else {
 			events->push_back(element);

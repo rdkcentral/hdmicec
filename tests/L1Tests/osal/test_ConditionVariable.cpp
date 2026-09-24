@@ -19,11 +19,21 @@
 
 #include <gtest/gtest.h>
 #include "osal/ConditionVariable.hpp"
+#include "osal/EventQueue.hpp"
 #include "osal/Mutex.hpp"
 #include <thread>
 #include <chrono>
 
 using namespace CCEC_OSAL;
+
+TEST(EventQueueTest, ReportsQueueSaturation) {
+    EventQueue<int> queue(1);
+
+    EXPECT_NO_THROW(queue.offer(1));
+    EXPECT_THROW(queue.offer(2), InvalidStateException);
+    EXPECT_EQ(queue.size(), 1u);
+    EXPECT_EQ(queue.poll(), 1);
+}
 
 class ConditionVariableTest : public ::testing::Test {
 protected:
