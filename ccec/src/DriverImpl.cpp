@@ -57,17 +57,24 @@ size_t write(const unsigned char *buf, size_t len);
 
 void DriverImpl::DriverReceiveCallback(int handle, void *callbackData, unsigned char *buf, int len)
 {
-	CECFrame *frame = new CECFrame();
-	frame->append((unsigned char *)buf, (size_t)len);
+	if (buf == NULL || len <= 0 || static_cast<size_t>(len) > CECFrame::MAX_LENGTH) {
+		CCEC_LOG( LOG_EXP, "Invalid frame received...discarding\r\n");
+		return;
+	}
 
-	CCEC_LOG( LOG_DEBUG, ">>>>>>> >>>>> >>>> >> >> >\r\n");
-
-        dump_buffer((unsigned char*)buf,len);
-
-	CCEC_LOG(LOG_DEBUG, "==========================\r\n");
-
+	CECFrame *frame = NULL;
 	try {
+		frame = new CECFrame();
+		frame->append((unsigned char *)buf, (size_t)len);
+
+		CCEC_LOG( LOG_DEBUG, ">>>>>>> >>>>> >>>> >> >> >\r\n");
+
+		dump_buffer((unsigned char*)buf,len);
+
+		CCEC_LOG(LOG_DEBUG, "==========================\r\n");
+
 		static_cast<DriverImpl &>(Driver::getInstance()).getIncomingQueue(handle).offer(frame);
+		frame = NULL;
 	}
 	catch(...) {
 		CCEC_LOG( LOG_EXP, "Exception during frame offer...discarding\r\n");
