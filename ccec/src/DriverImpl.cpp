@@ -141,7 +141,12 @@ void  DriverImpl::close(void) noexcept(false)
 		status = CLOSING;
 
 		/* Use NULL as sentinel */
-		rQueue.offer(0);
+		try {
+			rQueue.offer(0);
+		}
+		catch (InvalidStateException &) {
+			CCEC_LOG( LOG_DEBUG, "Receive queue already signaled during close\r\n");
+		}
 
 		int err = HdmiCecClose(nativeHandle);
 		if (err != HDMI_CEC_IO_SUCCESS) {

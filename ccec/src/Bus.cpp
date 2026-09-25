@@ -304,7 +304,12 @@ void Bus::Writer::stop(bool block)
 	{AutoLock lock_(bus.wMutex);
 		if (isRunning()) {
 			stopStarted();
-			bus.wQueue.offer(0);
+			try {
+				bus.wQueue.offer(0);
+			}
+			catch (InvalidStateException &) {
+				CCEC_LOG( LOG_DEBUG, "Write queue already signaled during stop\r\n");
+			}
 			CCEC_LOG( LOG_DEBUG, "Bus::Writer::stop::stop offer completed [%d]\r\n", isRunning());
 		}
 	}
