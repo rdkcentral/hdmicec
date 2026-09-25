@@ -18,6 +18,7 @@
 */
 
 #include <gtest/gtest.h>
+#include "ccec/CECFrame.hpp"
 #include "osal/ConditionVariable.hpp"
 #include "osal/EventQueue.hpp"
 #include "osal/Mutex.hpp"
@@ -25,17 +26,6 @@
 #include <chrono>
 
 using namespace CCEC_OSAL;
-
-TEST(EventQueueTest, ReportsQueueSaturation) {
-    EventQueue<int *> queue(1);
-    int admitted = 1;
-    int rejected = 2;
-
-    EXPECT_NO_THROW(queue.offer(&admitted));
-    EXPECT_THROW(queue.offer(&rejected), InvalidStateException);
-    EXPECT_EQ(queue.size(), 1u);
-    EXPECT_EQ(queue.poll(), &admitted);
-}
 
 class ConditionVariableTest : public ::testing::Test {
 protected:
@@ -89,4 +79,18 @@ TEST_F(ConditionVariableTest, SignaledBeforeTimeout) {
 
     waiter.join();
     EXPECT_EQ(result.load(), 1L); // signaled before timeout → returns 1
+}
+
+TEST(EventQueueTest, ReportsQueueSaturation) {
+    EventQueue<CECFrame *> queue(1);
+    CECFrame *admitted = new CECFrame();
+    CECFrame *rejected = new CECFrame();
+
+    EXPECT_NO_THROW(queue.offer(admitted));
+    EXPECT_THROW(queue.offer(rejected), InvalidStateException);
+    EXPECT_EQ(queue.size(), 1u);
+    EXPECT_EQ(queue.poll(), admitted);
+
+    delete admitted;
+    delete rejected;
 }
