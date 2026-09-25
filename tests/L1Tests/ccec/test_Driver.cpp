@@ -67,8 +67,12 @@ TEST_F(DriverTest, AAA_DriverSingletonAccess) {
 TEST_F(DriverTest, ValidatesReceiveLengths) {
     unsigned char frame[CECFrame::MAX_LENGTH + 1] = {};
 
-    EXPECT_NO_THROW(DriverImpl::DriverReceiveCallback(1, nullptr, frame, 2));
-    EXPECT_NO_THROW(DriverImpl::DriverReceiveCallback(1, nullptr, frame, CECFrame::MAX_LENGTH));
+    EXPECT_TRUE(DriverImpl::isValidReceiveFrame(frame, 2));
+    EXPECT_TRUE(DriverImpl::isValidReceiveFrame(frame, CECFrame::MAX_LENGTH));
+    EXPECT_FALSE(DriverImpl::isValidReceiveFrame(frame, sizeof(frame)));
+    EXPECT_FALSE(DriverImpl::isValidReceiveFrame(frame, -1));
+    EXPECT_FALSE(DriverImpl::isValidReceiveFrame(nullptr, 1));
+
     EXPECT_NO_THROW(DriverImpl::DriverReceiveCallback(1, nullptr, frame, sizeof(frame)));
     EXPECT_NO_THROW(DriverImpl::DriverReceiveCallback(1, nullptr, frame, -1));
     EXPECT_NO_THROW(DriverImpl::DriverReceiveCallback(1, nullptr, nullptr, 1));

@@ -36,6 +36,7 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <iostream>
+#include <memory>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <stdlib.h>
@@ -55,16 +56,21 @@ CCEC_BEGIN_NAMESPACE
 
 size_t write(const unsigned char *buf, size_t len);
 
+bool DriverImpl::isValidReceiveFrame(const unsigned char *buf, int len)
+{
+	return buf != NULL && len > 0 && static_cast<size_t>(len) <= CECFrame::MAX_LENGTH;
+}
+
 void DriverImpl::DriverReceiveCallback(int handle, void *callbackData, unsigned char *buf, int len)
 {
-	if (buf == NULL || len <= 0 || static_cast<size_t>(len) > CECFrame::MAX_LENGTH) {
+	if (!isValidReceiveFrame(buf, len)) {
 		CCEC_LOG( LOG_EXP, "Invalid frame received...discarding\r\n");
 		return;
 	}
 
-	CECFrame *frame = NULL;
+	std::unique_ptr<CECFrame> frame;
 	try {
-		frame = new CECFrame();
+		frame.reset(new CECFrame());
 		frame->append((unsigned char *)buf, (size_t)len);
 
 		CCEC_LOG( LOG_DEBUG, ">>>>>>> >>>>> >>>> >> >> >\r\n");
@@ -73,13 +79,13 @@ void DriverImpl::DriverReceiveCallback(int handle, void *callbackData, unsigned 
 
 		CCEC_LOG(LOG_DEBUG, "==========================\r\n");
 
-		static_cast<DriverImpl &>(Driver::getInstance()).getIncomingQueue(handle).offer(frame);
-		frame = NULL;
+		static_cast<DriverImpl &>(Driver::getInstance()).getIncomingQueue(handle).offer(frame.get());
+		frame.release();
 	}
 	catch(...) {
 		CCEC_LOG( LOG_EXP, "Exception during frame offer...discarding\r\n");
 		// Copilot fix: Delete frame to prevent memory leak when offer() throws exception
-		delete frame;
+		frame.reset();
 	}
 	CCEC_LOG( LOG_DEBUG, "frame offered\r\n");
 }
