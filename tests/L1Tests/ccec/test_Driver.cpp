@@ -24,6 +24,7 @@
 #include "ccec/Connection.hpp"
 #include "ccec/LibCCEC.hpp"
 #include "hdmi_cec_driver_mock.h"
+#include "../../../ccec/src/DriverImpl.hpp"
 
 using ::testing::_;
 using ::testing::Return;
@@ -61,6 +62,20 @@ TEST_F(DriverTest, AAA_DriverSingletonAccess) {
         Driver &driver = Driver::getInstance();
         (void)driver; // Suppress unused variable warning
     });
+}
+
+TEST_F(DriverTest, ValidatesReceiveLengths) {
+    unsigned char frame[CECFrame::MAX_LENGTH + 1] = {};
+
+    EXPECT_TRUE(DriverImpl::isValidReceiveFrame(frame, 2));
+    EXPECT_TRUE(DriverImpl::isValidReceiveFrame(frame, CECFrame::MAX_LENGTH));
+    EXPECT_FALSE(DriverImpl::isValidReceiveFrame(frame, sizeof(frame)));
+    EXPECT_FALSE(DriverImpl::isValidReceiveFrame(frame, -1));
+    EXPECT_FALSE(DriverImpl::isValidReceiveFrame(nullptr, 1));
+
+    EXPECT_NO_THROW(DriverImpl::DriverReceiveCallback(1, nullptr, frame, sizeof(frame)));
+    EXPECT_NO_THROW(DriverImpl::DriverReceiveCallback(1, nullptr, frame, -1));
+    EXPECT_NO_THROW(DriverImpl::DriverReceiveCallback(1, nullptr, nullptr, 1));
 }
 
 // Test driver open (already opened by global environment)
