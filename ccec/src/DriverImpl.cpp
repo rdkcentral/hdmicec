@@ -68,9 +68,9 @@ void DriverImpl::DriverReceiveCallback(int handle, void *callbackData, unsigned 
 		return;
 	}
 
-	std::unique_ptr<CECFrame> frame;
+	CECFrame *frame = nullptr;
 	try {
-		frame.reset(new CECFrame());
+		frame = new CECFrame();
 		frame->append((unsigned char *)buf, (size_t)len);
 
 		CCEC_LOG( LOG_DEBUG, ">>>>>>> >>>>> >>>> >> >> >\r\n");
@@ -79,13 +79,13 @@ void DriverImpl::DriverReceiveCallback(int handle, void *callbackData, unsigned 
 
 		CCEC_LOG(LOG_DEBUG, "==========================\r\n");
 
-		static_cast<DriverImpl &>(Driver::getInstance()).getIncomingQueue(handle).offer(frame.get());
-		frame.release();
+		static_cast<DriverImpl &>(Driver::getInstance()).getIncomingQueue(handle).offer(frame);
+		frame = nullptr;
 	}
 	catch(...) {
 		CCEC_LOG( LOG_EXP, "Exception during frame offer...discarding\r\n");
-		// Copilot fix: Delete frame to prevent memory leak when offer() throws exception
-		frame.reset();
+		delete frame;
+		frame = nullptr;
 	}
 	CCEC_LOG( LOG_DEBUG, "frame offered\r\n");
 }
