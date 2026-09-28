@@ -921,7 +921,7 @@ endif
 LDFLAGS+= -L$(OPENSOURCE_BASE)/lib
 LDFLAGS+=-L$(GLIB_LIBRARY_PATH)/
 LDFLAGS+=$(GLIBS)
-LDFLAGS += -L. -lpthread
+LDFLAGS += -L. -lpthread -ldshalcli -lIARMBus
 
 # FULL RELRO, the link half of QA finding P5-05.
 #
