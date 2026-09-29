@@ -80,6 +80,8 @@ public:
 	virtual void process (const GetMenuLanguage &msg, const Header &header) 			{header.print();msg.print();}
 	virtual void process (const ReportPhysicalAddress &msg, const Header &header) 		{header.print();msg.print();}
 	virtual void process (const DeviceVendorID &msg, const Header &header) 				{header.print();msg.print();}
+	virtual void process (const VendorCommand &msg, const Header &header) 				{header.print();msg.print();}
+	virtual void process (const VendorCommandWithID &msg, const Header &header) 		{header.print();msg.print();}
 	virtual void process (const UserControlReleased &msg, const Header &header) 		{header.print();msg.print();}
 	virtual void process (const UserControlPressed &msg, const Header &header) 		{header.print();msg.print();}
 	virtual void process (const GiveDevicePowerStatus &msg, const Header &header) 		{header.print();msg.print();}

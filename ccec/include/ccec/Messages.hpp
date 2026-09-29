@@ -331,6 +331,88 @@ public:
     VendorID vendorId;
 };
 
+class VendorCommand : public DataBlock
+{
+public:
+    Op_t opCode(void) const {return VENDOR_COMMAND;}
+
+    VendorCommand(const CECFrame &frame, int startPos = 0)
+        : vendorData(validate(frame, startPos, 1, 14))
+    {
+    }
+
+	CECFrame &serialize(CECFrame &frame) const {
+        frame.append(vendorData);
+        return frame;
+	}
+
+    void print(void) const {
+        CCEC_LOG(LOG_DEBUG, "Vendor Command Data:\n");
+        vendorData.hexDump(LOG_DEBUG);
+    }
+
+    CECFrame vendorData;
+
+private:
+    static CECFrame validate(const CECFrame &frame, size_t startPos, size_t minLen, size_t maxLen) {
+        if (startPos > frame.length()) {
+            throw InvalidParamException();
+        }
+
+        const size_t length = frame.length() - startPos;
+        if ((length < minLen) || (length > maxLen)) {
+            throw InvalidParamException();
+        }
+
+        return frame.subFrame(startPos, length);
+    }
+};
+
+class VendorCommandWithID : public DataBlock
+{
+public:
+    Op_t opCode(void) const {return VENDOR_COMMAND_WITH_ID;}
+
+    VendorCommandWithID(const CECFrame &frame, int startPos = 0)
+        : operands(validate(frame, startPos))
+        , vendorId(operands, 0)
+        , vendorData(operands.subFrame(VendorID::MAX_LEN))
+    {
+    }
+
+	CECFrame &serialize(CECFrame &frame) const {
+        vendorId.serialize(frame);
+        frame.append(vendorData);
+        return frame;
+	}
+
+    void print(void) const {
+        CCEC_LOG(LOG_DEBUG, "VendorID : %s\n", vendorId.toString().c_str());
+        CCEC_LOG(LOG_DEBUG, "Vendor Command Data:\n");
+        vendorData.hexDump(LOG_DEBUG);
+    }
+
+private:
+    static CECFrame validate(const CECFrame &frame, size_t startPos) {
+        if (startPos > frame.length()) {
+            throw InvalidParamException();
+        }
+
+        const size_t length = frame.length() - startPos;
+        if ((length < (VendorID::MAX_LEN + 1)) || (length > 14)) {
+            throw InvalidParamException();
+        }
+
+        return frame.subFrame(startPos, length);
+    }
+
+    CECFrame operands;
+
+public:
+    VendorID vendorId;
+    CECFrame vendorData;
+};
+
 class GiveDevicePowerStatus : public DataBlock
 {
 public:

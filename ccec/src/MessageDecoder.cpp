@@ -112,10 +112,10 @@ void MessageDecoder::decode(const CECFrame &in_)
 		processor.process(DeviceVendorID(in), header);
 		break;
 	case VENDOR_COMMAND:
-		//processor.process(VendorCommand(in), header);
+		processor.process(VendorCommand(in), header);
 		break;
 	case VENDOR_COMMAND_WITH_ID:
-		//processor.process(VendorCommandWithID(in), header);
+		processor.process(VendorCommandWithID(in), header);
 		break;
 	case VENDOR_REMOTE_BUTTON_DOWN:
 		//processor.process(VendorRemoteButtonDown(in), header);
