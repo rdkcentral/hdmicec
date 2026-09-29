@@ -439,6 +439,8 @@ public:
     int           lastVersionValue{-1};
     int           lastAbortReason{-1};
     std::string   lastOSDName;
+    CECFrame      lastVendorId;
+    CECFrame      lastVendorData;
 
     void process(const ImageViewOn &, const Header &) override {
         lastProcessed = "ImageViewOn";
@@ -498,6 +500,15 @@ public:
     void process(const RequestActiveSource &, const Header &) override {
         lastProcessed = "RequestActiveSource";
     }
+    void process(const VendorCommand &msg, const Header &) override {
+        lastProcessed = "VendorCommand";
+        lastVendorData = msg.vendorData;
+    }
+    void process(const VendorCommandWithID &msg, const Header &) override {
+        lastProcessed = "VendorCommandWithID";
+        msg.vendorId.serialize(lastVendorId);
+        lastVendorData = msg.vendorData;
+    }
 };
 
 class MessageDecoderTrackingTest : public ::testing::Test {
@@ -520,6 +531,31 @@ TEST_F(MessageDecoderTrackingTest, StandbyDispatch) {
     CECFrame frame(data, sizeof(data));
     decoder.decode(frame);
     EXPECT_EQ(tracking.lastProcessed, "Standby");
+}
+
+TEST_F(MessageDecoderTrackingTest, VendorCommandDispatchAndData) {
+    uint8_t data[] = {0x40, 0x89, 0x01, 0x02, 0x03};
+    CECFrame frame(data, sizeof(data));
+    decoder.decode(frame);
+    EXPECT_EQ(tracking.lastProcessed, "VendorCommand");
+    ASSERT_EQ(tracking.lastVendorData.length(), 3U);
+    EXPECT_EQ(tracking.lastVendorData.at(0), 0x01);
+    EXPECT_EQ(tracking.lastVendorData.at(1), 0x02);
+    EXPECT_EQ(tracking.lastVendorData.at(2), 0x03);
+}
+
+TEST_F(MessageDecoderTrackingTest, VendorCommandWithIDDispatchAndData) {
+    uint8_t data[] = {0x40, 0xA0, 0x00, 0x00, 0x80, 0x01, 0x02};
+    CECFrame frame(data, sizeof(data));
+    decoder.decode(frame);
+    EXPECT_EQ(tracking.lastProcessed, "VendorCommandWithID");
+    ASSERT_EQ(tracking.lastVendorId.length(), 3U);
+    EXPECT_EQ(tracking.lastVendorId.at(0), 0x00);
+    EXPECT_EQ(tracking.lastVendorId.at(1), 0x00);
+    EXPECT_EQ(tracking.lastVendorId.at(2), 0x80);
+    ASSERT_EQ(tracking.lastVendorData.length(), 2U);
+    EXPECT_EQ(tracking.lastVendorData.at(0), 0x01);
+    EXPECT_EQ(tracking.lastVendorData.at(1), 0x02);
 }
 
 TEST_F(MessageDecoderTrackingTest, ActiveSourceDispatchAndPhysicalAddress) {
