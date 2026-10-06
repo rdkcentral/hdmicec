@@ -898,9 +898,9 @@ $(info libRCEC AIDL stub library directory: [$(strip $(HALIF_LIB_DIR))])
 # than testing for the header's presence, so a stub or truncated header fails
 # here rather than mid-compile.
 ifeq ($(BINDER_PREREQ_REQUIRED),yes)
-# The header is pulled in with -include rather than with a directive in the probe
-# text, so that no `#` has to survive make's own comment stripping on its way to
-# the shell.
+# Headers are pulled in with -include, so that no `#` has to survive make's own
+# comment stripping on the way to the shell.  <sys/types.h> comes first, as in
+# real includers: 5.15-era UAPI headers (Ubuntu 22.04's) need its pid_t, uid_t.
 BINDER_UAPI_PROBE := $(shell printf '%s\n' \
 		'int ccec_binder_uapi_probe(void);' \
 		'int ccec_binder_uapi_probe(void) {' \
@@ -911,9 +911,9 @@ BINDER_UAPI_PROBE := $(shell printf '%s\n' \
 		'    bwr.write_buffer = addr;' \
 		'    ver.protocol_version = BINDER_CURRENT_PROTOCOL_VERSION;' \
 		'    return (int)(bwr.write_size + (unsigned long)ver.protocol_version);' \
-		'}' | $(CXX) -x c++ -include linux/android/binder.h -c - $(CFLAGS) -o /dev/null > /dev/null 2>&1 && echo yes || echo no)
+		'}' | $(CXX) -x c++ -include sys/types.h -include linux/android/binder.h -c - $(CFLAGS) -o /dev/null > /dev/null 2>&1 && echo yes || echo no)
 ifneq ($(strip $(BINDER_UAPI_PROBE)),yes)
-$(error The Binder kernel UAPI is unusable: linux/android/binder.h could not be compiled with struct binder_write_read, struct binder_version, binder_uintptr_t and BINDER_CURRENT_PROTOCOL_VERSION. libRCEC carries the AIDL back-end unconditionally and cannot be built without it. Install the kernel UAPI headers for the target (Debian/Ubuntu linux-libc-dev; Yocto/OE the kernel-headers or linux-libc-headers recipe already present in most sysroots), or add the sysroot that provides linux/android/binder.h to CFLAGS. Reproduce with: $(CXX) -x c++ -include linux/android/binder.h -fsyntax-only /dev/null $(CFLAGS))
+$(error The Binder kernel UAPI is unusable: linux/android/binder.h could not be compiled with struct binder_write_read, struct binder_version, binder_uintptr_t and BINDER_CURRENT_PROTOCOL_VERSION. libRCEC carries the AIDL back-end unconditionally and cannot be built without it. Install the kernel UAPI headers for the target (Debian/Ubuntu linux-libc-dev; Yocto/OE the kernel-headers or linux-libc-headers recipe already present in most sysroots), or add the sysroot that provides linux/android/binder.h to CFLAGS. Reproduce with: $(CXX) -x c++ -include sys/types.h -include linux/android/binder.h -fsyntax-only /dev/null $(CFLAGS))
 endif
 endif
 # ---------------------------------------------------------------------------
@@ -921,7 +921,7 @@ endif
 LDFLAGS+= -L$(OPENSOURCE_BASE)/lib
 LDFLAGS+=-L$(GLIB_LIBRARY_PATH)/
 LDFLAGS+=$(GLIBS)
-LDFLAGS += -L. -lpthread -ldshalcli -lIARMBus
+LDFLAGS += -L. -lpthread
 
 # FULL RELRO, the link half of QA finding P5-05.
 #

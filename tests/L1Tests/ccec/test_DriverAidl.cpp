@@ -28,115 +28,21 @@
 /**
  * @file test_DriverAidl.cpp
  *
- * @brief L1 unit tests for the AIDL/binder HDMI CEC back-end, for the runtime selection
- *        between it and the legacy back-end, and for the compatibility rule that
- *        selection rests on.
+ * @brief L1 tests for the AIDL HDMI CEC back-end, the runtime back-end selection and the
+ *        halcompat compatibility rule that selection rests on.
  *
- * Three things are exercised, and they are exercised by three different routes because
- * no single route reaches all of them:
+ * Compatibility and preflight are tested by direct call, closed and probe-forced OPENED states
+ * on local DriverAidlImpl instances, and back-end-specific behaviour in fixtures that assert the
+ * resolved back-end in SetUp. Cases leave the shared driver open; the log level moves only via
+ * ScopedCecLogLevel.
  *
- *   -# The compatibility predicate and the binder preflight, by direct call against
- *      locally constructed doubles and against paths this file owns. Neither needs a
- *      registered service, a binder driver or a resolved back-end, so both run under
- *      every invocation.
- *   -# The AIDL back-end's closed-state behaviour, on a local instance.
- *      DriverAidlImpl::DriverAidlImpl() touches no binder at all - it sets the state to
- *      CLOSED, the legacy handle field to 0 and an empty address list, exactly as
- *      DriverImpl::DriverImpl() does (DriverImpl.cpp:87-90) - so a local instance is
- *      constructible even where no service exists, and every status != OPENED guard, the
- *      DriverAidlImpl::writeAsync() prelude ordering, and the two methods that carry no
- *      guard at all are reachable without a HAL of any kind.
- *   -# The back-end actually resolved for this process, through Driver::getInstance().
- *      Which one that is depends on the invocation, so the cases that need a specific one
- *      live in fixtures of their own and assert their precondition in SetUp.
- *
- * Isolation: this suite shares one process-global driver with every other suite in the
- * binary, and the binary is order-sensitive. Cases needing an open driver establish that
- * precondition themselves and leave the driver open again - the state the global
- * environment sets up at start-up - and clear their own mock expectations. Cases needing
- * a driver that is not open construct a local DriverAidlImpl instead of disturbing the
- * shared one. No case here closes, terminates or re-initialises the shared library, and
- * no case here installs a default action on the process-global HAL mock.
- *
- * One other piece of process-global state is touched, and it is touched under custody: the
- * middleware's log level, which one case raises to DEBUG so that a callback reporting at
- * LOG_DEBUG can be observed at all. The only seam for it is production's own
- * check_cec_log_status() and the fixed path it reads, which is shared with every process on
- * the host, so ScopedCecLogLevel locks that path, validates it, replaces it atomically and
- * restores it byte for byte on every exit path - and refuses, rather than forcing, when the
- * path is not safely this run's to modify. No later case inherits a raised level.
- *
- * Seven paths are unreachable by construction and are deliberately not chased. Each is
- * named with its mechanism and with what reaching it would take, so that none of them
- * reads as an oversight:
- *
- * -# "The server reports an older version within the same major." This arm of halcompat's
- *    era-0 rule is empty for this client, not merely untested. IHdmiCec::VERSION is 1000
- *    (IHdmiCec.h:25), which under the positional encoding at halcompat.h:86-96 is era 0,
- *    major 1. The servers that satisfy era(server) == 0 and major(server) == 1 are exactly
- *    the integers 1000 through 1999, and every one of them is >= 1000, so the
- *    `serverVersion >= clientVersion` conjunct at halcompat.h:114 cannot fail while the two
- *    preceding conjuncts hold. A server that reports 999 decodes to era 0, major 0, and is
- *    rejected by the cross-major conjunct at halcompat.h:113 - so labelling such a case
- *    "older same-major" would record a rule that does not exist. The arm is reached instead
- *    with a different client, by calling detail::isCompatible(3020, 3000) directly; a static
- *    assertion below pins it and explains why halcompat.h:128's own (3000, 2000) assertion
- *    is mislabelled.
- * -# The era >= 1 branch of the ternary at halcompat.h:110-111. It requires
- *    era(clientVersion) >= 1, and this client's era is 0 for as long as IHdmiCec::VERSION is
- *    1000, so no server value whatsoever can activate it here. Reaching it needs a re-frozen
- *    interface in era 1 or later, at which point the static assertion on VERSION below fires
- *    and this whole analysis is recomputed.
- * -# The preflight's protocol-version-mismatch arm and its context-manager arm, which are
- *    reachable on any host through the probe seam and are therefore not on this list as
- *    absences but as a constraint on how they are reached. Neither can be synthesised from a
- *    path and a timeout alone: the first needs a node that answers BINDER_VERSION with a
- *    value other than the one this build was compiled against, the second a driver whose
- *    context manager never answers, and a regular file reaches the ioctl arm before either -
- *    so with the default probe they are platform-integration conditions. The predicate takes
- *    a third, defaulted argument for exactly this reason: a DriverAidlImpl::BinderPreflightProbe
- *    of six function pointers whose default is the real syscalls. A synthetic probe therefore
- *    reaches every arm on any host, including a true verdict, and DriverAidlPreflightTest
- *    asserts all eight decision points below - the node's identity, file type and ownership
- *    among them - together with the custody handover and the pre-lookup re-verification that
- *    closes the window between the check and libbinder's own open of the same name. The
- *    production call site passes no arguments and runs the real syscalls.
- * -# Withdrawing a registered service. The pinned C++ IServiceManager exposes no
- *    service-removal API, and the service manager retains a reference to whatever was
- *    published, so a test written around unregistering could not be implemented at all -
- *    dropping the local reference would at best destroy an object the service manager still
- *    advertises. No case here attempts it. The selection-stability case therefore proves its
- *    point by adding a service mid-process rather than by taking one away, which is the
- *    direction that is actually expressible.
- * -# A physical-address read on the AIDL back-end. BLOCKED ITEM B1 - see the contract block
- *    below, which states what is covered, what is not, and the change that would close it.
- * -# The body of DriverAidlImpl::printFrameDetails()' catch(Exception &e). The only statement
- *    in the guarded try that can throw is the Header construction, which reads frame.at(0)
- *    and raises std::out_of_range - and Exception and std::out_of_range are siblings under
- *    std::exception, not related by inheritance, so catch(Exception &e) cannot catch it and
- *    the exception escapes instead. Reaching the handler needs a production change: a broader
- *    handler, or a length guard ahead of the Header. The method is byte-for-byte the legacy
- *    one, whose identical boundary the neighbouring suite records at
- *    test_DriverImpl_Async.cpp:38-46, so this is a shared pre-existing condition and not
- *    something the AIDL back-end introduced. The escape itself is asserted below, by the
- *    writeAsync prelude-ordering cases, so the boundary is pinned and any future change to
- *    the handler is a visible decision.
- * -# The non-CLOSED arm of DriverAidlImpl::~DriverAidlImpl(), which closes an open session on
- *    the way out. No instance a test can destroy is ever OPENED: a local instance holds no
- *    service proxy, so its open() raises IOException before the state moves, and the only
- *    instance that does get opened is the function-local static inside Driver::getInstance(),
- *    whose destructor runs at static destruction - after the last test has finished, where
- *    nothing can assert on it. Reaching it observably would need a production seam for
- *    injecting a proxy, which is a new abstraction and not permitted. Note in passing that
- *    the destructor takes the instance lock and then calls close(), which takes it again;
- *    that is safe rather than a latent deadlock, because CCEC_OSAL::Mutex is created
- *    PTHREAD_MUTEX_RECURSIVE_NP (osal/src/Mutex.cpp:44), and DriverImpl's destructor has the
- *    same shape.
+ * Unreachable by construction for this era-0, major-1 client: (1) older-same-major, as its
+ * same-major servers are exactly 1000-1999 and 999 is cross-major ((3020, 3000) reaches the arm
+ * instead), and (2) halcompat's era >= 1 branch.
  *
  * @see DriverAidlImpl
- * @see DriverImpl
  * @see Driver::getInstance()
- * @see CecTestEnvironment::SetUp
+ * @see AIDL_HAL_MIGRATION_NOTES.md
  */
 
 #include <gtest/gtest.h>
@@ -152,30 +58,12 @@
 #include "ccec/Operands.hpp"
 #include "ccec/Util.hpp"
 
-/*
- * DriverImpl.hpp lives under ccec/src, which AM_CPPFLAGS does not cover, so it is
- * reached by relative path rather than by adding an -I - the established route, taken
- * verbatim from test_DriverImpl_Async.cpp:75. It is needed here for one thing the
- * abstract Driver interface cannot express: naming the legacy concrete type in a
- * dynamic_cast, which is how the cases below establish which back-end this process
- * resolved without a production introspection API being added to Driver.hpp.
- */
+/* Not an installed header, so reached by relative path; needed to name DriverImpl in the
+ * dynamic_casts that identify the back-end this process resolved. */
 #include "../../../ccec/src/DriverImpl.hpp"
 
-/*
- * DriverAidlImpl.hpp is reached by the same relative route, and for the same reason: it
- * is absent from hdmicec/Makefile.am's installed nobase_include_HEADERS list, exactly as
- * DriverImpl.hpp is, which is what makes a second back-end possible without altering the
- * middleware public API - and what makes reaching it from a test translation unit
- * legitimate rather than a hack. It is needed for three things, all of which the abstract
- * interface hides: calling the public static preflight predicate
- * DriverAidlImpl::isBinderPreflightOk(), whose own documentation records that it is
- * public precisely so a test may call it; naming the AIDL concrete type in a
- * dynamic_cast, the other half of the selection assertions; and constructing a local
- * closed instance, which is what reaches this back-end's state guards and its
- * prelude ordering without touching the process-global driver every other suite in this
- * binary shares.
- */
+/* Not installed either; needed for isBinderPreflightOk(), the AIDL half of those dynamic_casts,
+ * and local closed instances that reach the state guards without touching the shared driver. */
 #include "../../../ccec/src/DriverAidlImpl.hpp"
 
 #include <com/rdk/hal/hdmicec/IHdmiCec.h>
@@ -184,28 +72,15 @@
 #include <com/rdk/hal/hdmicec/State.h>
 #include <utils/StrongPointer.h>
 
-/*
- * ProcessState, for the ONE observation that establishes the binder threadpool exists.
- *
- * Reached only from inside a DriverAidlSessionTest case body, never at file or fixture scope,
- * and only through selfOrNull(). That matters: on a driverless host merely reaching
- * ProcessState::self() raises SIGABRT in this pinned build, and DriverAidlSessionTest.* is
- * excluded from the driverless invocation by the runner's own filter. selfOrNull() adds a
- * second, independent guarantee -- it returns null rather than creating a ProcessState, so it
- * cannot open a driver that is not there.
- */
+/* Used only inside DriverAidlSessionTest bodies, through selfOrNull(), which never creates a
+ * ProcessState and so never opens a binder driver that is absent. */
 #include <binder/ProcessState.h>
 
-/*
- * Spelled with quotes, not angle brackets, because that is how ccec/src/DriverAidlImpl.cpp
- * spells its own include of the same header, and there is nothing to be gained from a second
- * spelling. halcompat.h is not inside either frozen snapshot include root - it lives at
- * HALIF_PREFIX/common/current - which is why configure resolves that third root separately,
- * under its "for the halcompat.h include root" check in configure.ac, and why this include
- * would fail with the two snapshot roots alone.
- */
+/* Quoted as DriverAidlImpl.cpp spells it; it lives under HALIF_PREFIX/common/current, the
+ * third include root configure resolves for it. */
 #include "halcompat.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <condition_variable>
@@ -220,6 +95,7 @@
 #include <iterator>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <sys/file.h>
@@ -227,6 +103,7 @@
 #include <sys/types.h>
 #include <thread>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 #include "fake_hdmi_cec_aidl_service.h"
@@ -238,312 +115,46 @@ using ::testing::Return;
 using ::testing::SaveArg;
 using ::testing::SetArgPointee;
 
-/**
- * @brief Short alias for the generated AIDL package, spelled as ccec/src/DriverAidlImpl.cpp
- *        spells its own.
- *
- * Introduced instead of using-declarations for the individual types, for the reason the
- * production back-end records against its alias: this middleware compiles with
- * CCEC_NAMESPACE undefined, so its own names sit at global scope, and pulling generic names
- * such as State in beside them invites a collision a later header could create silently.
- */
+/** @brief Short alias for the generated AIDL package, spelled as DriverAidlImpl.cpp spells it. */
 namespace cechal = ::com::rdk::hal::hdmicec;
 
-/**
- * @brief Short alias for the shared HAL compatibility helpers in halcompat.h, spelled as
- *        ccec/src/DriverAidlImpl.cpp spells its own.
- */
+/** @brief Short alias for the halcompat.h compatibility helpers, as DriverAidlImpl.cpp has it. */
 namespace halcompat = ::com::rdk::hal::halcompat;
 
-/*
- * ---------------------------------------------------------------------------------
- * AIDL contract check: the authoritative values, and the one conflict between them
- *
- * Every number this file asserts against comes from one of four authorities, and where
- * two of them disagree the disagreement is a designed, declared difference between the
- * two back-ends rather than a defect. Tabulated so that a future reader does not have to
- * re-derive any of it:
- *
- *     IHdmiCec::VERSION            1000        IHdmiCec.h:25
- *     IHdmiCec::HASHVALUE          70a901cf... IHdmiCec.h:27
- *     SendMessageStatus            0 / 1 / 2   SendMessageStatus.h - ACK_STATE_0,
- *                                              ACK_STATE_1, BUSY, in that order
- *     REPORT_PHYSICAL_ADDRESS      0x84        ccec/include/ccec/OpCode.hpp:73
- *     CECFrame::MAX_LENGTH         128         ccec/include/ccec/CECFrame.hpp:55-57
- *     AIDL sendMessage maximum     16          IHdmiCecController.aidl - "The maximum
- *                                              message size (Header Block plus opcode
- *                                              block plus operand blocks) is 16 * 8 bits
- *                                              (16bytes)", enforced by
- *                                              DriverAidlImpl::write() against the
- *                                              file-local AIDL_MAX_MESSAGE_LENGTH in
- *                                              ccec/src/DriverAidlImpl.cpp
- *     legacy HAL frame maximum     20          the legacy HAL specification
- *
- * The conflict, and why it is not resolved here. A CECFrame can carry 128 bytes; the
- * legacy HAL accepts 20; the AIDL contract states 16. Each contract is authoritative for
- * its own back-end, and no divergence settles the overlap, so a frame of 17 to 20 bytes
- * is sendable on the legacy back-end and raises IOException on the AIDL one. That is an
- * authorized observable difference, and the important half of it is what does not happen:
- * the frame is policed, never truncated, because a truncated CEC frame on the bus is
- * worse than a refusal. The cases below assert both halves - the exception, and that
- * nothing reached the fake's sendMessage.
- *
- * The inverted ACK sense is the crux of the whole adaptation. SendMessageStatus does not
- * mean one thing: ACK_STATE_0 means acknowledged for a directed message and rejected for
- * a broadcast, and ACK_STATE_1 is the mirror of that. The destination nibble that decides
- * which reading applies is frame.at(0) & 0x0F, broadcast being 0x0F, read exactly as the
- * legacy implementation reads it. The production translation lives in
- * DriverAidlImpl::write(), and each of its arms reproduces one arm of the legacy mapping
- * in DriverImpl.cpp: :261-263 (a HAL error becomes IOException), :265-274 (the five-value
- * send-failed family, likewise IOException), :276-278 (a directed message not
- * acknowledged becomes CECNoAckException) and :279-284 (the CEC CTS 9-3-3 arm, where a
- * rejected broadcast REPORT_PHYSICAL_ADDRESS becomes CECNoAckException so the caller
- * retries, while every other rejected broadcast opcode returns normally).
- *
- * What is covered here and what is blocked. Physical-address retrieval - SC6(f) - is
- * covered on the legacy back-end, where the legacy mock's HdmiCecGetPhysicalAddress
- * expectation is met and the value reaches the caller. On the AIDL back-end it is
- * BLOCKED ITEM B1 and cannot be covered at all, because the method does not read an
- * address: the mandated replacement is an EDID-byte read belonging to the device settings
- * HAL layer rather than to the CEC HAL, and the public header declaring it was to be
- * supplied as a separate input to this migration and was not. Every alternative route is
- * closed - reconstructing the declaration from the plugin test mocks is forbidden and a
- * mock is usage; the AIDL HDMI-output controller EDID event is forbidden outright;
- * substituting any CEC HAL call is forbidden; and acquiring a legacy CEC handle lazily is
- * both that forbidden substitution and independently unsafe, since HdmiCecOpen() performs
- * logical-address discovery for source devices and would put a second CEC controller on
- * the wire. So what is asserted on the AIDL back-end is the documented interim behaviour
- * and nothing more: the block is logged and the caller's out-parameter is left untouched,
- * proved with a distinctive sentinel. This is a partial discharge of SC6(f) and is
- * recorded as one rather than presented as a pass.
- *
- *   Required change, reported not made - supply the device-settings HAL public header
- *   that declares the EDID-byte read, implement DriverAidlImpl::getPhysicalAddress()
- *   against that declaration in place of the B1 log and the untouched out-parameter, then
- *   review DriverImpl::getPhysicalAddress() for whether the same read should replace its
- *   HdmiCecGetPhysicalAddress() call so that both back-ends use the mandated API, and
- *   finally convert the legacy-only assertion below into a both-paths assertion. Until
- *   that header exists the AIDL path has no physical address, which is a real functional
- *   gap and is reported as one.
- *
- * A second item is provisional rather than blocked, and the difference matters.
- * IHdmiCec::close() is a high-confidence candidate for the legacy HdmiCecClose(), pending
- * owner confirmation: the HAL mapping table carries no entry for HdmiCecClose() and no
- * divergence settles it. The candidate is used because a back-end that cannot close is
- * not deliverable, and DriverAidlImpl::close() carries the same marker on the method. The
- * close cases below therefore assert the sequence - state CLOSED before the raise, local
- * address list deliberately not cleared - which is what the legacy back-end does and what
- * stays true whichever AIDL method the owners confirm. A green result here does not
- * confirm the mapping.
- * ---------------------------------------------------------------------------------
- */
+CCEC_BEGIN_NAMESPACE
 
-/*
- * ---------------------------------------------------------------------------------
- * Fixture manifest - the handoff to whoever wires the invocation matrix
+/**
+ * @brief Test-only gateway to private DriverAidlImpl::isBinderPreflightOk(), which befriends it.
  *
- * The back-end selection resolves once per process, inside the LibCCEC::init() call in
- * CecTestEnvironment::SetUp (tests/L1Tests/test_main.cpp), which is the first thing in this
- * binary to force Driver::getInstance(). By the time any TEST_F body runs the choice is
- * made, so one binary run yields one selection outcome and every outcome needs its own
- * process. That is why the fixtures below are partitioned by invocation and why each
- * invocation-specific one asserts its precondition in SetUp instead of adapting to
- * whatever it finds.
- *
- *   Fixture                       Cases  Invocation  CEC_TEST_AIDL_MODE  Binder driver
- *   ---------------------------------------------------------------------------------
- *   DriverAidlCompatibilityTest      23  A, B, C     any                 no
- *   DriverAidlPreflightTest          28  A, B, C     any                 no
- *   DriverAidlSelectionTest           4  A           absent              no
- *   DriverAidlLocalInstanceTest      25  A, B, C     any                 no
- *   DriverAidlLegacyArmTest           5  A           absent              no
- *   DriverAidlSessionTest            27  B           compatible          yes
- *   DriverAidlTransmitTest           12  B           compatible          yes
- *   ---------------------------------------------------------------------------------
- *                                   124  of which 85 run under invocation A
- *
- * The 85 are the first five fixtures, 23 + 28 + 4 + 25 + 5. The two that invocation A
- * excludes are DriverAidlSessionTest, 27 cases, and DriverAidlTransmitTest, 12 - the 39 in
- * the excluded column below - because both require the AIDL back-end to be the resolved one.
- *
- * The counts the runner will see. Its per-invocation gate reconciles selected plus excluded
- * against registered, so all three numbers matter and a stale one fails the invocation:
- *
- *   invocation   registered   selected   excluded
- *   ------------------------------------------------
- *   A                   607        568         39
- *   B                   607        423        184
- *   C                   607        384        223
- *
- * Registered is 607 = 483 pre-existing + the 124 above. Every figure in that table is measured
- * on this host, with the runner's own filters, by
- *
- *   ./run_L1Tests --gtest_list_tests --gtest_filter=<filter> | grep -cE '^  [A-Za-z]'
- *
- * and the filters taken verbatim from run_coverage.sh's INVOCATION_MATRIX. Listing is a
- * registration query and needs no binder driver, which is why B's and C's selection counts are
- * measurable here even though B and C cannot execute here - and they are measured rather than
- * derived, because arithmetic over the table above silently misses a suite that was renamed or
- * left unclassified.
- *
- * What is not measured here is the pass/fail outcome of invocations B and C. Only invocation A
- * has been executed on this host: 568 selected, 568 passed, exit 0. A binder-capable runner must
- * produce B's and C's outcomes; the counts above tell it what to expect, and a mismatch there
- * means a filter or a classification has drifted rather than that a test failed.
- *
- * The filters are not written out here, deliberately: they are derived by run_coverage.sh
- * from five classification constants - NEUTRAL_SUITES, LEGACY_BOUND_SUITES,
- * CONTRACT_ANY_BACKEND_SUITES, CONTRACT_LEGACY_ONLY_SUITES and CONTRACT_AIDL_ONLY_SUITES - and
- * assembled per invocation in INVOCATION_MATRIX. Copying the assembled strings here would create
- * a second definition that drifts; what matters for this file is only the classification each
- * fixture needs, which is the Invocation column above:
- *
- *   DriverAidlCompatibilityTest, DriverAidlPreflightTest, DriverAidlLocalInstanceTest
- *                                          -> CONTRACT_ANY_BACKEND_SUITES
- *   DriverAidlSelectionTest, DriverAidlLegacyArmTest
- *                                          -> CONTRACT_LEGACY_ONLY_SUITES
- *   DriverAidlSessionTest, DriverAidlTransmitTest
- *                                          -> CONTRACT_AIDL_ONLY_SUITES
- *
- * A fixture in none of those lists is what breaks the runner's selected-plus-excluded
- * reconciliation, so a new fixture here needs a matching entry there. Every case in this file
- * belongs to one of the seven fixtures above, and the seven are all classified.
- *
- * Invocation A's selection is negative - it excludes the two AIDL-only fixtures - and that is
- * not optional. Those two require the AIDL back-end to be the resolved one, so under invocation
- * A their SetUp fails, loudly, with a diagnostic naming the mode they need. That is the design,
- * and the alternative is rejected: GTEST_SKIP would make a skipped arm indistinguishable from a
- * passing one in an aggregate count, which is precisely the swallowed-failure shape this file
- * exists to avoid. No case in this file skips, on any invocation. run_coverage.sh carries the
- * hook for passing a filter through, GTEST_EXTRA_ARGS, and emits an advisory noting that the run
- * was a partial selection, which is the honest record.
- *
- * Invocation C selects only the three back-end-independent fixtures. DriverAidlSelectionTest is
- * excluded from it deliberately: under mode incompatible the legacy back-end is selected for a
- * different reason - a service that is present and rejected rather than absent - and the
- * mid-process registration case would then be registering a second service under a name already
- * taken, which the harness's own collision check (failIfServiceAlreadyPublished() in
- * tests/L1Tests/test_main.cpp) exists to forbid.
- *
- * EXPECTED_SUITE_PATTERN needs no edit for this file. It is deliberately a stable subset of the
- * nine oldest, largest fixtures, so adding a test file never requires touching it; and none of
- * the fixtures here should be added to it, because a run that exercised only this file is exactly
- * the kind of partial run that pattern exists to catch. The count gate in verify_results is not
- * a hardcoded number either - it reconciles the executed count against --gtest_list_tests - so
- * the cases added here need no expected-count edit.
- *
- * References into run_coverage.sh are by name rather than by line, here and everywhere below.
- * That file is a live one that grows, so a line citation into it stops identifying its subject
- * the moment it does; shell function and constant names are greppable and survive an edit, and a
- * line number is a claim about a file this one does not own.
- *
- * Invocations D and E belong to hdmicec/tests/L2Tests (test_main.cpp and
- * ccec/test_DualPathIntegration.cpp) rather than here, and are not duplicated here, because an
- * in-process fake is not IPC: libbinder resolves a name registered in the calling process
- * to the local BBinder, so interface_cast hands back that very object - no Bp* proxy is
- * created, no transaction crosses the binder driver, and the client threadpool is never
- * involved. What that loses is real transport, which is why the L2 tier hosts the fake in
- * its own process and why the genuine "callback arrives on a binder thread" evidence is
- * invocation E's rather than this file's.
- *
- * What it gains is the reason invocations B and C are in-process at all, and it is not a
- * consolation prize: halcompat::isCompatible reads the server's metadata through
- * getInterfaceHash() and getInterfaceVersion() (halcompat.h:164, :171), which on a local
- * object dispatch virtually and can therefore be overridden. A remote Bn* service cannot
- * report bad metadata at all, because its generated onTransact answers those transactions
- * from the compiled-in constants. So the compatibility-rejection branches are reachable
- * only in-process, which is why invocation C has no L2 counterpart.
- *
- * Invocation C is not redundant with the unit tests below, which is worth stating
- * because it looks redundant. "Present but incompatible falls back to legacy" is a
- * factory-level behaviour: the selection helper that acts on the answer is resolveBackEnd() in
- * ccec/src/Driver.cpp, declared in an anonymous namespace and therefore of internal linkage - it
- * cannot be called from here at all. A unit test of the predicate proves the predicate; only a
- * process that starts with an incompatible service registered proves the factory acts on it.
- *
- * ---------------------------------------------------------------------------------
- * What this file establishes, and where - stated so that no green result is read as evidence
- * for something it does not touch. Grouped by where the evidence actually comes from.
- *
- * Established by invocation A, on any host, with no binder driver and no service:
- *
- *   - every compatibility arm by direct call: accept, accept-newer-same-major, and rejection on
- *     a null service, an empty hash, "-1", "notfrozen", an older same-major version, a
- *     cross-major version and a cross-era version;
- *   - every preflight arm, through the probe seam: the empty path, an unopenable node, a node
- *     that opens but refuses the version ioctl, a node whose protocol version differs from this
- *     build's, a matching protocol whose context manager never answers, and the direct positive
- *     verdict - plus descriptor hygiene, one close per successful open, on all six;
- *   - the legacy halves of both authorized observable differences, and SC6(f)'s legacy half:
- *     the physical address really is read through the legacy HAL call;
- *   - the AIDL back-end's closed-state guards, its writeAsync prelude ordering and the three
- *     methods that carry no guard, on locally constructed instances;
- *   - that the factory returns the same object every time, and - only where the environment can
- *     publish a service, which this host cannot - that a service appearing mid-process does not
- *     change the resolved back-end. Where it cannot publish, that case says so in its own
- *     output and the SC6(c) evidence is explicitly not claimed;
- *   - that the two Sink call paths this file models still have the structure the model assumes,
- *     read from the real plugin source - which is a required input rather than an optional one:
- *     a source that cannot be located fails the case instead of reporting an absence, because a
- *     model nobody checked against its subject is not evidence about a caller;
- *   - the legacy back-end's receive path end to end, measured: a frame injected at the legacy
- *     HAL's Rx callback is delivered, within a bounded wait and byte for byte, to an application
- *     FrameListener through the Bus reader and Connection. That is the baseline the AIDL receive
- *     assertions are compared against - the receive path is not an authorized observable
- *     difference, so its AIDL half must match this - and it is also what proves the observation
- *     machinery those AIDL cases use (RecordingFrameListener, ListeningConnection, the bounded
- *     wait) is correctly wired, on a host where it can actually run.
- *
- * Registered here but only executable on a binder-capable runner (invocation B):
- *
- *   - the adapter's translation in both directions: one-element address marshalling for add,
- *     remove and get; the inverted ACK sense across directed and broadcast; the frame-length
- *     policing; the non-ok-status mapping on every consumed method;
- *   - the session lifecycle: the duplicate-open no-op, the null-controller and non-ok-status
- *     open guards, the close sequence, which controller was closed, and that the close sentinel
- *     is offered before the transaction's result is evaluated - proved with a reader actually
- *     parked on the incoming queue;
- *   - the receive path on the AIDL back-end: bounded observable delivery through the Bus reader
- *     to an application FrameListener, bounded non-delivery plus release while closed, and the
- *     post-detach drop after a failed close and after the owner's destruction. The observation
- *     machinery these use is exercised for real under invocation A by the legacy-arm receive
- *     case above, so a failure here is about the AIDL back-end rather than about the harness;
- *   - that a binder threadpool exists in this process, which is the only externally observable
- *     consequence of the obligation production's open() discharges;
- *   - the content of both diagnostic callbacks' reports, from the middleware's own captured
- *     output: onStateChanged's transition with both state names at LOG_INFO, and onMessageSent's
- *     status name, message length and message bytes at LOG_DEBUG - the level being raised for
- *     that one through production's own check_cec_log_status(), under the custody protocol
- *     ScopedCecLogLevel documents, with the raise asserted rather than reported so a refusal
- *     cannot pass as evidence.
- *
- * Not established by this file at any invocation, and named rather than glossed:
- *
- *   - real IPC. No case here causes a Bp* proxy to be created, a transaction to cross the binder
- *     driver, or a callback to arrive on a binder threadpool thread. An in-process fake resolves
- *     to the local BBinder and its triggers run on the calling thread. That evidence is
- *     invocation E's, in hdmicec/tests/L2Tests/ccec/test_DualPathIntegration.cpp, and the L1
- *     threadpool assertion above is the presence of the pool only - not its use;
- *   - the plugin's runtime behaviour. The Sink drift guard reads the plugin's source and asserts
- *     its call shape - and it fails rather than reports when that source cannot be located, so
- *     the shape is checked on every run or the run is red. It does not compile, link or run the
- *     plugin - that component's own test binaries link the framework's CEC mock in place of this
- *     middleware - so what the plugin does with the exceptions it catches remains its own
- *     suite's evidence and the middleware-level L3 step's;
- *   - the AIDL physical address. Blocked on B1, as the header above records. The AIDL arm asserts
- *     the documented interim behaviour, not a working read.
- * ---------------------------------------------------------------------------------
+ * Forwards its arguments unchanged, so the predicate's own defaults apply.
+ * tests/L1Tests/test_main.cpp defines it token-identically, as the one-definition rule requires.
  */
+struct BinderPreflightTestAccess {
+    /**
+     * @brief Calls DriverAidlImpl::isBinderPreflightOk() with @p args, forwarded unchanged.
+     *
+     * @param [in] args - The predicate's leading arguments, in its parameter order.
+     *
+     * @return bool - The predicate's verdict.
+     */
+    template <typename... Args>
+    static bool isBinderPreflightOk(Args &&...args) {
+        return DriverAidlImpl::isBinderPreflightOk(std::forward<Args>(args)...);
+    }
+};
+
+CCEC_END_NAMESPACE
+
+/* AIDL contract: >16-byte frames refused, not truncated; ACK sense inverted; open() polls for and
+ * registers one PLAYBACK_DEVICE address, read back from the HAL; physical address fixed 1.0.0.0. */
+
+/* Fixture manifest: per-fixture table and counts in AIDL_HAL_MIGRATION_NOTES.md. AIDL-only fixtures
+ * need invocation B; invocation-A filter: -DriverAidlSessionTest.*:DriverAidlTransmitTest.* */
 namespace {
 
 /**
- * @brief The AIDL sendMessage length contract, transcribed rather than imported.
- *
- * ccec/src/DriverAidlImpl.cpp defines AIDL_MAX_MESSAGE_LENGTH in an anonymous namespace, so
- * it has internal linkage and no test can reach it. Restating it here is therefore the only
- * option, and the static assertion below is what keeps the restatement honest: it pins
- * the CECFrame capacity the conflict rests on, so the two numbers cannot drift apart
- * unnoticed.
+ * @brief The AIDL sendMessage 16-byte limit, restated because production's
+ *        AIDL_MAX_MESSAGE_LENGTH has internal linkage.
  *
  * @see DriverAidlImpl::write()
  */
@@ -556,15 +167,9 @@ constexpr size_t kJustOverAidlLimit = 17;
 constexpr size_t kLegacyMaxMessageLength = 20;
 
 /**
- * @brief The selected-path log format, transcribed from SELECTED_BACK_END_LOG_FORMAT in
- *        ccec/src/Driver.cpp.
+ * @brief The selected-path log format, transcribed from SELECTED_BACK_END_LOG_FORMAT in Driver.cpp.
  *
- * That constant and the two back-end names below it live in an anonymous namespace in that
- * translation unit - by design, since the string is defined once and referenced nowhere
- * else - so they cannot be imported. What is copied here is exactly what is there, and the
- * case that uses it does not merely compare two local strings: it drives the production
- * logger with this format and asserts the line that comes out, which is what makes a
- * reworded production string, or a lowered default log level, visible here.
+ * Production's constant has internal linkage; the case using this drives the real logger with it.
  */
 const char *const kSelectedBackEndLogFormat =
     "Driver::getInstance : HDMI CEC HAL back-end selected : %s\r\n";
@@ -576,80 +181,37 @@ const char *const kSelectedBackEndAidl   = "AIDL";
 const char *const kSelectedBackEndLegacy = "legacy";
 
 /**
- * @brief This client's compiled-against interface version, copied into this translation unit.
+ * @brief This client's compiled-against IHdmiCec version, as a constant of this translation unit.
  *
- * The copy is required rather than stylistic. IHdmiCec::VERSION is declared
- * `static const int32_t VERSION = 1000;` (IHdmiCec.h:25) with an in-class initializer and no
- * out-of-line definition anywhere in the snapshot - verified against the generated sources
- * and against the shipped libhdmicec-v0.1.0.0-cpp.so, which exports no such symbol. It is
- * therefore usable in a constant expression, and in a by-value argument, but odr-using it
- * fails to link: every GoogleTest comparison macro binds both operands to a const reference,
- * which is an odr-use, and the result is
- * `undefined reference to com::rdk::hal::hdmicec::IHdmiCec::VERSION` at link time. Measured,
- * not inferred. So the header value is read once here into a constexpr of this translation
- * unit's own, and it is that copy the macros below compare against. The static assertion
- * further down still reads the header member directly, which is the point: it is a constant
- * expression, so it pins the real value rather than this copy.
- *
- * @warning Comparing cechal::IHdmiCec::VERSION directly in an EXPECT_* or ASSERT_* macro does
- *          not compile to a working binary - use this copy.
+ * @warning IHdmiCec::VERSION has no out-of-line definition, so comparing it directly in an
+ *          EXPECT_* or ASSERT_* macro (an odr-use) fails to link - use this copy.
  */
 constexpr int32_t kClientInterfaceVersion = cechal::IHdmiCec::VERSION;
 
-/**
- * @brief The real frozen interface hash this client was compiled against (IHdmiCec.h:27).
- *
- * HASHVALUE needs none of the treatment kClientInterfaceVersion documents - `static constexpr
- * char*` is implicitly inline in C++17, so it has a definition - but it is copied alongside
- * for symmetry, so that every comparison in this file names a local constant.
- */
+/** @brief The frozen IHdmiCec hash this client was compiled against, copied for symmetry. */
 const char *const kFrozenInterfaceHash = cechal::IHdmiCec::HASHVALUE;
 
-/** @brief The interface hash halcompat rejects as a failed hash RPC (halcompat.h:165-167). */
+/** @brief The interface hash halcompat rejects as a failed hash RPC. */
 const char *const kBrokenInterfaceHash = "-1";
 
-/** @brief The hash a pre-freeze development server reports (halcompat.h:168-170). */
+/** @brief The hash a pre-freeze development server reports. */
 const char *const kUnfrozenInterfaceHash = "notfrozen";
 
 /**
- * @brief The controller interface's compiled-against version, copied into this translation unit.
- *
- * The copy is required for exactly the reason kClientInterfaceVersion documents, and the
- * reason applies verbatim here: IHdmiCecController::VERSION is declared in-class with no
- * out-of-line definition, so odr-using it in a comparison macro fails to link. This copy is
- * what the fake-metadata cases compare the controller's reported version against.
+ * @brief IHdmiCecController's compiled-against version, copied for the link reason
+ *        kClientInterfaceVersion gives.
  *
  * @see kClientInterfaceVersion
  */
 constexpr int32_t kControllerClientInterfaceVersion = cechal::IHdmiCecController::VERSION;
 
-/**
- * @brief The controller interface's frozen hash (IHdmiCecController.h), copied alongside.
- *
- * Needs none of the treatment the version copy above does, and is copied for the same
- * symmetry kFrozenInterfaceHash is: every comparison in this file names a local constant.
- *
- * @see kFrozenInterfaceHash
- */
+/** @brief IHdmiCecController's frozen hash, copied as kFrozenInterfaceHash is. */
 const char *const kControllerFrozenInterfaceHash = cechal::IHdmiCecController::HASHVALUE;
 
-/**
- * @brief A version no interface in this snapshot reports, installed to make a fake diverge.
- *
- * Deliberately not one of the halcompat table values below: those exist to select an arm of the
- * compatibility rule, whereas this one exists only to differ from whatever constant a fake would
- * otherwise report, which is the condition its divergence trace fires on. Using a table value
- * here would suggest the metadata cases were making a compatibility claim, and they are not.
- */
+/** @brief A version no interface in this snapshot reports, installed to make a fake diverge. */
 constexpr int32_t kDivergentReportedVersion = 4242;
 
-/**
- * @brief A well-formed hash that is not the frozen one, installed for the same purpose.
- *
- * Forty hex characters, so it is the shape of a real hash rather than a sentinel: the fake stores
- * whatever it is given, and a value that looked like an error code would invite the reading that
- * only error codes can be installed.
- */
+/** @brief A well-formed 40-hex-digit hash that is not the frozen one, for the same purpose. */
 const char *const kDivergentReportedHash = "0000000000000000000000000000000000000000";
 
 /** @brief A server version inside this client's era and major, newer than it: must be accepted. */
@@ -668,11 +230,8 @@ constexpr int32_t kCrossEraVersion = 100000;
 constexpr int32_t kUnfrozenGeneratorVersion = 1;
 
 /**
- * @brief Client half of a third-party version pair that reaches the era-0 older-same-major arm.
- *
- * The pair exists for one purpose only: that arm is unreachable for this client, as
- * unreachable path 1 in the file block proves, so it is reached with a different client
- * instead. 3020 is era 0, major 3, minor 2.
+ * @brief Client half (era 0, major 3, minor 2) of a pair reaching the older-same-major arm,
+ *        which unreachable path 1 in the file block shows this client cannot reach.
  *
  * @see kOlderSameMajorServer
  */
@@ -681,19 +240,8 @@ constexpr int32_t kOlderSameMajorClient = 3020;
 /** @brief Server half of that pair: era 0, major 3, minor 0, so older within the same major. */
 constexpr int32_t kOlderSameMajorServer = 3000;
 
-/*
- * ---------------------------------------------------------------------------------
- * Compile-time invariants
- *
- * Every one of these pins a value that an assertion below silently depends on, and every
- * message says what to do if it fires rather than merely that it fired. The point is that
- * a snapshot regeneration or a header edit stops the build here, pointing at the analysis
- * it invalidated, instead of quietly inverting a runtime expectation.
- *
- * detail::isCompatible is constexpr (halcompat.h:108) and detail is an accessible
- * namespace, so the whole version table is checkable without running anything.
- * ---------------------------------------------------------------------------------
- */
+/* Compile-time invariants. Each pins a value a case depends on, and its message says what to
+ * re-derive if it fires. The version table is pinned through constexpr detail::isCompatible. */
 
 static_assert(cechal::IHdmiCec::VERSION == 1000,
     "The compiled-against AIDL interface version is no longer 1000. Every version case in this "
@@ -792,44 +340,17 @@ static_assert(REPORT_PHYSICAL_ADDRESS == 0x84,
     "cases will be asserting the same opcode and the distinction will be untested.");
 
 /**
- * @brief Self-contained stdout capture, at file-descriptor level.
+ * @brief Captures fd 1 into an anonymous tmpfile(), for asserting on CCEC_LOG output.
  *
- * Reproduced from the established implementation in this same directory
- * (ccec/test_Util.cpp:143-211) rather than invented, and for the reasons recorded there:
- * the code under test logs through printf - C stdio writing to fd 1 - so redirecting the
- * C++ std::cout streambuf would capture nothing, and GoogleTest's CaptureStdout lives in
- * ::testing::internal, which upstream documents as outside the public API.
+ * CCEC_LOG writes through printf, so redirection is at descriptor level, as in test_Util.cpp.
  *
- * Why this file needs it at all, since the timing looks wrong at first glance. The
- * selected-path line is emitted once, inside LibCCEC::init in the global environment's
- * SetUp, long before any test body runs, so no test can capture the original emission -
- * that line has already gone to the process log, which is where run_coverage.sh greps for
- * it. What the case below does instead is drive the production logger with the transcribed
- * contract format and capture that, into an anonymous temporary. Three things follow, and
- * the third is why the redirection matters: the transcribed format is proved to be a format
- * CCEC_LOG accepts and substitutes into; the emitted line is proved to still pass the
- * default log-level filter, so a lowered default that silently broke every consumer of the
- * line would be caught here; and the re-emitted line goes only into the temporary, never
- * into the process log, so that log still carries exactly one selected-path hit and the
- * runner's grep contract is untouched.
- *
- * tmpfile() is used rather than a named path: it is unlinked as it is created, so there is
- * nothing for another process to substitute.
- *
- * @warning Redirection is process-wide while an instance is alive. Keep the lifetime to the
- *          narrowest scope that brackets the emission being captured, and call read() - or
- *          let the destructor run - before writing anything that must reach the real stdout.
+ * @warning Redirection is process-wide while an instance lives; keep its scope narrow.
  * @see isValid()
  */
 class StdoutCapture {
 public:
     /**
-     * @brief Redirects fd 1 into an anonymous temporary file.
-     *
-     * Every step is failure-checked and unwound in place rather than reported by throwing,
-     * because a capture that cannot be established must leave the process's stdout exactly
-     * as it found it. The outcome is read with isValid(), which the cases assert before they
-     * rely on anything captured.
+     * @brief Redirects fd 1 into an anonymous temporary file, unwinding in place on failure.
      *
      * @post isValid() reports whether the redirection is in force; on failure nothing is
      *       redirected and no descriptor is retained.
@@ -864,13 +385,7 @@ public:
     /** @brief Not assignable, for the same reason the copy constructor is deleted. */
     StdoutCapture &operator=(const StdoutCapture &) = delete;
 
-    /**
-     * @brief Restores the real stdout and releases the temporary, on every exit path.
-     *
-     * Idempotent with read(), which performs the same restoration, so a case that reads the
-     * capture and a case that abandons it both leave fd 1 pointing where it started. Nothing
-     * is thrown.
-     */
+    /** @brief Restores the real stdout and releases the temporary; idempotent with read(). */
     ~StdoutCapture() {
         restore();
         if (sink_ != nullptr) {
@@ -881,21 +396,15 @@ public:
     /**
      * @brief Reports whether the redirection was established.
      *
-     * @return bool - true when fd 1 is redirected into this instance's temporary and the
-     *                original descriptor is held for restoration, false when construction
-     *                could not establish either, in which case nothing was redirected.
+     * @return bool - true when fd 1 is redirected and the original descriptor is held.
      */
     bool isValid() const { return sink_ != nullptr && savedStdout_ >= 0; }
 
     /**
      * @brief Ends the capture and returns everything written while it was in force.
      *
-     * Restores the real stdout first, so nothing written afterwards is swallowed, then reads
-     * the temporary from the beginning.
-     *
-     * @return std::string - The captured bytes, empty when construction failed or when
-     *                       nothing was written. Safe to call more than once; later calls
-     *                       return the same content.
+     * @return std::string - The captured bytes, empty when construction failed or nothing was
+     *                       written. Safe to call more than once.
      */
     std::string read() {
         restore();
@@ -916,12 +425,7 @@ public:
     }
 
 private:
-    /**
-     * @brief Puts fd 1 back and releases the saved descriptor, at most once.
-     *
-     * The single restoration path, shared by read() and the destructor, which is what makes
-     * calling them in either order safe.
-     */
+    /** @brief Puts fd 1 back and releases the saved descriptor, at most once. */
     void restore() {
         if (savedStdout_ >= 0) {
             ::fflush(stdout);
@@ -939,26 +443,12 @@ private:
 };
 
 /**
- * @brief The minimal correct double for every compatibility arm.
+ * @brief Local IHdmiCecDefault double reporting chosen metadata to halcompat::isCompatible.
  *
- * halcompat::isCompatible<I> takes a const android::sp<I>& and reads the server's metadata
- * through getInterfaceHash() and getInterfaceVersion() (halcompat.h:164, :171), both of
- * which dispatch virtually. So a locally constructed subclass of the snapshot's own
- * IHdmiCecDefault (IHdmiCec.h:40-72) overriding only those two members is sufficient:
- * there is no need for a Bn* server base, no registration with the service manager and no
- * onTransact involvement whatsoever. IHdmiCec derives from ::android::IInterface and hence
- * from RefBase, so holding one in an android::sp<> is valid.
+ * isCompatible reads getInterfaceHash() and getInterfaceVersion() by virtual dispatch, so no
+ * Bn* base, registration or onTransact is needed. The stock default reports an empty hash.
  *
- * IHdmiCecDefault answers every interface method with UNKNOWN_TRANSACTION, which is
- * exactly right here - the compatibility check never calls one. Its stock metadata is an
- * empty hash (IHdmiCec.h:69-71) and version 0 (:66-68), so the empty-hash arm needs no
- * override at all and is asserted against the stock object deliberately, as evidence that
- * the default really is empty rather than something this file arranged.
- *
- * @warning Deliberately not derived from BnHdmiCec. A Bn* object could be registered and
- *          reached remotely, and its generated onTransact would answer the metadata
- *          transactions from the compiled-in constants - which would make the overrides
- *          below inert. Local, virtual dispatch is the whole mechanism.
+ * @warning Not derived from BnHdmiCec, whose remote onTransact would report compiled-in metadata.
  * @see frozenDoubleReportingVersion()
  * @see doubleReportingHash()
  */
@@ -967,9 +457,7 @@ public:
     /**
      * @brief Constructs a double that will report exactly the metadata given.
      *
-     * @param [in] hash    - Interface hash to report, taken by value and moved into place so
-     *                       a caller may pass the frozen hash, "-1", "notfrozen" or anything
-     *                       else an arm needs.
+     * @param [in] hash    - Interface hash to report.
      * @param [in] version - Interface version to report, in halcompat's positional encoding.
      */
     MetadataDouble(std::string hash, int32_t version)
@@ -1001,54 +489,32 @@ private:
 };
 
 /**
- * @brief Builds a compatibility double reporting the real frozen hash and a chosen version.
- *
- * The hash is taken from the generated header rather than written out, so a snapshot
- * regeneration cannot leave a stale literal here that would send every version case down
- * the broken-hash arm at halcompat.h:165-167 and make them all pass for the wrong reason.
+ * @brief Builds a double reporting the generated frozen hash and a chosen version.
  *
  * @param [in] version - Interface version the double reports, in halcompat's encoding.
- * @return android::sp<cechal::IHdmiCec> - A local double reporting the frozen hash and that
- *                                         version, never null.
+ * @return android::sp<cechal::IHdmiCec> - A local double, never null.
  */
 ::android::sp<cechal::IHdmiCec> frozenDoubleReportingVersion(int32_t version) {
     return ::android::sp<MetadataDouble>::make(std::string(kFrozenInterfaceHash), version);
 }
 
 /**
- * @brief Builds a compatibility double reporting a chosen hash and a compatible version.
- *
- * The version is this client's own, so a rejection can only have come from the hash. A
- * double that reported both a bad hash and a bad version would pass its case while
- * proving nothing about which arm fired.
+ * @brief Builds a double reporting a chosen hash and this client's own version.
  *
  * @param [in] hash - Interface hash the double reports. Must not be null.
- * @return android::sp<cechal::IHdmiCec> - A local double reporting that hash and this
- *                                         client's own version, never null.
+ * @return android::sp<cechal::IHdmiCec> - A local double, never null.
  */
 ::android::sp<cechal::IHdmiCec> doubleReportingHash(const char *hash) {
     return ::android::sp<MetadataDouble>::make(std::string(hash), kClientInterfaceVersion);
 }
 
 /**
- * @brief The directory temporary nodes are created in, honouring a validated TMPDIR
+ * @brief The directory temporary nodes are created in: TMPDIR when valid, otherwise /tmp.
  *
- * TMPDIR is the environment's way of saying where scratch files belong, and a run whose
- * scratch space is a private per-run directory means it. It is validated rather than trusted,
- * and the validation is not ceremony:
+ * TMPDIR is used only when it is absolute and names an existing, writable directory.
  *
- *   It must be absolute. A relative value would place the node relative to the working
- *   directory, which for this binary is inside the source tree - a stray file there is worse
- *   than ignoring the variable, because it shows up as untracked repository content.
- *
- *   It must exist, be a directory, and be usable. Otherwise mkstemp would simply fail and the
- *   case that needs the node would report a precondition failure for a reason that has nothing
- *   to do with the code under test.
- *
- * Anything that fails validation falls back to /tmp, which is the behaviour this helper had
- * unconditionally before.
- *
- * @return std::string - An absolute directory path, without a trailing separator.
+ * @return std::string - An absolute directory path without a trailing separator, or "/" when
+ *                       TMPDIR names the filesystem root.
  */
 std::string temporaryDirectory() {
     const char *const configured = ::getenv("TMPDIR");
@@ -1071,19 +537,10 @@ std::string temporaryDirectory() {
 }
 
 /**
- * @brief An openable non-binder filesystem node, unlinked by its own destructor
+ * @brief A named, openable non-binder file, unlinked by its own destructor.
  *
- * Used by the preflight case that needs a path which opens but is not a binder driver, so that
- * the BINDER_VERSION ioctl arm is the one reached. An anonymous tmpfile() cannot serve: the
- * predicate takes a path and opens it itself, so the node has to be nameable for the duration
- * of the call.
- *
- * The lifetime is RAII and not a call, which is the whole reason this is a class. A manual
- * unlink after the predicate returns is skipped by every path that does not reach it - a fatal
- * assertion earlier in the case, an exception, a timeout that kills the process - and each of
- * those leaves a file behind in a directory that is very often shared. The destructor runs on
- * all of them bar the last, and the last leaves at most one file in a directory the
- * environment nominated for exactly this purpose.
+ * Serves the preflight case that declines a path which opens but is a regular file, not a
+ * character device; the predicate opens a path itself, so an anonymous tmpfile() cannot serve.
  */
 class TemporaryNode {
 public:
@@ -1109,12 +566,7 @@ public:
     /** @brief Not assignable, for the same reason the copy constructor is deleted. */
     TemporaryNode &operator=(const TemporaryNode &) = delete;
 
-    /**
-     * @brief Unlinks the node, on whichever exit path the case takes.
-     *
-     * The whole reason this is a class rather than a pair of calls. Nothing is thrown, and a
-     * node that was never created is left alone.
-     */
+    /** @brief Unlinks the node on whichever exit path the case takes; never throws. */
     ~TemporaryNode() {
         if (!path_.empty()) {
             ::unlink(path_.c_str());
@@ -1142,77 +594,13 @@ private:
 };
 
 /**
- * @brief Takes custody of the middleware's log-configuration file, raises the level for a
- *        scope, and hands the file and the level back under a checked, verified restoration.
+ * @brief Raises the CEC log level for a scope under custody of production's log-configuration
+ *        file, then restores the file and the level and verifies both.
  *
- * The middleware's level lives in `cec_log_level`, a file-static in `ccec/src/Util.cpp` with
- * no setter: the only route to it is `check_cec_log_status()`, which reads a level name from
- * the path production hardcodes - `fopen("/tmp/cec_log_enabled")` at `ccec/src/Util.cpp:82` -
- * and maps it onto that static. So raising the level from a test means writing production's
- * own file and calling production's own reader; there is no other seam, and adding one would
- * be a production change. This guard writes that file, drives that reader, and hands both back
- * - content, mode, owner, existence and the process-wide level - through restoreAndVerify().
+ * The only seam is check_cec_log_status() and its fixed path, so the file is locked, validated,
+ * replaced atomically and restored byte for byte, under the lock test_Util.cpp also takes.
  *
- * Restoration is checked and proved, not attempted. restoreAndVerify() runs on the case's
- * normal path, while the custody lock is still held, and it verifies three things rather than
- * assuming any of them: that the publication itself succeeded, every syscall result taken
- * rather than discarded; that the bytes at the path are the captured original, re-read
- * `O_NOFOLLOW`, or that the path is absent again where this guard created it; and that the
- * effective level is the one observed on the way in, re-observed through the same probe. The
- * third is not implied by the second: `check_cec_log_status()` returns early when the path
- * cannot be opened and silently leaves the level alone when the file's first line matches
- * nothing in production's table, so "the file is back" and "the level is back" are two facts
- * and only one of them is about the host's verbosity. That is also why restoration asks for the
- * entry level by name before it publishes the original bytes - the ordering
- * `UtilTest::TearDown()` in `tests/L1Tests/ccec/test_Util.cpp:636-653` uses, for the same
- * reason. A case asserts on what restoreAndVerify() returns.
- *
- * The destructor and the atexit hook are backstops, for the fatal assertion or the `exit()`
- * that skips the explicit call - never the route a case relies on. A destructor cannot fail a
- * test, so a suite whose only restoration is a destructor reports success for a run that left
- * the host altered; that is the shape restoreAndVerify() closes, and it is why the backstops
- * report their own failures on stdout, which is the only reader they have.
- *
- * Threat model, which is why this class is as long as it is. The path is fixed by production
- * and lives in a shared, world-writable directory, which is the classic unsafe-temporary
- * shape: anybody on the host can plant a symlink at that name, swap it between two of this
- * process's syscalls (CWE-59, CWE-367), or write the file concurrently - and a second
- * `run_L1Tests` on the same host is not hypothetical, since sibling clones share `/tmp`. A
- * plain truncating `ofstream` write to that name follows a planted link and truncates
- * whatever it refers to with this process's privileges, and a run that dies between the
- * truncate and the restore leaves the victim corrupted rather than merely modified. The
- * protocol here is therefore lock, then validate, then atomically replace: an exclusive
- * advisory lock on a companion path taken before anything is captured; `lstat()`
- * classification that refuses anything which is not a regular file this user owns, confirmed
- * against the opened descriptor so the classification cannot be swapped out from under it;
- * reads and writes that never follow a link; and a write that goes to a fresh `O_EXCL`
- * temporary in the same directory and is `rename()`d over the path, so a planted link is
- * replaced rather than written through. Restoration runs the same primitive in reverse, under
- * the same still-held lock. The contract is the repository's own - `LogConfigGuard` in
- * `tests/L1Tests/ccec/test_Util.cpp` owns the identical path for the identical reason - and
- * the lock path is deliberately the same string, derived from the same configuration-path
- * constant, so that the two units genuinely exclude one another across processes rather than
- * each holding a lock the other has never heard of.
- *
- * Why a test needs it at all. `onMessageSent` reports at `LOG_DEBUG`, which the default level
- * of `LOG_INFO` suppresses. A case that asserted on such a line without raising the level
- * would either fail for a reason that is not a defect or - worse - be written to assert
- * nothing, which is the shape this guard exists to close: a listener whose body reported
- * nothing would otherwise pass.
- *
- * Failure is reported, never thrown and never guessed at. Every refusal - a lock another
- * process holds, a symlink or a foreign owner at the path, an oversized file that could not be
- * reproduced faithfully, a failed atomic replace - leaves the filesystem exactly as it was,
- * leaves isRaised() false, and records which of those it was in failureReason(). The call site
- * asserts on isRaised() and streams that reason, so "another run holds the lock" and "the path
- * is a symlink" reach the log as themselves instead of collapsing into "could not raise".
- *
- * @warning Not reentrant and not thread safe - the level it moves is process wide, and the
- *          lock is per open file description, so a second instance in this process is refused
- *          exactly as a second process would be. Only ever construct one at a time, on the
- *          test thread.
- * @see check_cec_log_status()
- * @see failureReason()
+ * @warning Not reentrant or thread safe; construct one at a time, on the test thread.
  * @see restoreAndVerify()
  */
 class ScopedCecLogLevel {
@@ -1220,27 +608,10 @@ public:
     /**
      * @brief Takes custody of the configuration path and raises the level to @p levelName.
      *
-     * @param [in] levelName - A name from production's own table (`ccec/src/Util.cpp:58-67`),
-     *                         e.g. "DEBUG". A null or empty name, or one too long for the
-     *                         single-line configuration file, is refused rather than written.
-     *
-     * @post isRaised() reports whether the level actually moved: the lock was taken, the path
-     *       classified, the effective level observed so restoration has a reference to return
-     *       to, the requested name written atomically, read back to confirm the bytes at the
-     *       path are the ones written, and production's reader driven with them in place.
-     *       False means the level was not raised. In every refusal before publication nothing
-     *       on disk was changed. In the one refusal after publication - the read-back finding
-     *       foreign bytes - the original is rolled back and the rollback is verified by the
-     *       same checks restoreAndVerify() applies; where that rollback cannot be proved, the
-     *       custody lock is deliberately retained and the atexit backstop left armed so the
-     *       destructor retries and reports, because a failed assertion in the calling case
-     *       restores nothing and protects no other process. failureReason() distinguishes the
-     *       three outcomes. A case must assert on the return value rather than treat
-     *       suppressed output as an assertion that held.
-     * @post On success the exclusive lock is held until restoreAndVerify() succeeds or this
-     *       object is destroyed, whichever comes first. On a refusal it has been released -
-     *       except on the unproved-rollback path above, where it is held to the destructor for
-     *       the same reason it is held on success: something published is not yet proved back.
+     * @param [in] levelName - A name from production's level table, e.g. "DEBUG"; a null, empty
+     *                         or over-long name is refused.
+     * @post isRaised() reports whether the level moved; on refusal failureReason() says why and
+     *       the path is as found, unless an unproved rollback kept custody for the destructor.
      */
     explicit ScopedCecLogLevel(const char *levelName)
         : raised_(false)
@@ -1257,11 +628,7 @@ public:
     {
         saved_[0] = '\0';
 
-        /*
-         * The line is formatted first, into a fixed buffer, because a name that does not fit
-         * must be refused before the lock is taken and before anything is captured - there is
-         * nothing to undo at that point.
-         */
+        /* Formatted first, so a name that does not fit is refused before anything is locked. */
         char line[64];
 
         if (levelName == nullptr || levelName[0] == '\0') {
@@ -1284,11 +651,7 @@ public:
             return;
         }
 
-        /*
-         * exclusive first, capture second. The path is fixed by production code, so a second
-         * writer is possible; capturing before locking would capture whatever that writer had
-         * already put there and later hand it back as though it were the original.
-         */
+        /* Lock before capture, so another writer's content is never taken as the original. */
         if (!acquireLock()) {
             return;
         }
@@ -1298,20 +661,8 @@ public:
             return;
         }
 
-        /*
-         * the reference restoration must return to, observed before anything is raised.
-         *
-         * It is deliberately observed rather than derived from the captured bytes, and the
-         * two are not interchangeable: `check_cec_log_status()` returns early when the path
-         * cannot be opened (`ccec/src/Util.cpp:82-86`), so a host whose configuration file is
-         * absent, or holds a name production's table does not carry, has an effective level
-         * that the file does not describe at all. Restoring to what the file said would then
-         * move a level this guard never raised.
-         *
-         * Observed inside the custody window - after the lock, before the publication - so
-         * that no other lock-respecting writer can move the level between the observation and
-         * the raise, which would make the reference stale before it was ever used.
-         */
+        /* Observe the level to restore inside the custody window, rather than derive it from the
+         * file: check_cec_log_status() keeps the level when the file is absent or unrecognised. */
         entryLevel_ = probeEffectiveLevel();
 
         if (entryLevel_ == kUnobservableLevel) {
@@ -1329,11 +680,7 @@ public:
         sActive_ = this;
 
         if (atomicWrite(line, static_cast<size_t>(formatted)) != 0) {
-            /*
-             * rename() is the only step that publishes anything and it is all-or-nothing, so
-             * a failure anywhere in atomicWrite leaves the path as it was found and the
-             * temporary already unlinked. There is nothing to restore.
-             */
+            /* rename() alone publishes and is all-or-nothing, so the path is as found. */
             failureReason_ = std::string("could not replace ") + kLogConfigPath
                 + " atomically: " + std::strerror(errno)
                 + " (the original is untouched and the level was not raised)";
@@ -1343,14 +690,8 @@ public:
         }
 
         if (!pathHolds(line, static_cast<size_t>(formatted))) {
-            /*
-             * The bytes at the path are not the ones just written, so something outside this
-             * lock replaced it in the interval. This object has modified the file by now, so
-             * the original goes back before the refusal is reported - and whether that
-             * succeeded is carried into the reason rather than discarded, because a refusal
-             * that also failed to put the original back is a different, worse condition than a
-             * refusal that left the host as it found it.
-             */
+            /* A writer outside the lock replaced the path: put the original back and record
+             * whether that succeeded, since a failed rollback is the worse outcome. */
             restorePending_ = true;
 
             failureReason_ = std::string(kLogConfigPath)
@@ -1361,12 +702,7 @@ public:
             std::string verificationDetail;
 
             if (publicationFailure == nullptr && verifyRestoredState(verificationDetail)) {
-                /*
-                 * Rolled back and proved, by the same two checks restoreAndVerify() uses, so
-                 * this object has nothing outstanding and custody can go. Publishing the
-                 * original without verifying it would leave exactly the gap this branch is
-                 * here to close: the refusal would be reported while the host stayed altered.
-                 */
+                /* Rolled back and verified by restoreAndVerify()'s checks: custody can go. */
                 restorePending_ = false;
                 failureReason_ += "the original has been restored and verified";
                 sActive_ = nullptr;
@@ -1374,15 +710,8 @@ public:
                 return;
             }
 
-            /*
-             * rollback unproved, so custody is kept. Either the publication failed or the
-             * verification did, and in both cases the host may be carrying bytes or a level it
-             * did not have. Releasing the lock and clearing the active pointer here would
-             * disarm every backstop at precisely the moment one is needed: the calling case
-             * fails on isRaised(), but a failed assertion restores nothing and protects no
-             * other process. So the lock stays held, the atexit hook stays armed, and the
-             * destructor retries and reports - which is why restorePending_ remains true.
-             */
+            /* Rollback unproved: keep the lock and the atexit backstop armed, so the destructor
+             * retries and reports; restorePending_ stays true. */
             failureReason_ += (publicationFailure != nullptr)
                 ? std::string("THE ORIGINAL COULD NOT BE RESTORED EITHER: ")
                       + publicationFailure + " (errno " + std::to_string(restoreErrno_) + ": "
@@ -1400,65 +729,23 @@ public:
     }
 
     /**
-     * @brief Restores the path and the process-wide level, proves it, and releases custody.
+     * @brief Restores the path and the process-wide level, verifies both, and releases custody.
      *
-     * This is the route a case must take, and the only one that can tell a case anything. It
-     * runs while the custody lock is still held, so the original goes back before any other
-     * process can observe the raised value as though it were the host's, and it performs three
-     * verifications rather than one - each of which has its own way of failing silently:
+     * The route a case must take. Under the still-held lock it publishes the entry level and the
+     * original, re-reads the bytes (or confirms absence) and re-probes the effective level.
      *
-     *   1. Publication. restoreLevelAndPath() names the entry level back through production's
-     *      reader and then publishes the captured original, or removes the file this guard
-     *      created where there was none. Every step's outcome is checked - a discarded write,
-     *      rename or unlink leaves the shared file holding this run's raised level, or leaves
-     *      behind a file the host never had.
-     *   2. Content, or absence. The path is re-opened `O_RDONLY|O_NOFOLLOW` and its bytes
-     *      compared with the captured original, or its absence confirmed through `lstat`
-     *      reporting ENOENT. A rename that reported success against a path something else has
-     *      since replaced is caught here and nowhere else.
-     *   3. The effective level. `probeEffectiveLevel()` is run again and compared with the
-     *      level observed at construction, which is what proves "the file went back and the
-     *      level followed it". The two really are separate facts, and step 1's ordering exists
-     *      because of it: `check_cec_log_status()` matches the file's first line against
-     *      production's own table and silently leaves `cec_log_level` alone when nothing
-     *      matches (`ccec/src/Util.cpp:87-97`), so a byte-perfect restoration of a file that
-     *      names no level would leave the raised level in force. Step 1 asks for the level by
-     *      name so that cannot happen; this step is what establishes that it did not.
-     *
-     * Custody is released, and the atexit backstop disarmed, only after all three hold. On
-     * failure the lock is kept and the backstop stays armed, so the destructor still tries.
-     *
-     * @param [out] detail - Empty on success. Otherwise names which of the three verifications
-     *                       failed and what was observed, in a form a failure message can
-     *                       stream, so that a publication fault, a foreign writer and a level
-     *                       that did not move are distinguishable rather than collapsed into
-     *                       "restore failed".
-     *
-     * @return bool - True when the path and the process-wide level are proved to be what this
-     *         guard found, or when there is nothing to take back (this guard refused to raise,
-     *         or a previous call already restored). False means the host may be altered and the
-     *         calling case must fail.
-     *
-     * @post On true, isRaised() is false, custody is released and the destructor does nothing.
-     * @post Idempotent: a second call returns true having touched neither the path nor the
-     *       level.
+     * @param [out] detail - Empty on success; otherwise which check failed and what was observed.
+     * @return bool - True when both are proved back or there was nothing to take back; false
+     *         means the host may be altered and the calling case must fail.
+     * @post Idempotent; on true isRaised() is false and the destructor does nothing.
      */
     bool restoreAndVerify(std::string &detail)
     {
         detail.clear();
 
         if (restored_ || (!raised_ && !restorePending_)) {
-            /*
-             * Nothing was ever published, or it has already been taken back and proved. Either
-             * way there is nothing to undo and nothing to verify - a second call must not
-             * rewrite a path this guard no longer has custody of.
-             *
-             * restorePending_ is tested separately from raised_ on purpose. The constructor can
-             * publish the requested level and then fail its read-back, which leaves the path
-             * modified while the level was never raised; that state has to reach the work below
-             * rather than this early return, or the one path that most needs verified
-             * restoration would be the one that skipped it.
-             */
+            /* Nothing published, or already proved back. restorePending_ is tested as well, so a
+             * constructor that published but never raised still reaches the work below. */
             return true;
         }
 
@@ -1478,11 +765,7 @@ public:
             return false;
         }
 
-        /*
-         * proved, so custody can go. The active pointer is cleared first, so the atexit
-         * backstop finds nothing to do even if the release below is the last thing that
-         * happens to this object.
-         */
+        /* Proved: clear the active pointer first, so the atexit backstop then finds nothing. */
         raised_ = false;
         restorePending_ = false;
         restored_ = true;
@@ -1495,20 +778,12 @@ public:
 
 private:
     /**
-     * @brief Proves the path and the process-wide level are what this guard found.
+     * @brief Proves the path content (or absence) and the effective level are as captured.
      *
-     * The second and third of restoreAndVerify()'s three checks, factored out because the
-     * constructor's rollback path has to run exactly the same ones. A rollback that is
-     * published but not verified is the defect this function exists to make impossible to
-     * reintroduce: there would then be two verification implementations and only one of them
-     * would be exercised by the suite.
+     * Shared by restoreAndVerify() and the constructor's rollback, so there is one verification.
      *
-     * @param [out] detail - Empty when both hold; otherwise which one failed and what was
-     *                       observed.
-     *
-     * @return bool - True when the bytes (or the absence) and the effective level both match
-     *         what this guard captured when it took custody.
-     *
+     * @param [out] detail - Empty when both hold; otherwise which failed and what was observed.
+     * @return bool - True when both match what this guard captured when it took custody.
      * @pre The custody lock is held and restoreLevelAndPath() has just reported success.
      */
     bool verifyRestoredState(std::string &detail)
@@ -1551,37 +826,15 @@ private:
 public:
 
     /**
-     * @brief Best-effort backstop for the exit that never reaches restoreAndVerify().
+     * @brief Best-effort backstop restoration for an exit that skipped restoreAndVerify().
      *
-     * It exists for the fatal GoogleTest assertion, the thrown exception and the `exit()` that
-     * unwind past the explicit call, and it is deliberately not the route a case relies on: a
-     * destructor cannot fail a test, so a suite whose only restoration is a destructor reports
-     * success for a run that left the host altered - a raised level still in force, or the
-     * shared configuration file changed or missing - which is precisely the shape
-     * restoreAndVerify() exists to close. Every case that raises the level must call that
-     * instead and assert on what it returns; this is what runs when the case could not.
-     *
-     * What it can still do, it does: the same single restoration primitive, which names the
-     * entry level back through production's reader and then puts the file back byte-for-byte or
-     * removes it again. What it cannot do is tell the test, so a failure is reported on stdout
-     * instead - naming the path, the step and the errno - because an unreported failure here is
-     * indistinguishable from a clean exit, and the run log is the only reader left.
-     *
-     * It also performs no verification: the read-back and the level re-probe both allocate, and
-     * a destructor reached by unwinding is not a place to start allocating, nor is an atexit
-     * handler during teardown. Verification belongs to the checked path, which is another
-     * reason the backstop cannot substitute for it.
+     * Restores through the same primitive and verifies, reporting failure on stdout because a
+     * destructor cannot fail a test; cases must not rely on it.
      */
     ~ScopedCecLogLevel()
     {
-        /*
-         * Two states reach here, and both mean the same thing to a backstop: this object has
-         * published something to the shared path that has not been proved taken back. raised_
-         * is the ordinary one - a case that never called restoreAndVerify(), or whose fatal
-         * assertion skipped it. restorePending_ is the constructor's read-back failure, where
-         * the level was never raised but the path was written and the rollback could not be
-         * proved; that path deliberately keeps custody so this retry can happen at all.
-         */
+        /* Both states mean something published is not proved back: raised_ is a skipped
+         * restoreAndVerify(), restorePending_ the constructor's unproved rollback. */
         if (raised_ || restorePending_) {
             const char *const publicationFailure = restoreLevelAndPath();
             std::string verificationDetail;
@@ -1589,11 +842,7 @@ public:
             if (publicationFailure != nullptr) {
                 reportBackstopFailure(publicationFailure);
             } else if (!verifyRestoredState(verificationDetail)) {
-                /*
-                 * Published but not proved. Reported rather than assumed, because a destructor
-                 * cannot fail a test and an unreported failure here is a host left altered
-                 * with nothing in the log to say so.
-                 */
+                /* Published but not proved: reported, as a destructor cannot fail a test. */
                 reportBackstopFailure("the restoration could not be verified");
             }
             raised_ = false;
@@ -1602,67 +851,39 @@ public:
         if (sActive_ == this) {
             sActive_ = nullptr;
         }
-        /*
-         * Released unconditionally, and last. A lock kept past this point would outlive the
-         * object that justified holding it and would refuse custody to every later case in
-         * this binary and every concurrent run_L1Tests on the host - a worse outcome than the
-         * one the retry above already reported.
-         */
+        /* Released unconditionally and last, so no stale lock refuses later cases or runs. */
         releaseLock();
     }
 
     /**
      * @brief Whether the level was really moved to the name this guard was given.
      *
-     * True only when custody was taken, the effective level observed so restoration has a
-     * reference, the name written atomically, the written bytes read back from the path, and
-     * production's reader driven with them in place. False is a refusal, and failureReason()
-     * says which one.
-     *
-     * Becomes false again once restoreAndVerify() has proved the level back, because from that
-     * point this guard no longer holds anything raised.
-     *
-     * @return bool - true while a raise this guard performed is still in force and proved,
-     *                false when the raise was refused or has been proved taken back.
+     * @return bool - true while a raise this guard performed is in force and proved, false when
+     *                the raise was refused or has been proved taken back.
      */
     bool isRaised() const { return raised_; }
 
     /**
      * @brief Why isRaised() is false, in a form a failure message can stream.
      *
-     * Empty while isRaised() is true. Otherwise it names the specific refusal - contended
-     * lock, symlink or foreign owner at the path, unreadable or oversized file, failed atomic
-     * replace, or a concurrent writer - so an environment fault and a custody refusal are
-     * distinguishable in the log rather than collapsed into one diagnosis.
-     *
-     * @return const std::string& - The refusal, or an empty string while isRaised() is true.
+     * @return const std::string& - The specific refusal, or empty while isRaised() is true.
      */
     const std::string &failureReason() const { return failureReason_; }
 
     /**
-     * @brief The effective level this guard found when it took custody.
+     * @brief The effective level found at custody, which restoreAndVerify() compares against.
      *
-     * Exposed so a case can assert that the level moved and then came back, rather than
-     * taking the guard's word for either. It is the value restoreAndVerify() compares
-     * against, so a case that checks the same number is checking the same claim.
-     *
-     * @return int - A level in `0 .. LOG_MAX - 1`, or kUnobservableLevel() when the level
-     *         could not be observed, in which case the guard refused to raise at all.
+     * @return int - A level in `0 .. LOG_MAX - 1`, or unobservableLevel() when it could not be
+     *         observed, in which case the guard refused to raise.
      */
     int entryLevel() const { return entryLevel_; }
 
     /**
-     * @brief Observes the process-wide effective level, for a case that wants to check it.
+     * @brief Observes the process-wide effective level, so a case can check it directly.
      *
-     * Public because the evidence is worth more than the encapsulation. `cec_log_level` is
-     * a file-static in `ccec/src/Util.cpp` with no accessor, so the only way to observe it
-     * is to emit at each level and see which emissions survive - and a case that cannot do
-     * that cannot tell "the guard restored the level" from "the guard said it did".
+     * @return int - The observed level, or unobservableLevel() when nothing was observed.
      *
-     * @return int - The observed level, or kUnobservableLevel() when nothing was observed.
-     *
-     * @warning Emits to stdout, so a caller inside a StdoutCapture will find this probe's
-     *          own markers in the captured text. Call it outside any capture scope.
+     * @warning Emits to stdout; call it outside any StdoutCapture scope.
      */
     static int observeEffectiveLevel() { return probeEffectiveLevel(); }
 
@@ -1680,34 +901,17 @@ public:
     ScopedCecLogLevel &operator=(const ScopedCecLogLevel &) = delete;
 
 private:
-    /** @brief The path production's check_cec_log_status() hardcodes. Not this file's choice. */
+    /** @brief The path production's check_cec_log_status() hardcodes, not this file's choice. */
     static constexpr const char *kLogConfigPath = "/tmp/cec_log_enabled";
 
-    /**
-     * @brief The companion lock path's suffix, so the lock name is derived, never re-typed.
-     *
-     * `tests/L1Tests/ccec/test_Util.cpp` arrives at the same string the same way - it appends
-     * ".testlock" to its own copy of the configuration path rather than writing the lock name
-     * out - so the two units lock one file. Deriving it on both sides is what keeps that true:
-     * a hand-typed whole lock name is one edit away from two "exclusive" holders of two
-     * different files, which is worse than no lock at all because it looks like one.
-     */
+    /** @brief Lock-path suffix, appended to kLogConfigPath exactly as test_Util.cpp appends it. */
     static constexpr const char *kLockSuffix = ".testlock";
 
     /**
-     * @brief The level names production's reader matches, indexed by the level they select.
+     * @brief Production's level-name table, transcribed in order so the index is the level.
      *
-     * A transcription of production's own table (`ccec/src/Util.cpp:58-67`), in the same order,
-     * where the index is the level - which production relies on too, since it stores the
-     * table's second column through `atoi` (`:93`). It is needed because restoration has to
-     * name the level it wants back: `check_cec_log_status()` compares the configuration file's
-     * first line against these names and silently leaves `cec_log_level` alone when none
-     * matches (`:87-97`), so publishing the captured original is not by itself a way of asking
-     * for a particular level - only a name from this table is.
-     *
-     * `tests/L1Tests/ccec/test_Util.cpp:118-127` carries the same transcription for the same
-     * reason. Both are transcriptions rather than shared code because production's table has
-     * internal linkage and exposes no accessor.
+     * Restoration must name the level it wants back, as check_cec_log_status() ignores a line
+     * matching no entry.
      */
     static constexpr const char *kLevelNames[] = {
         "FATAL", "ERROR", "WARN", "EXP", "NOTICE", "INFO", "DEBUG", "TRACE"
@@ -1731,40 +935,17 @@ private:
         return kLevelNames[level];
     }
 
-    /**
-     * @brief What probeEffectiveLevel() reports when no level produced output at all.
-     *
-     * A value outside `0 .. LOG_MAX - 1`, so it can never be mistaken for a level. It means
-     * the effective level could not be observed, which is a refusal rather than a level: the
-     * constructor declines to raise on it, because a raise whose restoration cannot be proved
-     * is exactly the shape this class exists to close.
-     */
+    /** @brief probeEffectiveLevel()'s result when nothing emitted; outside 0 .. LOG_MAX - 1. */
     static constexpr int kUnobservableLevel = -1;
 
     /**
-     * @brief Observes the process-wide effective level, for which production offers no getter.
+     * @brief Observes the effective level, for which production offers no getter.
      *
-     * `cec_log_level` is a file-static in `ccec/src/Util.cpp:39` with no accessor, and
-     * `CCEC_LOG` emits only when its level is at or below that static
-     * (`ccec/src/Util.cpp:116`). So the highest level that still emits is the configured
-     * level, and walking down from `LOG_MAX - 1` until something appears reads it without any
-     * production change. The technique is the repository's own - `probeEffectiveLogLevel()` in
-     * `tests/L1Tests/ccec/test_Util.cpp:584-595` observes the same static the same way, for
-     * the same reason - and it is reimplemented here rather than shared, because that unit's
-     * helpers are file-local to it and this file must not include another test translation
-     * unit.
-     *
-     * Each emission goes into its own StdoutCapture, so the probe writes nothing to the
-     * process log: a probe that leaked its markers would pollute the very output the cases in
-     * this file assert against, and `run_coverage.sh` greps that same log for the
-     * selected-path line.
-     *
-     * The marker carries the level and the pid, so a line left behind by any other writer
-     * cannot be mistaken for this probe's own emission.
+     * Emits a pid-tagged marker at each level from LOG_MAX - 1 down, each into its own
+     * StdoutCapture; the highest level that emits is the configured one.
      *
      * @return int - The observed level in `0 .. LOG_MAX - 1`, or kUnobservableLevel when no
-     *         level emitted and when stdout could not be captured, the two cases in which
-     *         nothing was observed and so nothing may be concluded.
+     *         level emitted or stdout could not be captured.
      */
     static int probeEffectiveLevel() {
         for (int level = LOG_MAX - 1; level >= 0; level--) {
@@ -1804,15 +985,7 @@ private:
     /** @brief Interval between lock attempts, in nanoseconds. */
     static constexpr long kLockRetryNs = 10L * 1000L * 1000L;
 
-    /**
-     * @brief The custody paths, built once into static storage.
-     *
-     * Static and pre-formatted because the restoration path must not allocate: it also runs
-     * from the `std::atexit` backstop below, where formatting a path through `std::string`
-     * would mean allocating during process teardown. The temporary's name is deliberately
-     * distinct from the one `test_Util.cpp` uses, so that even a backstop running in an odd
-     * order cannot have the two units writing one temporary.
-     */
+    /** @brief The lock and temporary paths, pre-formatted so restoration never allocates. */
     static inline char sLockPath_[288] = { '\0' };
     static inline char sTempPath_[288] = { '\0' };
 
@@ -1850,16 +1023,8 @@ private:
     }
 
     /**
-     * @brief Takes the exclusive advisory lock over the companion path.
+     * @brief Takes the exclusive flock() on the companion lock path, retrying for a bounded time.
      *
-     * The lock is over a companion path and not over the configuration file itself: locking
-     * the file would mean holding a descriptor to it across the rename() that replaces it, at
-     * which point the lock is on the replaced inode and excludes nobody. `flock()` rather than
-     * `fcntl()` because the lock is wanted for the lifetime of the descriptor with no byte
-     * ranges and is dropped automatically if this process dies. `LOCK_NB` with a bounded
-     * retry, because blocking for ever here would turn a contended host into a suite that
-     * hangs instead of one that reports.
-      *
      * @return bool - Whether custody was taken
      * @retval true  - The lock is held and `lockFd_` carries the locked descriptor.
      * @retval false - failureReason() carries why: either the open refused the path, or
@@ -1906,16 +1071,12 @@ private:
         return false;
     }
 
-    /** @brief Releases the lock, if held. The lock file is never unlinked - see below. */
+    /** @brief Releases the lock, if held; the lock file itself is never unlinked. */
     void releaseLock() {
         if (lockFd_ < 0) {
             return;
         }
-        /*
-         * Deliberately not unlinked: another waiter may already hold a descriptor to it, and
-         * removing it would let a third process create a new inode and lock that instead -
-         * two "exclusive" holders of two different files.
-         */
+        /* Never unlinked: a waiter may hold it, and a new inode would allow a second holder. */
         (void)::flock(lockFd_, LOCK_UN);
         ::close(lockFd_);
         lockFd_ = -1;
@@ -1924,13 +1085,10 @@ private:
     /**
      * @brief Classifies the configuration path and captures it, without following a link.
      *
-     * Refuses anything that is not a regular file this user owns, and confirms through
-     * `fstat()` on the opened descriptor that the inode read is the one `lstat()` classified -
-     * which is what closes the window between the two calls (CWE-367) rather than merely
-     * narrowing it. A file larger than the capture buffer is refused outright: a truncated
-     * copy could not be restored faithfully, and leaving the host with a truncated
-     * configuration would be worse than not touching it at all.
-      *
+     * Refuses anything but a regular file, and a file the effective user does not own unless
+     * that user is root; confirms the opened inode is the one lstat() classified, and refuses a
+     * file larger than the capture buffer.
+     *
      * @return bool - Whether the path was classified and captured
      * @retval true  - Either the original bytes, mode and ownership are captured, or the
      *                 path is legitimately absent and `existed_` records that.
@@ -2022,18 +1180,11 @@ private:
     /**
      * @brief Publishes @p length bytes at the configuration path, atomically and link-safely.
      *
-     * Allocation-free by construction - only open/write/fchmod/fchown/close/rename/unlink -
-     * because the restoration path calls it, and that path also runs from the atexit backstop.
-     * The temporary is created `O_EXCL|O_NOFOLLOW` in the same directory so the rename is a
-     * same-filesystem atomic replace; a planted link at the destination is therefore replaced
-     * rather than written through.
+     * Writes an `O_EXCL|O_NOFOLLOW` temporary in the same directory and rename()s it over the
+     * path, without allocating.
      *
-     * @return int - 0 on success, -1 with the path unchanged otherwise.
-      *
-     * @param [in] data   First byte of the content to publish. Not required to be
-     *                   NUL-terminated; exactly @p length bytes are written.
-     * @param [in] length Number of bytes to publish.
-     *
+     * @param [in] data   - First byte of the content; exactly @p length bytes are written.
+     * @param [in] length - Number of bytes to publish.
      * @return int - Publication result
      * @retval 0  - The rename has completed and the path holds the new content.
      * @retval -1 - `errno` is set by the failing syscall, the temporary is unlinked, and
@@ -2069,35 +1220,16 @@ private:
             written += static_cast<size_t>(chunk);
         }
 
-        /*
-         * Hand back the metadata the file was found with. The two calls are not equivalent and
-         * are not treated as such:
-         *
-         *   fchmod - this descriptor was created by this process with O_EXCL, so the file is
-         *            this process's and fchmod to any mode must succeed. A failure means the
-         *            restored file would carry permissions the host did not have before, which
-         *            is exactly the silent host mutation this guard exists to prevent.
-         *   fchown - genuinely best effort. An unprivileged process cannot give a file away,
-         *            so EPERM is the normal outcome whenever the file was owned by somebody
-         *            else, and failing on it would abort every unprivileged run for a
-         *            condition no test can influence.
-         */
+        /* Hand back the found mode and owner. fchmod must succeed on this process's own O_EXCL
+         * file; fchown is best effort, as EPERM is normal for an unprivileged process. */
         if (::fchmod(fd, savedMode_) != 0) {
             ::close(fd);
             (void)::unlink(sTempPath_);
             return -1;
         }
         if (savedUid_ != static_cast<uid_t>(-1)) {
-            /*
-             * The result is taken into a named local and then discarded rather than cast away
-             * at the call: glibc declares fchown() with warn_unused_result, and a bare
-             * `(void)` cast on the call expression does not satisfy that attribute under
-             * g++ -Wall, so writing it that way costs a -Wunused-result warning in a build
-             * this suite requires to be warning-clean. Discarding a named local does satisfy
-             * it, and it also makes the decision visible: the value is examined by a human
-             * reading this comment rather than by code, because per the note above there is
-             * no remedy an unprivileged process could apply to EPERM here.
-             */
+            /* Taken into a named local, because a (void) cast on the call does not satisfy
+             * glibc's warn_unused_result under -Wall; EPERM has no unprivileged remedy. */
             const int ownershipResult = ::fchown(fd, savedUid_, savedGid_);
             (void)ownershipResult;
         }
@@ -2115,25 +1247,16 @@ private:
     /**
      * @brief Whether the path currently holds exactly @p length bytes equal to @p data.
      *
-     * Read with `O_NOFOLLOW`, so a link planted at the name is refused rather than followed,
-     * and read one byte past what is being compared: a file that starts with @p data and
-     * continues is not the file that was published, so the comparison has to be able to
-     * observe the extra byte rather than stop at the expected length.
+     * Read `O_NOFOLLOW`, and one byte past @p length, into a buffer one byte larger than the
+     * capture buffer, so both publications this guard performs can be verified.
      *
-     * The buffer is one byte larger than the capture buffer because both publications this
-     * guard performs are verified through here - the short level line on the way in and the
-     * captured original, up to `sizeof(saved_)` bytes, on the way out. A buffer sized only for
-     * the level line would have reported every longer original as a mismatch, which is a
-     * false restoration failure on any host whose configuration file is not a short line.
-      *
-     * @param [in] data   Expected content, compared byte for byte.
-     * @param [in] length Expected length in bytes.
-     *
+     * @param [in] data   - Expected content, compared byte for byte.
+     * @param [in] length - Expected length in bytes.
      * @return bool - Whether the path holds exactly that content
-     * @retval true  - The path is a regular file of exactly @p length bytes equal to
-     *                 @p data.
-     * @retval false - Any other content, a longer file, a link standing at the name, or
-     *                 an unreadable path.
+     * @retval true  - The `O_NOFOLLOW` open and every read succeed, reaching end of file after
+     *                 exactly @p length bytes, all equal to @p data.
+     * @retval false - Any other content, a longer file, a link at the name, an unreadable path, or
+     *                 a @p length larger than the capture buffer.
      */
     bool pathHolds(const char *data, size_t length) const {
         char actual[sizeof(saved_) + 1];
@@ -2161,39 +1284,13 @@ private:
     }
 
     /**
-     * @brief The one restoration primitive: the level first, then the file.
+     * @brief The one restoration primitive: the entry level back by name, then the file.
      *
-     * Used by the checked path in restoreAndVerify() and by both backstops, so that there is
-     * exactly one implementation of what "put it back" means and no route can diverge from it.
+     * The level goes first because the original need not name any level, and the reader is not
+     * driven after the file is back. Allocation-free, since the atexit backstop calls it.
      *
-     * The order is the whole point, and it is the repository's own - `UtilTest::TearDown()` in
-     * `tests/L1Tests/ccec/test_Util.cpp:636-653` restores the level and then the file's bytes,
-     * in that order, for exactly this reason. Asking for a level means writing the
-     * configuration file, so:
-     *
-     *   1. The entry level is named back, by publishing the name production's reader matches
-     *      for it and driving that reader. This is what actually moves `cec_log_level`, and it
-     *      is not interchangeable with publishing the captured original: the original need not
-     *      name the entry level at all - an empty file, or one whose first line matches nothing
-     *      in production's table, leaves the reader silently holding the raised level
-     *      (`ccec/src/Util.cpp:87-97`), and a host with such a file would be left at DEBUG by a
-     *      restoration that had faithfully reproduced its bytes.
-     *   2. The captured original is published, or the file this guard created is removed, and
-     *      the reader is not driven again afterwards - so the file ends as the host had it while
-     *      the level stays where step 1 put it. Driving the reader after step 2 would undo it.
-     *
-     * Every outcome is returned rather than discarded, which is the whole reason this returns
-     * anything: a failed write, a failed rename or a failed unlink leaves the host altered -
-     * the raised level still in force, or the shared file changed or missing - and a primitive
-     * that swallowed them would let that happen while every case in the binary still passed.
-     *
-     * Allocation-free, because the atexit backstop calls it during process teardown: the level
-     * line is formatted into a stack buffer and every description returned is a static literal.
-     *
-     * @return const char* - nullptr when the level was named back and the file published,
-     *         otherwise a static description of the step that failed, with restoreErrno_
-     *         carrying the errno that step saw so a report can name the fault without
-     *         re-reading an errno the later steps have overwritten.
+     * @return const char* - nullptr on success, else a static description of the failed step,
+     *         with restoreErrno_ holding the errno that step saw.
      */
     const char *restoreLevelAndPath() {
         restoreErrno_ = 0;
@@ -2242,12 +1339,8 @@ private:
     }
 
     /**
-     * @brief Whether the configuration path is absent, classified without following a link.
+     * @brief Whether the configuration path is absent, classified with lstat() so a link counts.
      *
-     * `lstat` rather than `stat`, for the same reason every other inspection in this class uses
-     * it: a link standing at the name must be reported as something that is there, not as the
-     * absence of its target.
-      *
      * @return bool - Whether the path is empty
      * @retval true  - Nothing at all stands at the path.
      * @retval false - Something does, including a link whose target is missing.
@@ -2260,13 +1353,6 @@ private:
 
     /**
      * @brief Reports a failed backstop restoration on stdout, without allocating.
-     *
-     * The backstops run from a destructor and from an atexit handler, neither of which can fail
-     * a test: GoogleTest's assertion macros need a live test to attribute a failure to, and by
-     * the time an atexit handler runs there is none. So the only report available is the run
-     * log, and this is it - written in the same voice as the rest of this file, naming the path,
-     * the step and the errno, so that a reader of a run that left the host altered sees it said
-     * rather than having to infer it from a later case's verbosity.
      *
      * @param [in] failure - The static step description restoreLevelAndPath() returned.
      */
@@ -2294,17 +1380,8 @@ private:
     /**
      * @brief Last-chance restoration on ordinary process exit, and the second backstop.
      *
-     * atexit handlers run on return from main() and on exit(), which is normal control flow -
-     * unlike a signal handler, this may safely touch object state and the filesystem. It
-     * exists for the exit that never reaches the destructor; a live sActive_ here means an
-     * instance still holds custody, since both the destructor and restoreAndVerify() clear it.
-     * No signal handler is installed, deliberately: a fatal signal arriving mid-rename would
-     * give two racing writers over one temporary, and corrupting the file this guard protects
-     * is worse than leaving a debug-logging switch at a stale value that a human can delete.
-     *
-     * Best effort, for the same reason the destructor is: there is no live test to fail by the
-     * time this runs, so a failure is reported on stdout and nowhere else. It is not a
-     * substitute for restoreAndVerify(), which is the only route that can make a case fail.
+     * Acts only while an instance still holds custody and reports failures on stdout. No signal
+     * handler is installed, since a signal mid-rename could race two writers over one temporary.
      */
     static void atExitRestore() {
         ScopedCecLogLevel *const active = sActive_;
@@ -2312,12 +1389,8 @@ private:
         if (active == nullptr) {
             return;
         }
-        /*
-         * Both states, exactly as the destructor treats them: raised_ is the ordinary skipped
-         * restoration, restorePending_ the constructor's unproved rollback. An atexit hook that
-         * looked only at raised_ would walk past the one state whose whole reason for keeping
-         * custody was to have a backstop retry it.
-         */
+        /* Both states, as in the destructor: a skipped restoration or the constructor's unproved
+         * rollback, which kept custody precisely so this retry could happen. */
         if (active->raised_ || active->restorePending_) {
             const char *const publicationFailure = active->restoreLevelAndPath();
             std::string verificationDetail;
@@ -2339,14 +1412,11 @@ private:
     /**
      * @brief Whether this guard has published something to the path that is not proved back.
      *
-     * Deliberately independent of raised_. The constructor can write the requested level and
-     * then fail its read-back, which leaves the path modified while the level was never
-     * raised - a state raised_ cannot express, and the one state in which abandoning custody
-     * would leave the shared host path altered with every backstop disarmed.
+     * Independent of raised_, which a failed constructor read-back leaves false.
      */
     bool restorePending_;
 
-    /** @brief Whether restoreAndVerify() has already restored, which is what makes it idempotent. */
+    /** @brief Whether restoreAndVerify() has already restored, which makes it idempotent. */
     bool restored_;
 
     bool existed_;
@@ -2356,57 +1426,28 @@ private:
     uid_t savedUid_;
     gid_t savedGid_;
 
-    /**
-     * @brief The effective level observed at construction, which restoration must return to.
-     *
-     * kUnobservableLevel only while this guard refused to raise; a raised guard always holds a
-     * level in `0 .. LOG_MAX - 1` here, because the constructor declines the raise otherwise.
-     */
+    /** @brief The level observed at construction, to restore; kUnobservableLevel on refusal. */
     int entryLevel_;
 
-    /**
-     * @brief errno as it stood at the failing restoration step, or 0 when none failed.
-     *
-     * Captured at the step rather than read at the report, because `check_cec_log_status()` and
-     * the unlink that follows it both overwrite errno; a value read later would name the wrong
-     * fault. Held in an int so the backstop can report it with no allocation.
-     */
+    /** @brief errno captured at the failing restoration step, or 0 when none failed. */
     int restoreErrno_;
 
     /** @brief Why custody was refused or restoration failed; empty while nothing has failed. */
     std::string failureReason_;
 
-    /**
-     * @brief The configuration file's original bytes, captured verbatim.
-     *
-     * A fixed buffer rather than a std::string because the restoration path must not
-     * allocate: it also runs from the atexit backstop. A file larger than this is refused
-     * outright rather than captured short - see captureCurrentState().
-     */
+    /** @brief The file's original bytes; a fixed buffer, since restoration must not allocate. */
     char saved_[4096];
 };
 
 /**
  * @brief Renders bytes exactly as DriverAidlImpl::EventListener::onMessageSent logs them.
  *
- * Lowercase hex, two digits per byte, no separator - the rendering
- * DriverAidlImpl::EventListener::onMessageSent() performs. Kept here rather than written out at
- * each call site so that a case asserting on the production line compares against one rendering
- * rather than against a hand-typed literal that could drift from the message it was built from.
- *
- * One deliberate difference, so that this helper is not mistaken for a second implementation of
- * the production rendering: production renders into a stack buffer sized from
- * CECFrame::MAX_LENGTH and appends an ellipsis to a message longer than that, whereas this
- * helper is unbounded. It is only ever called with the short frames the cases below construct,
- * which are two orders of magnitude inside that bound, so the two renderings coincide; a case
- * that ever needed the truncating arm would have to assert against the bounded form instead,
- * and production refuses to send such a frame in the first place (the frame-length policing
- * asserted by DriverAidlTransmitTest), so only a misbehaving HAL could echo one back.
+ * Lowercase hex, two digits per byte, no separator. Unlike production it never truncates,
+ * which the short frames used here make irrelevant.
  *
  * @param [in] bytes Message bytes to render, in order.
  *
- * @return std::string - The concatenated two-digit lowercase hex of every byte, in
- *                       order, and empty for an empty input.
+ * @return std::string - Two lowercase hex digits per byte, in order; empty for empty input.
  */
 std::string lowercaseHexOf(const std::vector<uint8_t> &bytes) {
     static const char digits[] = "0123456789abcdef";
@@ -2421,68 +1462,30 @@ std::string lowercaseHexOf(const std::vector<uint8_t> &bytes) {
     return rendered;
 }
 
-/*
- * ---------------------------------------------------------------------------------
- * the synthetic binder preflight probe, and why the predicate takes one.
- *
- * Three of the preflight's five decision points cannot be reached from a path and a
- * timeout on any host: the protocol-version comparison needs a node that answers
- * BINDER_VERSION with a value other than the one this build was compiled against, the
- * context-manager arm needs a working driver whose context manager never registered, and
- * the positive verdict needs a binder-capable kernel. A regular file reaches the ioctl arm
- * before all three, and an absent path reaches the open arm before that, so no amount of
- * filesystem arrangement gets past decision point 3.
- *
- * DriverAidlImpl::isBinderPreflightOk() therefore takes its six kernel-facing operations -
- * openNode, identifyDescriptor, identifyPath, readProtocolVersion, pingContextManager and
- * closeNode - as a BinderPreflightProbe of plain function pointers, defaulted to
- * defaultBinderProbe(). The same probe serves the pre-lookup custody re-verification, which
- * is why identifyPath is among them: the re-verification resolves the NAME again, where the
- * preflight asks its questions of the DESCRIPTOR it already holds.
- * Substituting them here is what makes every arm reachable on this host, deterministically
- * and without a binder driver - and it is also what lets the cases assert descriptor
- * hygiene, which no black-box test of the predicate could observe at all.
- *
- * The state is file-scope because the probe members are plain function pointers: they
- * carry no captured context, so a stateful lambda cannot convert to one and the
- * configuration and the counters have to live somewhere the free functions can reach. That
- * is not a shared-state order dependency: GoogleTest runs cases on one thread, every case
- * below calls resetSyntheticProbe() before it configures anything, and nothing outside
- * DriverAidlPreflightTest touches this state. The production selection never sees it -
- * every production call site takes the default argument, which is defaultBinderProbe().
- * ---------------------------------------------------------------------------------
- */
+// Synthetic binder probe: plain-function substitutes for the six kernel-facing operations of
+// isBinderPreflightOk() and its pre-lookup re-verification, so their arms need no binder driver.
 
 /**
- * @brief The descriptor the synthetic probe hands back for a successful open
+ * @brief The descriptor the synthetic probe returns for a successful open.
  *
- * A value no real descriptor in this process can collide with, so that "the descriptor
- * that was closed is the one that was opened" cannot be satisfied by accident. Nothing
- * ever performs a real operation on it: all four probe members are substituted, so this
- * number is only ever passed between them.
+ * The synthetic probe only returns and records this number and performs no real descriptor
+ * operation on it, so a real descriptor that shares the number is never touched.
  */
 constexpr int kSyntheticBinderFd = 4242;
 
 /**
- * @brief The descriptor the synthetic probe hands back for the SECOND open in one call
+ * @brief The descriptor the synthetic probe returns for the second open in one call.
  *
- * isServiceAvailable() opens the node twice - once through the preflight, whose descriptor
- * it retains, and once for the pre-lookup liveness check, which cannot go over the retained
- * descriptor because the binder driver permits one mapping per open descriptor. A distinct
- * number for the second open is what lets a case assert WHICH descriptor was pinged and
- * WHICH was released, rather than counting anonymous calls.
+ * isServiceAvailable() opens the node twice, so a distinct value lets a case assert which
+ * descriptor was pinged and which was released.
  */
 constexpr int kSyntheticSecondBinderFd = 4343;
 
 /**
- * @brief The identity of a well-formed binder node: a root-owned character device
+ * @brief The identity of a well-formed binder node: a root-owned character device, mode 0600.
  *
- * The values of @c device, @c inode and @c rdev are arbitrary but FIXED, because what the
- * production code does with them is compare them - so what matters is that the "same node"
- * and "different node" answers differ in exactly the field under test. The mode and owner
- * are not arbitrary: they are what the preflight validates, and they are built from the
- * POSIX macros here rather than from the production constants so that the two are
- * independent and a wrong constant cannot agree with itself.
+ * Device, inode and rdev are arbitrary but fixed. Mode and owner are what the preflight
+ * validates, so they are built from POSIX macros independently of the production constants.
  */
 const DriverAidlImpl::BinderNodeIdentity kValidatedNodeIdentity = {
     0x0000000000000015ULL,
@@ -2493,11 +1496,9 @@ const DriverAidlImpl::BinderNodeIdentity kValidatedNodeIdentity = {
 };
 
 /**
- * @brief The same node's identity with ONE field changed: a substituted node
+ * @brief The validated node's identity with only @c inode changed: a substituted node.
  *
- * Only @c inode differs. That is deliberate and is the sharper test: a substitution that
- * changed every field would pass a comparison that only looked at one of them, whereas this
- * one fails only if the inode is genuinely part of the comparison.
+ * Changing one field means the case fails unless the inode is genuinely compared.
  */
 const DriverAidlImpl::BinderNodeIdentity kSubstitutedNodeIdentity = {
     0x0000000000000015ULL,
@@ -2508,17 +1509,10 @@ const DriverAidlImpl::BinderNodeIdentity kSubstitutedNodeIdentity = {
 };
 
 /**
- * @brief The SAME OBJECT, re-permissioned: every field of kValidatedNodeIdentity but the mode
+ * @brief The validated node re-permissioned: device, inode and rdev unchanged, mode now 0666.
  *
- * THE SHAPE OF THE ATTACK THIS EXISTS TO EXPRESS, and the reason it is a separate fixture from
- * kSubstitutedNodeIdentity rather than another variant of it. The device, the inode and the
- * rdev are IDENTICAL, so this is not a substituted node - it is the very node the preflight
- * validated, `chmod`ed after the validation. An adversary who cannot replace the node can
- * still widen access to it, and a re-verification comparing only `(device, inode, rdev)`
- * reports that as "unchanged" because the object genuinely is the same object.
- *
- * The mode is world-writable rather than merely different, so what the case demonstrates is a
- * privilege WIDENING and not an arbitrary edit.
+ * Models a `chmod` after validation, which a `(device, inode, rdev)` comparison reports as
+ * unchanged.
  */
 const DriverAidlImpl::BinderNodeIdentity kRePermissionedNodeIdentity = {
     0x0000000000000015ULL,
@@ -2529,16 +1523,9 @@ const DriverAidlImpl::BinderNodeIdentity kRePermissionedNodeIdentity = {
 };
 
 /**
- * @brief The SAME OBJECT, re-owned: every field of kValidatedNodeIdentity but the uid
+ * @brief The validated node re-owned: every field unchanged except the owner, now uid 1000.
  *
- * The other half of the same window, and not implied by the mode case: `chmod` and `chown` are
- * different operations with different preconditions, and a comparison could plausibly be
- * written to cover one and not the other. Device, inode, rdev and mode are identical, so a
- * decline here can only come from the owner being compared.
- *
- * The owner is an unprivileged uid, which is what makes it a handover of the driver node
- * rather than a cosmetic change - and note that the preflight's OWN root-owner check cannot
- * catch it, because that check ran before the change.
+ * Models a `chown` after validation, which only an owner comparison can decline.
  */
 const DriverAidlImpl::BinderNodeIdentity kReOwnedNodeIdentity = {
     0x0000000000000015ULL,
@@ -2549,14 +1536,9 @@ const DriverAidlImpl::BinderNodeIdentity kReOwnedNodeIdentity = {
 };
 
 /**
- * @brief A well-formed node published BROADLY ACCESSIBLE, as a conformant platform may
+ * @brief A well-formed root-owned node published with mode 0666, as conformant platforms do.
  *
- * A root-owned character device whose mode is 0666. This is not a malformed node and must not
- * be treated as one: a binder device node has to be openable by every client process that uses
- * binder, so AOSP-derived layouts publish it this way deliberately. It exists so the suite can
- * assert that the preflight ACCEPTS it, which is the regression guard on the one change in this
- * area that would look like a security improvement and would in fact decline the AIDL path on
- * every conformant production platform.
+ * The preflight must accept it; declining it would refuse the AIDL path on every such platform.
  */
 const DriverAidlImpl::BinderNodeIdentity kWorldWritableNodeIdentity = {
     0x0000000000000015ULL,
@@ -2567,17 +1549,11 @@ const DriverAidlImpl::BinderNodeIdentity kWorldWritableNodeIdentity = {
 };
 
 /**
- * @brief Configuration and observations for the synthetic probe
+ * @brief Configuration and observations for the synthetic probe.
  *
- * The @c answer members decide which decision point the predicate stops at; the @c *Calls
- * counters and the @c last* members are what the cases assert against afterwards.
- *
- * THE @c *Second MEMBERS EXIST BECAUSE isServiceAvailable() ASKS TWICE. It pings the context
- * manager once in the preflight and once again immediately before the lookup, and it
- * identifies a descriptor once for the retained node and once for the reopened one - so the
- * arms where the platform CHANGES between the check and the use are only reachable if the
- * probe can answer differently on the second call. Each @c has*Second flag defaults to false,
- * which keeps every existing case's behaviour exactly what it was.
+ * The @c answer* members choose where the predicate stops; the @c *Calls and @c last* members
+ * are what cases assert. The @c *Second members answer differently from the second call on,
+ * because isServiceAvailable() pings and identifies twice; their flags default to false.
  */
 struct SyntheticProbeState {
     /** @brief What openNode() returns: kSyntheticBinderFd, or negative to fail the open. */
@@ -2601,14 +1577,10 @@ struct SyntheticProbeState {
     /** @brief The identity identifyDescriptor() reports from its second call onwards, when enabled. */
     DriverAidlImpl::BinderNodeIdentity answerDescriptorIdentitySecond = kSubstitutedNodeIdentity;
     /**
-     * @brief Whether identifyDescriptor() reports a different RESULT from its second call onwards
+     * @brief Whether identifyDescriptor() returns a different result from its second call onwards.
      *
-     * Distinct from hasSecondDescriptorIdentity, which changes the identity a SUCCESSFUL call
-     * reports. This changes whether the call succeeds at all, which is a different arm: the
-     * re-verification declines when the reopened descriptor cannot be identified, and it
-     * declines when it identifies as a different node, and neither implies the other.
-     * answerIdentifyDescriptor cannot express it, because it applies to every call and the
-     * preflight's own first call has to succeed for the second one to happen.
+     * Unlike hasSecondDescriptorIdentity, this makes the reopened descriptor fail to identify,
+     * which is a separate re-verification arm.
      */
     bool hasSecondDescriptorIdentifyResult = false;
     /** @brief What identifyDescriptor() returns from its second call onwards, when enabled. */
@@ -2651,21 +1623,18 @@ struct SyntheticProbeState {
     std::vector<int> closedFds;
 };
 
+/** @brief The synthetic probe's configuration and observations; reset by resetSyntheticProbe(). */
 SyntheticProbeState g_syntheticProbe;
 
 /**
  * @brief Records the call and answers with the configured descriptor.
  *
- * The second successful open in one call answers with kSyntheticSecondBinderFd rather than
- * repeating the first descriptor, so that a case can tell the retained node from the one
- * reopened for the pre-lookup liveness check. A failing configuration fails both.
+ * A second successful open answers kSyntheticSecondBinderFd; a failing configuration fails both.
  *
- * @param [in] path  Driver node path the predicate asked for. Recorded verbatim; a null
- *                  pointer is recorded as an empty string rather than dereferenced.
- * @param [in] flags Open flags the predicate asked for. Recorded, never acted on.
+ * @param [in] path  Driver node path requested; recorded, a null pointer as an empty string.
+ * @param [in] flags Open flags requested; recorded, never acted on.
  *
- * @return int - SyntheticProbeState::answerOpen, which is kSyntheticBinderFd for a
- *               successful open or a negative value to fail it.
+ * @return int - SyntheticProbeState::answerOpen, or kSyntheticSecondBinderFd from the second call.
  */
 int syntheticOpenNode(const char *path, int flags) {
     g_syntheticProbe.openCalls++;
@@ -2689,10 +1658,7 @@ int syntheticIdentifyDescriptor(int fd, DriverAidlImpl::BinderNodeIdentity *out)
         return g_syntheticProbe.answerIdentifyDescriptor;
     }
 
-    /*
-     * The second-call FAILURE arm, which is checked before the second-call IDENTITY arm below
-     * because a call that fails reports no identity at all.
-     */
+    // The second-call failure arm precedes the identity arm: a failed call reports no identity.
     if (g_syntheticProbe.hasSecondDescriptorIdentifyResult &&
         (g_syntheticProbe.identifyDescriptorCalls >= 2) &&
         (g_syntheticProbe.answerIdentifyDescriptorSecond != 0)) {
@@ -2729,13 +1695,12 @@ int syntheticIdentifyPath(const char *path, DriverAidlImpl::BinderNodeIdentity *
 /**
  * @brief Records the call and reports the configured protocol version, or fails the read.
  *
- * @param [in]  fd      Descriptor the predicate is reading through. Recorded only.
- * @param [out] version Receives SyntheticProbeState::answerProtocolVersion. Left untouched
- *                     when the read is configured to fail, or when the pointer is null.
+ * @param [in]  fd      Descriptor read through; recorded only.
+ * @param [out] version Receives answerProtocolVersion; untouched on a failing read or when null.
  *
  * @return int - Read result
  * @retval 0  - The version was reported.
- * @retval -1 - The ioctl is configured to fail, and @p version is untouched.
+ * @retval -1 - The ioctl is configured to fail.
  */
 int syntheticReadProtocolVersion(int fd, unsigned int *version) {
     g_syntheticProbe.protocolReadCalls++;
@@ -2748,17 +1713,15 @@ int syntheticReadProtocolVersion(int fd, unsigned int *version) {
 }
 
 /**
- * @brief Records the call, including the deadline it was given, and answers.
+ * @brief Records the call and its deadline, then answers.
  *
- * Answers differently from the second call onwards when @c hasSecondPingAnswer is set,
- * which is the only way to reach the arm where the context manager answered the preflight
- * and has stopped answering by the time the lookup is about to happen.
+ * With @c hasSecondPingAnswer set, calls from the second onwards answer @c answerPingSecond:
+ * a context manager that answered the preflight and stopped answering before the lookup.
  *
- * @param [in] fd        Descriptor the predicate is pinging through. Recorded only.
- * @param [in] timeoutMs Bounded deadline the predicate applied, in milliseconds. Recorded
- *                      so a case can assert that the predicate bounds the wait at all.
+ * @param [in] fd        Descriptor pinged through; recorded only.
+ * @param [in] timeoutMs Deadline applied, in milliseconds; recorded so the bound is assertable.
  *
- * @return bool - SyntheticProbeState::answerPing, unmodified.
+ * @return bool - The answer configured for this call.
  */
 bool syntheticPingContextManager(int fd, unsigned int timeoutMs) {
     g_syntheticProbe.pingCalls++;
@@ -2773,13 +1736,11 @@ bool syntheticPingContextManager(int fd, unsigned int timeoutMs) {
 }
 
 /**
- * @brief Records the release of the descriptor, in order, and always succeeds.
+ * @brief Records the released descriptor, in call order, and always succeeds.
  *
- * @param [in] fd Descriptor being released. Recorded in call order, so a case can assert
- *               that the descriptor closed is the one that was opened.
+ * @param [in] fd Descriptor being released; recorded so a case can pair it with its open.
  *
- * @return int - Always 0. A close that could fail would introduce a decision point the
- *               predicate does not have.
+ * @return int - Always 0; the predicate has no decision point for a failing close.
  */
 int syntheticCloseNode(int fd) {
     g_syntheticProbe.closeCalls++;
@@ -2791,11 +1752,8 @@ int syntheticCloseNode(int fd) {
 /**
  * @brief Clears every counter and installs one answer per decision point.
  *
- * THE IDENTITY ANSWERS RESET TO A WELL-FORMED NODE - a root-owned character device whose
- * path and descriptor agree - so that every case written before the identity arms existed
- * keeps reaching the decision point it was written for. A case about an identity arm
- * overrides the field it is about after calling this, which is also what makes each of
- * those cases name exactly one deviation from a good node.
+ * Identity answers reset to a well-formed node, so each identity case overrides only the field
+ * it is about.
  *
  * @param [in] answerOpen            - openNode()'s answer: kSyntheticBinderFd, or negative.
  * @param [in] answerProtocolRead    - readProtocolVersion()'s answer: 0 or -1.
@@ -2814,20 +1772,13 @@ void resetSyntheticProbe(int answerOpen,
 }
 
 /**
- * @brief The probe the cases hand to isBinderPreflightOk(), wired to the six functions above
+ * @brief The probe the cases hand to isBinderPreflightOk(), wired to the six functions above.
  *
- * BinderPreflightProbe is an aggregate of six function pointers, so this is a brace
- * initialization and nothing more. The returned object is bound to the predicate's const
- * reference parameter for the duration of the call.
+ * @return DriverAidlImpl::BinderPreflightProbe - The six-function aggregate, by value.
  *
- * @return DriverAidlImpl::BinderPreflightProbe - An aggregate of the six functions
- *                                                above, returned by value.
- *
- * @warning The member order here must match the struct's, and every member must be filled:
- *          the production code calls all six unconditionally and does not defend against a
- *          partially filled probe, so a member left out of this aggregate becomes a null
- *          function pointer that the preflight calls through. That is why this is the only
- *          aggregate initialization of the probe in the suite.
+ * @warning Fill every member in the struct's order: the preflight's stages and the pre-lookup
+ *          re-verification each use different members, calling one only once its stage is
+ *          reached, so a case reaching an omitted member's stage calls a null function pointer.
  */
 DriverAidlImpl::BinderPreflightProbe syntheticProbe() {
     DriverAidlImpl::BinderPreflightProbe probe = {
@@ -2872,16 +1823,13 @@ CECFrame broadcastFrame(uint8_t opcode = REPORT_PHYSICAL_ADDRESS) {
 }
 
 /**
- * @brief A directed frame padded with operands to exactly @p length bytes.
+ * @brief A directed frame padded with zero operands to exactly @p length bytes.
  *
- * Used for the frame-size boundary. The header and opcode are real so the frame is
- * well-formed at every length; the padding carries no meaning and is not decoded by
- * anything on either path.
+ * Used for the frame-size boundary; the padding is decoded by nothing on either path.
  *
- * @param [in] length Total frame length in bytes. A value at or below the two bytes
- *                   directedFrame() already produces yields that frame unpadded.
+ * @param [in] length Total frame length in bytes; two or less yields directedFrame() unpadded.
  *
- * @return CECFrame - A well-formed directed frame of exactly @p length bytes.
+ * @return CECFrame - A well-formed directed frame of @p length bytes, or two when shorter.
  */
 CECFrame frameOfLength(size_t length) {
     CECFrame frame = directedFrame();
@@ -2891,38 +1839,8 @@ CECFrame frameOfLength(size_t length) {
     return frame;
 }
 
-/*
- * ---------------------------------------------------------------------------------
- * reading the real sink caller, so that the modelled call paths cannot go stale.
- *
- * The case that measures authorized difference 3 through the Sink's two call paths models
- * their exception handling: a try with three catches for one, an uncaught propagation for
- * the other. A model is only evidence for as long as it still describes the thing modelled,
- * and nothing in a hand-written model notices when the plugin is reformatted, when a catch
- * arm is removed, or when the caller stops calling the middleware altogether.
- *
- * So the structure is read from the plugin source rather than restated. The plugin is out of
- * scope and is not modified, nor compiled, nor linked - it belongs to another component and
- * its test binaries link the framework's CEC mock rather than this middleware, so compiling
- * it here is not available. What is available, and is what the drift guard needs, is its
- * text: the two call sites, whether each sits inside a try, and which handlers that try
- * carries.
- *
- * The scanner is small but it is not a regex, and that is deliberate. "Is this call inside a
- * try block" is a question about brace nesting, which a pattern match cannot answer, and a
- * naive text search would be fooled by a brace in a comment or a string literal. The scanner
- * below therefore walks the file once, skipping line comments, block comments, string
- * literals and character literals, maintaining the block stack, and recording each try
- * block's span together with the catch clauses that follow it. It is not a C++ parser and
- * does not need to be: it needs braces, comments, literals and two keywords.
- *
- * What it does not handle, stated rather than left to be discovered: raw string literals
- * (R"(...)"), which the scanned file does not contain, and macro-generated braces, which
- * would confuse any textual approach. If the plugin ever adopts either, this guard reports a
- * mismatch and the model must be re-derived by hand - which is a loud, visible outcome and
- * the right one.
- * ---------------------------------------------------------------------------------
- */
+// Sink caller drift guard: a brace-, comment- and literal-aware scanner reads the real Sink
+// plugin source, so the modelled addLogicalAddress call paths cannot silently go stale.
 
 /** @brief One try block found by the scanner: its span, and the handlers that follow it. */
 struct SourceTryBlock {
@@ -2949,12 +1867,10 @@ struct SourceCallSite {
 };
 
 /**
- * @brief A one-pass brace/comment/literal-aware model of a C++ source file
+ * @brief A one-pass brace-, comment- and literal-aware model of a C++ source file.
  *
- * Records every try block with its handler list and every occurrence of one call text,
- * annotated with the try nesting it sits in. Nothing here interprets types, templates or
- * preprocessor conditionals - the model answers exactly the two questions the drift guard
- * asks and no more.
+ * Records every try block with its handlers and every occurrence of one call text with its try
+ * nesting; it interprets no types, templates or preprocessor conditionals.
  */
 class CppSourceModel {
 public:
@@ -2966,7 +1882,7 @@ public:
      *
      * @return bool - Whether the walk completed with a balanced block stack
      * @retval true  - The file parsed far enough for the model to be trusted.
-     * @retval false - Braces did not balance, so the model must not be relied on.
+     * @retval false - Braces or a catch parameter list did not balance; do not rely on the model.
      */
     bool scan(const std::string &text, const std::string &callNeedle) {
         tryBlocks_.clear();
@@ -3070,9 +1986,8 @@ public:
                 continue;
             }
 
-            // A catch clause attaches to the try that most recently closed at this depth. A
-            // catch cannot legally follow anything else, so no further disambiguation is
-            // needed.
+            // A catch clause attaches to the try most recently closed at this depth; nothing else
+            // can legally precede one.
             if (c == 'c' && matchesIdentifier(text, i, "catch")) {
                 size_t cursor = skipBlanks(text, i + 5, line);
 
@@ -3123,8 +2038,9 @@ public:
     /**
      * @brief The call sites found, in source order.
      *
-     * @return const std::vector<SourceCallSite>& - The call sites recorded by the last
-     *                                              successful scan(), in source order. Empty
+     * @return const std::vector<SourceCallSite>& - The call sites the most recent scan()
+     *                                              recorded, in source order, to be relied on
+     *                                              only when that scan() returned true. Empty
      *                                              before the first scan.
      */
     const std::vector<SourceCallSite> &callSites() const { return callSites_; }
@@ -3132,9 +2048,11 @@ public:
     /**
      * @brief The try blocks found, in the order their bodies opened.
      *
-     * @return const std::vector<SourceTryBlock>& - The try blocks recorded by the last
-     *                                              successful scan(), ordered by where their
-     *                                              bodies opened. Empty before the first scan.
+     * @return const std::vector<SourceTryBlock>& - The try blocks the most recent scan()
+     *                                              recorded, ordered by where their bodies
+     *                                              opened, to be relied on only when that
+     *                                              scan() returned true. Empty before the
+     *                                              first scan.
      */
     const std::vector<SourceTryBlock> &tryBlocks() const { return tryBlocks_; }
 
@@ -3176,7 +2094,7 @@ private:
         return (before == 0) || !isIdentifierCharacter(text[before - 1]);
     }
 
-    /** @brief Whether @p needle starts at @p position and is not part of a longer identifier. */
+    /** @brief Whether @p needle starts at @p position with no identifier character before it. */
     static bool matchesIdentifier(const std::string &text, size_t position,
                                   const std::string &needle) {
         if (text.compare(position, needle.size(), needle) != 0) {
@@ -3321,9 +2239,7 @@ const char *const kSinkCallerRelativePath =
 /**
  * @brief The environment variable both CI workflows export for the pinned Sink checkout.
  *
- * The checkout it names is a required step in both workflows, at the reviewed commit recorded
- * above the drift guard, so a value that is absent or unreadable is a fault to report rather
- * than a condition to accommodate - which is what the guard's two failure arms do.
+ * A set value that cannot be read is a fault to report, not a condition to accommodate.
  */
 const char *const kSinkCallerSourceVariable = "CEC_SINK_CALLER_SOURCE";
 
@@ -3344,18 +2260,14 @@ struct SinkCallerSource {
 };
 
 /**
- * @brief Reads a whole file, reporting success
+ * @brief Reads a whole file in binary mode, with no newline translation.
  *
- * @param [in]  path     Path to read. Opened binary, so no newline translation occurs and the
- *                      text the scanner walks is exactly what is on disk.
- * @param [out] contents Receives the file's bytes. Left untouched when the pointer is null,
- *                      and written even when the file turns out to be empty.
+ * @param [in]  path     Path to read.
+ * @param [out] contents Receives the bytes once read, even when empty; ignored when null.
  *
  * @return bool - Whether usable text was read
  * @retval true  - The file opened, read without error, and is not empty.
- * @retval false - The path could not be opened, the read failed, or the file is empty. An
- *                 empty file is a failure here because the guard's only use for the text is
- *                 to scan it, and there is nothing to scan.
+ * @retval false - The file could not be opened or read, or is empty and so has nothing to scan.
  */
 bool readWholeFile(const std::string &path, std::string *contents) {
     std::ifstream stream(path.c_str(), std::ios::in | std::ios::binary);
@@ -3377,12 +2289,10 @@ bool readWholeFile(const std::string &path, std::string *contents) {
 }
 
 /**
- * @brief The directory holding this process's executable
+ * @brief The directory holding this process's executable.
  *
- * @return std::string - The directory part of `/proc/self/exe`, without a trailing separator,
- *                       or an empty string when the link cannot be read or contains no
- *                       separator. An empty result makes the relative candidates below
- *                       unusable, which the guard reports rather than treating as a mismatch.
+ * @return std::string - The directory part of `/proc/self/exe` without a trailing separator,
+ *                       or empty when the link cannot be read or has no separator.
  */
 std::string executableDirectory() {
     char resolved[4096];
@@ -3400,26 +2310,14 @@ std::string executableDirectory() {
 }
 
 /**
- * @brief Locates and reads the real Sink caller source
+ * @brief Locates and reads the real Sink caller source.
  *
- * CEC_SINK_CALLER_SOURCE wins when it is set, and a value that cannot be read is not
- * silently replaced by a search: both CI workflows export it only after checking that the
- * file is there, so an unreadable value means the environment is lying about what it
- * provided. The caller fails on that, and fails separately when nothing pointed at the source
- * and no candidate path resolved either - the source is a required input, so both outcomes are
- * failures and the two are reported apart because they call for different fixes.
+ * A set CEC_SINK_CALLER_SOURCE wins and is never replaced by a search, even when unreadable;
+ * otherwise the sibling-checkout layout is tried from the working directory and from the
+ * executable's directory.
  *
- * The fallback candidates are the documented sibling-checkout layout, from two independent
- * anchors: the working directory, which is `hdmicec/tests/L1Tests` under `make check` and
- * under run_coverage.sh, and the executable's own directory, which is that same directory or
- * its `.libs` subdirectory when libtool wrapped the binary. Both depths were verified
- * against the built runner's location rather than assumed.
- *
- * @return SinkCallerSource - The search's whole record: whether the override variable was
- *                            set and to what, every path tried in order, and the text when
- *                            one of them read. A result whose @c found is false still
- *                            carries the path list, which is what lets the guard report
- *                            where it looked instead of only that it failed.
+ * @return SinkCallerSource - Whether the variable was set and to what, every path tried in
+ *                            order, and the text when one read; a miss still lists the paths.
  */
 SinkCallerSource locateAndReadSinkCallerSource() {
     SinkCallerSource source;
@@ -3481,66 +2379,32 @@ std::string joinPaths(const std::vector<std::string> &paths) {
     return joined;
 }
 
-/*
- * ---------------------------------------------------------------------------------
- * observing a received frame where the middleware actually delivers it.
- *
- * A receive-path case that asserted only "the trigger returned true" would pass against an
- * adapter that dropped every frame on the floor - the trigger's return value describes
- * whether a listener was captured, not whether the frame went anywhere. What has to be
- * observed instead is the delivery, and the place the middleware delivers to is a
- * FrameListener on a Connection: the adapter offers the frame onto the incoming queue, the
- * Bus reader thread drains it, Connection's address filter admits it, and the listener is
- * notified.
- *
- * Delivery is therefore asynchronous with respect to the case body even where the callback
- * itself runs on the calling thread, because the Bus reader is a separate thread. The wait
- * below is a condition variable with a deadline rather than a sleep: a sleep long enough to
- * be reliable would be wasted on every passing run, and a sleep short enough not to be
- * wasted would be flaky - and neither is an assertion. The idiom is the one the neighbouring
- * integration cases established (ccec/test_Connection.cpp).
- * ---------------------------------------------------------------------------------
- */
+// Receive-path observation: a frame is asserted where the middleware delivers it, a
+// FrameListener on a Connection, through a deadline-bounded condition-variable wait.
 
 /**
- * @brief Upper bound on a delivery that is expected to happen, in milliseconds
+ * @brief Upper bound on a delivery that is expected to happen, in milliseconds.
  *
- * Generous rather than tight, because it is only ever reached on a failing run: the wait is a
- * condition variable and returns the instant the frame arrives, so a passing case pays the real
- * delivery latency and nothing more. The value matches the bound the neighbouring end-to-end
- * integration cases use (ccec/test_Connection.cpp), so a slow host does not make one of them
- * flaky while the other holds.
+ * Generous because only a failing run reaches it; it matches the end-to-end cases in
+ * ccec/test_Connection.cpp.
  */
 constexpr int kFrameDeliveryTimeoutMs = 3000;
 
 /**
- * @brief Window over which a delivery is expected not to happen, in milliseconds
+ * @brief Window over which a delivery is expected not to happen, in milliseconds.
  *
- * Necessarily a real wait, since "it has not arrived" and "it will not arrive" cannot be
- * distinguished instantaneously. Deliberately much shorter than the positive bound, for two
- * reasons: a correct rejection is synchronous with the callback, so a frame that was wrongly
- * accepted would be delivered within microseconds of the offer rather than late; and the driver
- * is closed throughout this window, which leaves the Bus reader spinning on its own state guard,
- * so a long window buys no confidence and costs real CPU. The strong evidence for non-delivery
- * is not this window at all - it is the assertion that the frame does not surface after a later
- * re-open, which is an ordering and not a timing.
+ * Short, because every passing run waits out the whole window watching for a delivery that
+ * must not happen. The stronger evidence is that the frame never surfaces after a later re-open.
  */
 constexpr int kNonDeliveryWindowMs = 400;
 
 /**
- * @brief The middleware's slow-synchronous-call threshold, in milliseconds, RESTATED
+ * @brief The middleware's slow-synchronous-call threshold, in milliseconds, restated.
  *
- * Mirrors @c SLOW_HAL_CALL_WARN_MS in @c ccec/src/DriverAidlImpl.cpp. It is restated rather than
- * read because that constant sits inside the anonymous namespace opened at DriverAidlImpl.cpp:185
- * and therefore has internal linkage - @c nm finds no dynamic symbol for it - and because
- * exposing it through the class would be a production change this suite has no business making.
+ * Mirrors @c SLOW_HAL_CALL_WARN_MS in ccec/src/DriverAidlImpl.cpp, which has internal linkage.
  *
- * @warning Restating a production constant is normally a hazard, and here it is safe in the one
- *          direction that matters. The only case using it delays a HAL call by this value plus a
- *          margin and asserts that the warning line APPEARS. If production raised its threshold
- *          above this value, the delay would fall short, no line would be emitted and that case
- *          would fail - a loud wrong answer rather than a case that had silently stopped
- *          exercising the arm. If production lowered it, the case still crosses and still passes.
+ * @warning Restating is safe here: if production raised its threshold above this value, the one
+ *          case using it would fail loudly rather than silently stop exercising the warning arm.
  *
  * @see FakeHdmiCecController::setAddLogicalAddressesDelayMs()
  */
@@ -3607,14 +2471,12 @@ public:
     }
 
     /**
-     * @brief The bytes of the frame at @p index
+     * @brief The bytes of the frame at @p index.
      *
      * @param [in] index Zero-based delivery order.
      *
-     * @return std::vector<uint8_t> - A copy of that frame's bytes, or an empty vector when
-     *                                fewer than @p index + 1 frames have arrived. An empty
-     *                                vector is therefore not distinguishable from a
-     *                                zero-length frame, which nothing here produces.
+     * @return std::vector<uint8_t> - A copy of that frame's bytes, or empty when fewer than
+     *                                @p index + 1 frames have arrived.
      */
     std::vector<uint8_t> frameAt(size_t index) const {
         std::lock_guard<std::mutex> guard(mutex_);
@@ -3624,48 +2486,28 @@ public:
 private:
     /** @brief Guards @c frames_ against the Bus reader thread and the case body at once. */
     mutable std::mutex mutex_;
-    /** @brief Notified after each delivery, so waitForFrames() never sleeps in a loop. */
+    /** @brief Notifies waitForFrames() after each delivery, avoiding polling. */
     mutable std::condition_variable condition_;
     /** @brief The bytes of every frame delivered so far, in delivery order. */
     mutable std::vector<std::vector<uint8_t>> frames_;
 };
 
 /**
- * @brief A frame listener that PARKS THE BUS READER inside its notification until released
+ * @brief A frame listener that parks the Bus reader inside notify() until release() is called.
  *
- * Exists for one purpose the recording listener cannot serve: making the incoming queue fill up.
- * The Bus reader drains that queue as fast as frames are offered - it is normally blocked in
- * EventQueue::poll() on an empty queue and woken by each offer - so a case that simply delivered
- * many frames would never see an occupancy above one, and the queue's refusal arm would stay
- * unreachable however many frames it delivered.
+ * Holding the reader lets offered frames accumulate, the only way to reach the incoming queue's
+ * refusal arm. State is @c mutable because notify() is @c const.
  *
- * The mechanism is the reader's own call graph rather than anything injected into the queue. The
- * reader takes a frame, then notifies each registered listener on its own thread; a notification
- * that does not return leaves the reader inside it and not back at poll(). Frames offered from
- * that moment on accumulate, which is precisely the "stalled reader" condition the middleware's
- * refusal arm exists to survive.
+ * @warning notify() blocks the Bus reader; call release() on every exit path, before asserting.
  *
- * @warning notify() runs ON THE BUS READER THREAD and blocks it deliberately. A case that
- *          forgets to call release() hangs its own teardown, so every use must release on every
- *          exit path - the cases below do it before their assertions, so that an ASSERT_*
- *          returning early cannot strand the reader.
- * @warning notify() is @c const in the FrameListener interface, so all of this object's state is
- *          @c mutable. That is the same accommodation RecordingFrameListener makes.
- *
- * @see RecordingFrameListener
- * @see DriverAidlImpl::offerReceivedFrame()
+ * @see RecordingFrameListener, DriverAidlImpl::offerReceivedFrame()
  */
 class StallingFrameListener : public FrameListener {
 public:
     /**
-     * @brief Blocks until release() is called, recording that the reader arrived
+     * @brief Records arrival and notifies waiters, then blocks until release() is called.
      *
-     * @param [in] frame Frame the Bus reader is delivering. Its bytes are not copied: this
-     *                  listener exists to hold the thread, and the delivered content is asserted
-     *                  by the recording listener a case attaches alongside it where it matters.
-     *
-     * @note Records arrival BEFORE blocking and notifies waiters, so waitUntilParked() cannot
-     *       race ahead of the block.
+     * @param [in] frame Frame being delivered; not copied, as this listener only holds the thread.
      */
     void notify(const CECFrame &frame) const override {
         (void)frame;
@@ -3681,11 +2523,11 @@ public:
     }
 
     /**
-     * @brief Waits until the reader is parked inside notify() at least once
+     * @brief Waits until the reader has entered notify() at least once
      *
      * @param [in] timeoutMs Milliseconds to wait before giving up
      *
-     * @return bool - true when the reader is parked, false on timeout
+     * @return bool - true once notify() has been entered at least once, false on timeout
      *
      * @note A false return means the delivery chain never reached this listener at all, which is
      *       a different failure from the queue not filling and must be reported as such.
@@ -3716,74 +2558,38 @@ public:
     }
 
 private:
-    /** @brief Guards the two flags below against the Bus reader thread and the case body. */
+    /** @brief Guards the counter and flag below against the Bus reader thread and the case body. */
     mutable std::mutex mutex_;
     /** @brief Signals both directions: parked for the case body, released for the reader. */
     mutable std::condition_variable condition_;
-    /** @brief How many times the reader has entered notify(). Non-zero means parked. */
+    /** @brief Count of notify() entries; non-zero from the first one on, even after release(). */
     mutable size_t parkedCount_ = 0;
     /** @brief Set once by release(); notify() returns immediately once it is set. */
     mutable bool released_ = false;
 };
 
 /**
- * @brief The thread-name prefix libbinder gives a threadpool thread ON AN ANDROID BUILD
+ * @brief The thread-name prefix libbinder gives threadpool threads on an Android build.
  *
- * Not an invention of this suite: ProcessState::makeBinderThreadName() composes "binder:PID_N"
- * from the driver name and hands it to Thread::run() for each pool thread it spawns.
+ * ProcessState::makeBinderThreadName() composes "binder:PID_N" for each pool thread.
  *
- * @warning IT IS NOT APPLIED ON THIS LINUX PORT, so a thread carrying it does not exist even when
- *          the pool is running, and its absence is therefore not evidence about the pool. In the
- *          pinned Binder SDK, androidCreateRawThreadEtc() takes its threadName parameter as
- *          `__android_unused`, and the whole block that would honour it -- together with
- *          thread_data_t::trampoline, the only site that calls androidSetThreadName() for a
- *          spawned thread -- sits inside `#if defined(__ANDROID__)`, which the CMake build of the
- *          Binder SDK never defines. prctl(PR_SET_NAME) is therefore never reached and each pool
- *          thread inherits the process's own `comm`. Measured: a guest with a live binder driver,
- *          an AIDL back-end open since LibCCEC::init and a pool demonstrably started had no thread
- *          matching this prefix, and an assertion resting on the prefix failed against correct
- *          production code; every thread of this runner reports the runner's own name, and so does
- *          every thread of the fake service host, which also starts a pool. The pool is therefore
- *          asserted through ProcessState::getThreadPoolMaxThreadCount(), which reads the very flag
- *          startThreadPool() sets and behaves the same on both platforms; this prefix is what a
- *          build that DID apply the name would show, so the probe is kept as corroboration and is
- *          reported rather than asserted -- see processHasABinderThread() below.
+ * @warning Not applied on this Linux port, so its absence says nothing about the pool; the pool
+ *          is asserted through ProcessState::getThreadPoolMaxThreadCount() instead.
  */
 const char *const kBinderThreadNamePrefix = "binder:";
 
 /**
- * @brief Whether this process currently has at least one thread named the way libbinder names its
- *        threadpool threads
+ * @brief Whether any thread of this process carries libbinder's threadpool name prefix.
  *
- * Reads /proc/self/task, which lists one directory per thread in this process, and compares each
- * thread's `comm` against the prefix ProcessState::makeBinderThreadName() composes, which
- * libbinder applies only on an Android build. It is CORROBORATION ONLY: see the warning on
- * kBinderThreadNamePrefix for why the name is never applied on this port, and
- * getThreadPoolMaxThreadCount() for what is asserted instead.
+ * Corroboration only: it reads each /proc/self/task comm, and this port never applies the name,
+ * so a false result is not evidence either way.
  *
- * @param [out] procIsReadable Set to true once /proc/self/task has been opened, and left
- *                            false when it cannot be. Ignored when null.
+ * @param [out] procIsReadable Set true once /proc/self/task opens, else false; ignored when null.
  *
  * @return bool - Whether a thread named "binder:*" exists in this process.
- * @retval true  - A binder threadpool thread is running AND this build applies the name.
- * @retval false - No such thread is named, which on this port is the ordinary case whether or not
- *                 a pool is running, so the caller must not read it as evidence either way.
- *
- * @warning A false result is not evidence that the threadpool is absent, for two distinct reasons,
- *          and neither is recoverable from inside this process. A host without /proc reports
- *          nothing at all, which @c procIsReadable distinguishes. And on this Linux port the name
- *          is never applied to the thread in the first place, for the compile-time reason recorded
- *          on kBinderThreadNamePrefix above - so a running pool produces threads that carry the
- *          process's own `comm` and this function returns false. Counting threads instead is not a
- *          substitute: the runner's thread count moves during a run as cases start and join their
- *          own workers, measured going 1 to 5 to 6 with different thread ids at equal counts, so a
- *          count-based inference would be unsound rather than merely imprecise.
- * @note There is consequently no reliable in-process observation of "the pool was started" on this
- *       SDK. The evidence that it was is invocation E's, which receives a `oneway` callback on a
- *       pool thread over real out-of-process IPC - see
- *       hdmicec/tests/L2Tests/ccec/test_DualPathIntegration.cpp. This function is retained because
- *       a build that does apply the name, or an SDK that switches to pthread_setname_np, would
- *       report true, and the caller prints what it observed either way.
+ * @retval true  - A threadpool thread is running and this build applies the name.
+ * @retval false - No such thread is named, the ordinary result on this port.
+ * @see kBinderThreadNamePrefix
  */
 bool processHasABinderThread(bool *procIsReadable) {
     if (procIsReadable != nullptr) {
@@ -3826,14 +2632,10 @@ bool processHasABinderThread(bool *procIsReadable) {
 }
 
 /**
- * @brief Shared state for a thread parked in DriverAidlImpl::read()
+ * @brief Shared state for a thread parked in DriverAidlImpl::read().
  *
- * Held behind a shared pointer, and not on the parking case's stack, for a reason that is
- * specific rather than stylistic: the whole point of that case is that the reader may fail to
- * be released, and a thread that cannot be joined must be abandoned rather than allowed to
- * hang the run - which is only safe if everything it touches outlives the scope that started
- * it. Every member is guarded by @c mutex and every transition notifies @c signal, so the
- * waiting side is a bounded condition-variable wait and never a sleep.
+ * Held behind a shared pointer so a reader that is never released can be abandoned safely.
+ * Every member is guarded by @c mutex and every transition notifies @c signal.
  */
 struct BlockedReaderState {
     /** @brief Guards every member below. */
@@ -3868,12 +2670,9 @@ struct BlockedReaderState {
 };
 
 /**
- * @brief A Connection with a listener attached, withdrawn and closed by the destructor
+ * @brief A Connection with a listener attached, withdrawn and closed by the destructor.
  *
- * RAII rather than a pair of calls at the end of the case body, and for a concrete reason:
- * a fatal assertion returns from the body immediately, and a listener left registered would
- * be a Bus entry pointing at a destroyed stack object - which the next case's frame would
- * dereference. The destructor makes that unreachable however the case leaves.
+ * RAII, so a fatal assertion cannot leave the Bus holding a pointer to a destroyed listener.
  */
 class ListeningConnection {
 public:
@@ -3906,7 +2705,7 @@ public:
 private:
     /** @brief The connection this object owns; closed by the destructor. */
     Connection connection_;
-    /** @brief The registered listener, withdrawn by the destructor. Not owned. */
+    /** @brief The registered listener, withdrawn by the destructor and not owned. */
     FrameListener *listener_;
 };
 
@@ -3916,76 +2715,32 @@ private:
 /**
  * @brief Compatibility-rejection coverage, per branch, by direct call.
  *
- * Runs under every invocation because it needs nothing from the environment: no registered
- * service, no binder driver, no resolved back-end and no HAL. Most cases call
- * halcompat::isCompatible<IHdmiCec>() against a locally constructed double and assert the
- * answer; the rest drive the production rejection diagnostic directly, and the last four
- * drive the fake service's and fake controller's own interface-metadata controls - the inputs
- * every compatibility arm above is arranged with - against locally constructed fakes.
+ * Cases call halcompat::isCompatible<IHdmiCec>() or the rejection diagnostic against locally
+ * constructed doubles and fakes; nothing is registered and the driver is never touched.
  *
- * Nothing in this fixture is ever registered with the service manager, and that is a hard
- * constraint rather than a preference: registering a name calls defaultServiceManager(),
- * which opens the binder driver, and on the pinned stack that aborts the process where the
- * driver node is absent - which is this host. Local construction alone is what makes the
- * metadata controls testable here, and it is sufficient, because those controls take effect
- * under local dispatch and only under local dispatch.
- *
- * No driver precondition is established here, and that is a deliberate departure from the
- * fixture idiom the driver-facing suites in this directory use. Those fixtures open the
- * process-global driver in SetUp because their cases assert against it; nothing in this
- * fixture touches the driver, the HAL mock or the shared library at all, so opening the
- * driver would be interaction with shared state that this fixture has no use for - and
- * shared state that is touched for no reason is exactly how an order dependency gets
- * introduced. TearDown is likewise empty because there is nothing to restore.
- *
- * Self-sufficiency. Every case constructs its own double, calls the predicate and asserts
- * the result. Nothing is carried between cases, nothing outside the fixture is read or
- * written, and each case passes identically alone under a --gtest_filter and inside the
- * full suite, in any order.
+ * @pre Runs under every invocation; needs no service, binder driver, back-end or HAL.
  */
 class DriverAidlCompatibilityTest : public ::testing::Test {
 };
 
-// The double used by every case below is a legitimate stand-in, and this case is what
-// establishes that rather than assuming it.
-//
-// MetadataDouble overrides only getInterfaceHash() and getInterfaceVersion(), which is
-// sufficient because halcompat::isCompatible reads nothing else (halcompat.h:161-171). The
-// risk in a double that narrow is the opposite of the usual one: not that it does too little,
-// but that an interface method might be reached and quietly answer something plausible,
-// letting a case pass for a reason it does not name. IHdmiCecDefault forecloses that by
-// answering every interface method with UNKNOWN_TRANSACTION (IHdmiCec.h:45-65), so any such
-// call surfaces as a non-ok status rather than as a plausible answer - and that is asserted
-// here, on all seven, so the guarantee is measured rather than read off the header.
-//
-// onAsBinder() returning nullptr is asserted for a second, separate reason: it is exactly why
-// the fake service deliberately does not derive from IHdmiCecDefault but from BnHdmiCec
-// (recorded on FakeHdmiCecService) - an object derived from the default can
-// never be published to the service manager nor reached through a proxy. Pinning it here,
-// where the one IHdmiCecDefault-derived object in the suite lives, keeps that reasoning
-// attached to the thing it explains.
 /**
- * @brief MetadataDouble answers no interface method, so no other case can pass on an
- *        answer it never asked for.
- * @pre Runs under every invocation, and against no resolved back-end: the double is
- *      constructed locally and halcompat is called directly.
- * @note Evidence: every one of the seven IHdmiCec interface methods returns a non-ok
- *       binder status, onAsBinder() returns nullptr, and the two overridden metadata
- *       members still report the values installed.
+ * @brief MetadataDouble refuses every IHdmiCec method, so no case can pass on an answer it
+ *        never asked for.
+ * @pre Runs under every invocation; the double is local and halcompat is called directly.
+ * @note Asserts that all seven interface methods return non-ok, onAsBinder() returns nullptr,
+ *       and both metadata overrides report their installed values.
  * @see MetadataDouble
  */
 TEST_F(DriverAidlCompatibilityTest, TheCompatibilityDoubleAnswersNoInterfaceMethod) {
-    // Held by its concrete type rather than as an sp<IHdmiCec>, and deliberately:
-    // IInterface declares onAsBinder() protected, and IHdmiCecDefault re-declares its override
-    // public, so the assertion on it below is only well formed through the derived type. The
-    // other calls would work either way.
+    // Held by its concrete type: onAsBinder() is protected in IInterface and public only through
+    // IHdmiCecDefault's override.
     const ::android::sp<MetadataDouble> doubleUnderTest =
         ::android::sp<MetadataDouble>::make(std::string(kFrozenInterfaceHash),
                                            kClientInterfaceVersion);
     ASSERT_TRUE(doubleUnderTest != nullptr);
 
-    // Every interface method must refuse. Out-parameters are supplied so that a method which
-    // wrote one despite refusing would be a use-of-uninitialised rather than a silent pass.
+    // Every interface method must refuse. The out-parameters are valid, initialised storage, and
+    // only each method's returned status is asserted.
     cechal::State state = cechal::State::CLOSED;
     ::std::optional< ::com::rdk::hal::PropertyValue> property;
     ::std::vector<int32_t> addresses;
@@ -4023,16 +2778,10 @@ TEST_F(DriverAidlCompatibilityTest, TheCompatibilityDoubleAnswersNoInterfaceMeth
         << "the hash override is not in effect";
 }
 
-// A null proxy is rejected before any metadata is read (halcompat.h:161-163). This is the
-// arm the selection actually takes when the service manager has nothing published under
-// the production name, so it is the most frequently exercised branch in production and the
-// cheapest one to get wrong by assuming a null check exists further down.
 /**
  * @brief A null proxy is rejected before any metadata is read.
  * @pre Runs under every invocation; needs no service and no resolved back-end.
- * @note Evidence: halcompat::isCompatible reports false for a default-constructed
- *       sp<IHdmiCec>. This is the arm the selection takes whenever nothing is published
- *       under the production name, so it is the most frequently reached of the three.
+ * @note This is the arm selection takes whenever nothing is published under the production name.
  */
 TEST_F(DriverAidlCompatibilityTest, IncompatibleWhenServiceIsNull) {
     const ::android::sp<cechal::IHdmiCec> absent;
@@ -4045,19 +2794,10 @@ TEST_F(DriverAidlCompatibilityTest, IncompatibleWhenServiceIsNull) {
            "open() and dereference nothing";
 }
 
-// An empty hash means the hash query itself failed - a broken link rather than a
-// development build - and is rejected at halcompat.h:165-167.
-//
-// The double is the stock IHdmiCecDefault, unmodified, because IHdmiCec.h:69-71 already
-// returns "" from getInterfaceHash(). Asserting against the stock object rather than
-// against an override is the point: it demonstrates that the snapshot's own default really
-// is the rejected value, so nothing in this file had to arrange the condition.
 /**
  * @brief An empty interface hash is a failed hash query and is never read as agreement.
- * @pre Runs under every invocation; the subject is a stock IHdmiCecDefault, so the
- *      condition is the snapshot's own default rather than something arranged here.
- * @note Evidence: the stock default's getInterfaceHash() is asserted empty first, then
- *       halcompat::isCompatible reports false for it.
+ * @pre Runs under every invocation. The subject is a stock IHdmiCecDefault, whose own hash is
+ *      empty, so nothing here arranges the condition.
  */
 TEST_F(DriverAidlCompatibilityTest, IncompatibleWhenInterfaceHashIsEmpty) {
     const ::android::sp<cechal::IHdmiCec> stockDefault =
@@ -4074,19 +2814,11 @@ TEST_F(DriverAidlCompatibilityTest, IncompatibleWhenInterfaceHashIsEmpty) {
            "never be read as agreement";
 }
 
-// A hash of "-1" is the other spelling of a failed hash query, rejected by the same
-// condition at halcompat.h:165-167. It is not interchangeable with the empty case: this is
-// the exact value the L1 harness installs for invocation C (its BROKEN_INTERFACE_HASH, applied
-// by publishFakeForMode()), so
-// the factory-level fallback that invocation proves rests on this branch.
 /**
- * @brief The "-1" spelling of a failed hash query is rejected, with a compatible version
- *        reported so the rejection can only be the hash.
- * @pre Runs under every invocation. Not interchangeable with the empty-hash case: this is
- *      the value the L1 harness installs for invocation C, so the factory-level fallback
- *      that invocation proves rests on this branch.
- * @note Evidence: the double's version is asserted equal to this client's, then
- *       halcompat::isCompatible reports false.
+ * @brief The "-1" spelling of a failed hash query is rejected while the version is compatible.
+ * @pre Runs under every invocation.
+ * @note "-1" is the hash the L1 harness installs for invocation C, whose factory-level fallback
+ *       rests on this branch.
  * @see publishFakeForMode
  */
 TEST_F(DriverAidlCompatibilityTest, IncompatibleWhenInterfaceHashIsMinusOne) {
@@ -4102,22 +2834,11 @@ TEST_F(DriverAidlCompatibilityTest, IncompatibleWhenInterfaceHashIsMinusOne) {
            "make invocation C select the AIDL back-end instead of falling back to legacy";
 }
 
-// A "notfrozen" hash is a pre-freeze development server, which makes no compatibility
-// promise. halcompat.h:168-170 returns allowUnfrozen for it, and that parameter defaults to
-// false (halcompat.h:159), so the default-argument call the production back-end makes from
-// DriverAidlImpl::isServiceAvailable() rejects it.
-//
-// Both dispositions are asserted, because the default is the whole behaviour under test: a
-// case that only asserted rejection could not distinguish "rejected because unfrozen
-// servers are opt-in" from "rejected because the hash was not recognised at all".
 /**
  * @brief A "notfrozen" development server is rejected by the defaulted call and accepted
  *        only when opted into explicitly.
- * @pre Runs under every invocation. The defaulted call is the one the production back-end
- *      makes, which is why the default is the behaviour under test.
- * @note Evidence: both dispositions are asserted on one double. Asserting rejection alone
- *       could not distinguish "rejected because unfrozen servers are opt-in" from
- *       "rejected because the hash was not recognised at all".
+ * @pre Runs under every invocation. The defaulted call is the one production makes.
+ * @note Both dispositions are asserted, so the rejection cannot be an unrecognised hash.
  * @see DriverAidlImpl::isServiceAvailable()
  */
 TEST_F(DriverAidlCompatibilityTest, UnfrozenServerIsRejectedByDefaultAndAcceptedOnlyWhenOptedIn) {
@@ -4135,18 +2856,10 @@ TEST_F(DriverAidlCompatibilityTest, UnfrozenServerIsRejectedByDefaultAndAccepted
            "some other reason";
 }
 
-// The identity case, and the baseline every version case below is measured against: a
-// server reporting exactly this client's compiled-against version, with the real frozen
-// hash, is compatible. If this failed, every rejection below would be meaningless because
-// nothing would ever be accepted.
 /**
- * @brief The identity case: the real frozen hash and this client's own version are
- *        accepted.
- * @pre Runs under every invocation. This is the baseline every version case is measured
- *      against; were it to fail, no rejection below would mean anything because nothing
- *      would ever be accepted.
- * @note Evidence: the double's hash is asserted equal to the frozen constant, so the
- *       version comparison is genuinely reached, and then isCompatible reports true.
+ * @brief The real frozen hash with this client's own version is accepted.
+ * @pre Runs under every invocation. Every version case is measured against this baseline.
+ * @note The hash is asserted to be the frozen constant first, so the version comparison is reached.
  */
 TEST_F(DriverAidlCompatibilityTest, CompatibleWhenServerReportsThisClientsVersion) {
     const ::android::sp<cechal::IHdmiCec> exact =
@@ -4162,23 +2875,11 @@ TEST_F(DriverAidlCompatibilityTest, CompatibleWhenServerReportsThisClientsVersio
            "could ever be selected on any platform";
 }
 
-// A newer server within the same era and major is compatible, and this case exists
-// specifically to stop the opposite rule being encoded by accident.
-//
-// The era-0 rule at halcompat.h:112-114 accepts any server that is same-era, same-major and
-// not older, so 1010 against 1000 must be accepted. A test that treated "not exactly our
-// version" as incompatible would look reasonable, would pass against a fake that reports
-// the exact version, and would be asserting a rule that does not exist - which would then
-// reject a legitimately upgraded HAL in the field. Both ends of the accepted range are
-// asserted, 1010 and 1999, so the case pins a range rather than a point.
 /**
- * @brief A newer server in the same era and major is accepted, at both ends of the
- *        accepted range.
- * @pre Runs under every invocation. Exists to stop the opposite rule being encoded by
- *      accident: treating "not exactly our version" as incompatible would pass against a
- *      fake reporting the exact version while rejecting a legitimately upgraded HAL.
- * @note Evidence: 1010 and 1999 are both accepted, so the case pins the whole range
- *       rather than a point.
+ * @brief A newer server in the same era and major is accepted, at both ends of the range.
+ * @pre Runs under every invocation.
+ * @note Accepting 1010 and 1999 pins the range and guards against an "exact version only" rule
+ *       that would reject a legitimately upgraded HAL.
  */
 TEST_F(DriverAidlCompatibilityTest, CompatibleWhenServerReportsNewerVersionInSameMajor) {
     const ::android::sp<cechal::IHdmiCec> newer =
@@ -4202,16 +2903,11 @@ TEST_F(DriverAidlCompatibilityTest, CompatibleWhenServerReportsNewerVersionInSam
            "longer the whole of [1000, 1999] that the file block's analysis relies on";
 }
 
-// A different major generation is breaking in era 0, so it is rejected by the major
-// equality conjunct at halcompat.h:113 - notably even though 2000 is numerically larger
-// than this client's 1000, which is why an ordering-only comparison would wrongly accept it.
 /**
  * @brief A next-major server is rejected by the major equality conjunct even though its
  *        version is numerically larger.
  * @pre Runs under every invocation.
- * @note Evidence: the cross-major value is asserted greater than the client's first, so a
- *       rejection cannot be attributed to ordering; an ordering-only comparison would
- *       wrongly accept it.
+ * @note The value is asserted greater than the client's first, so ordering alone would accept it.
  */
 TEST_F(DriverAidlCompatibilityTest, IncompatibleWhenServerReportsDifferentMajor) {
     const ::android::sp<cechal::IHdmiCec> crossMajor =
@@ -4229,17 +2925,11 @@ TEST_F(DriverAidlCompatibilityTest, IncompatibleWhenServerReportsDifferentMajor)
            "to an ordering comparison";
 }
 
-// A server in a later era is rejected for a third, distinct reason: the era equality
-// conjunct at halcompat.h:112. This is not the same branch as the cross-major case above -
-// 100000 has era 1 and major 0, so it fails on era first - and it is worth separating
-// because an era-1 server is a re-frozen interface rather than a broken one.
 /**
- * @brief A later-era server is rejected by the era equality conjunct, which is a third
- *        distinct reason from a null proxy and from a cross-major version.
+ * @brief A later-era server is rejected by the era equality conjunct.
  * @pre Runs under every invocation.
- * @note Evidence: isCompatible reports false for an era-1 value. Kept separate from the
- *       cross-major case because an era-1 server is a re-frozen interface rather than a
- *       broken one.
+ * @note Distinct from the cross-major case: 100000 is era 1, major 0, a re-frozen interface
+ *       rather than a broken one.
  */
 TEST_F(DriverAidlCompatibilityTest, IncompatibleWhenServerReportsDifferentEra) {
     const ::android::sp<cechal::IHdmiCec> crossEra =
@@ -4252,19 +2942,11 @@ TEST_F(DriverAidlCompatibilityTest, IncompatibleWhenServerReportsDifferentEra) {
            "this must be rejected until the client itself is re-frozen into era 1 or later";
 }
 
-// The generator's default version, 1, is what a pre-freeze development server reports
-// through the VERSION channel rather than through the hash. It decodes to era 0, major 0,
-// so it is rejected by the cross-major conjunct - and this is the case that would be
-// mislabelled as "older same-major" if the encoding were not decoded carefully, since 1 is
-// indeed smaller than 1000. It is not older-same-major; there is no such value for this
-// client (unreachable path (1) in the file block).
 /**
  * @brief The generator's default version of 1 is rejected on major, not on ordering.
  * @pre Runs under every invocation.
- * @note Evidence: the decoded major of 1 is asserted to be 0 and asserted different from
- *       this client's, so the case is pinned to the cross-major conjunct. Mislabelling it
- *       as older-same-major is the available mistake, since 1 is indeed smaller than 1000,
- *       and no older-same-major value exists for this client.
+ * @note Version 1 decodes to era 0, major 0, so the cross-major conjunct rejects it; no
+ *       older-same-major value exists for this client.
  */
 TEST_F(DriverAidlCompatibilityTest, IncompatibleWhenServerReportsUnfrozenGeneratorVersion) {
     const ::android::sp<cechal::IHdmiCec> generatorDefault =
@@ -4284,30 +2966,12 @@ TEST_F(DriverAidlCompatibilityTest, IncompatibleWhenServerReportsUnfrozenGenerat
            "accepted as compatible";
 }
 
-// The era-0 ordering conjunct at halcompat.h:114, reached with a different client because it
-// is unreachable for this one.
-//
-// This is the whole of unreachable path (1) expressed as an executable assertion. For client
-// 1000 the same-era, same-major servers are exactly 1000 through 1999 and every one of them
-// satisfies server >= client, so the ordering conjunct can never be the conjunct that
-// rejects. Calling detail::isCompatible directly with a client of 3020 and a server of 3000
-// - era 0 == era 0, major 3 == major 3, and 3000 >= 3020 false - reaches it. The two
-// preceding assertions establish that the other two conjuncts hold, which is what makes this
-// a proof about the ordering conjunct specifically rather than just another rejection.
-//
-// halcompat.h:128's own static_assert(!isCompatible(3000, 2000), "era0 older rejected") does
-// not reach this arm: major(3000) is 3, major(2000) is 2, so that pair is rejected on major
-// and merely re-covers the cross-major case above.
 /**
- * @brief The era-0 ordering conjunct rejects an older server, reached with a different
- *        client because it is unreachable for this one.
- * @pre Runs under every invocation, and calls halcompat::detail::isCompatible directly
- *      with a client of 3020 and a server of 3000 rather than going through a double.
- * @note Evidence: the pair is asserted same-era and same-major first, so the other two
- *       conjuncts hold and the rejection is attributable to ordering alone; a reversed
- *       positive control then shows the pair itself is not what is rejected.
- * @warning halcompat's own static_assert on the pair (3000, 2000) does not reach this
- *          arm - those differ on major, so it merely re-covers the cross-major case.
+ * @brief The era-0 ordering conjunct rejects an older same-major server.
+ * @pre Runs under every invocation; calls halcompat::detail::isCompatible directly with a
+ *      client of 3020 and a server of 3000, since the conjunct is unreachable for this client.
+ * @note Same era and same major are asserted first, so the rejection is attributable to
+ *       ordering alone; the reversed pair is the positive control.
  */
 TEST_F(DriverAidlCompatibilityTest, OlderSameMajorServerIsRejectedByTheOrderingRule) {
     ASSERT_EQ(halcompat::detail::era(kOlderSameMajorClient),
@@ -4336,19 +3000,13 @@ TEST_F(DriverAidlCompatibilityTest, OlderSameMajorServerIsRejectedByTheOrderingR
 /**
  * @brief A metadata double whose first hash read fails and whose later reads succeed.
  *
- * This models the generated proxy's actual caching rule, which is the mechanism behind the
- * one behaviour DriverAidlImpl::isServiceAvailable() must never assume away: a metadata
- * value read successfully is cached, but a failed read is stored as -1 and retried on the
- * next call. So a metadata transaction that failed for the compatibility decision can
- * succeed for a diagnostic reread taken immediately afterwards, and the two calls then
- * disagree.
- *
- * @warning Deliberately not derived from BnHdmiCec, for the reason MetadataDouble's own
- *          warning gives: a remote Bn* answers metadata transactions from compiled-in
- *          constants, which would make the override below inert.
+ * Models the generated proxy's caching rule: a failed metadata read is stored as -1 and
+ * retried, so the deciding read and a later reread can disagree.
+ * @warning Not derived from BnHdmiCec, for the reason MetadataDouble's warning gives.
  */
 class RecoveringMetadataDouble : public cechal::IHdmiCecDefault {
 public:
+    /** @brief Reports the "-1" hash on the first read and the frozen digest thereafter. */
     std::string getInterfaceHash() override
     {
         ++hashReads_;
@@ -4364,11 +3022,9 @@ public:
     int32_t getInterfaceVersion() override { return kClientInterfaceVersion; }
 
     /**
-     * @brief How many times getInterfaceHash() has been called on this double
+     * @brief How many times getInterfaceHash() has been called on this double.
      *
-     * @return int - The read count. Asserting on it is what attributes a disagreement
-     *               between two compatibility calls to the modelled first-read failure
-     *               rather than to some other difference between the calls.
+     * @return int - The read count, which attributes a disagreement to the first-read failure.
      */
     int hashReads() const { return hashReads_; }
 
@@ -4377,37 +3033,11 @@ private:
     int hashReads_ = 0;
 };
 
-// The counterexample that motivated the current design, kept as the model of the hazard.
-//
-// The hazard is that a compatibility decision and any later look at the server's metadata are
-// separate transactions. The generated proxy caches a metadata value it read successfully but
-// stores a failed read as "-1" and retries it, so a read that failed for the decision can
-// succeed afterwards. This case is the smallest thing that exhibits it: with a first read that
-// fails and a second that recovers, halcompat rejects on read 1 and read 2 reports a perfectly
-// compatible server.
-//
-// Two diagnostic shapes are unconstructible because of it, and both are the reason the
-// production rule is what it is. A diagnostic that re-read the metadata and selected a cause
-// from the reread hash would fall through its whole chain - a recovered hash is neither empty,
-// nor "-1", nor "notfrozen" - and announce that the interface version violated the
-// era-and-major rule, when the version was never the problem. A diagnostic that asked
-// halcompat a second time and then read the hash and version again separately would combine a
-// predicate retry that still failed with a metadata retry that succeeded, land in its
-// not-compatible arm holding compatible values, and blame the version rule all the same.
-//
-// The rule that forecloses both: one deciding predicate call, and then
-// DriverAidlImpl::emitCompatibilityRejectionDiagnostic() takes exactly one snapshot and
-// reports it as evidence about the server while explicitly declining to say which rule
-// applied. This case models the transaction instability itself; the cases further down drive
-// the real production emitter and assert its wording.
 /**
  * @brief Two compatibility calls on one service can disagree, because the deciding read and
  *        any later read are separate transactions.
- * @pre Runs under every invocation. Uses RecoveringMetadataDouble, whose first hash read
- *      fails and whose second succeeds, which is the proxy's own retry-a-failed-read rule.
- * @note Evidence: the first call rejects, the second accepts, and the double reports
- *       exactly two hash reads - so the disagreement is attributable to the modelled
- *       first-read failure and to nothing else.
+ * @pre Runs under every invocation, against RecoveringMetadataDouble.
+ * @note The first call rejects, the second accepts, and exactly two hash reads occur.
  * @see DriverAidlImpl::emitCompatibilityRejectionDiagnostic()
  */
 TEST_F(DriverAidlCompatibilityTest, ARecoveredMetadataReadMakesTwoCompatibilityCallsDisagree) {
@@ -4423,7 +3053,8 @@ TEST_F(DriverAidlCompatibilityTest, ARecoveredMetadataReadMakesTwoCompatibilityC
            "modelled transient failure would not have caused a fallback at all and nothing below "
            "this line would be testing the situation it claims to test";
 
-    // The observation: taken exactly as isServiceAvailable() now takes it after a rejection.
+    // The observation: a separate, later read of the same service, like the post-rejection
+    // diagnostic read isServiceAvailable() makes.
     EXPECT_TRUE(halcompat::isCompatible<cechal::IHdmiCec>(service))
         << "the second compatibility call did not recover, so this double no longer models the "
            "proxy's retry-a-failed-read rule and cannot guard the causal wording it exists to "
@@ -4437,14 +3068,11 @@ TEST_F(DriverAidlCompatibilityTest, ARecoveredMetadataReadMakesTwoCompatibilityC
 /**
  * @brief A compatibility double whose metadata transaction fails outright.
  *
- * Models the one remaining shape the production diagnostic has to survive: the snapshot read
- * itself failing. Over binder that is a dead or refusing service; here it is an exception from
- * a direct call, which is what the emitter's own catch(...) sees either way. The point of the
- * case that uses it is that a failed observation must cost a less specific message and must
- * not be able to disturb the cause the caller already recorded.
+ * Models the snapshot read itself failing, as a dead or refusing service would over binder.
  */
 class ThrowingMetadataDouble : public cechal::IHdmiCecDefault {
 public:
+    /** @brief Throws, standing in for a failed metadata transaction. */
     std::string getInterfaceHash() override
     {
         throw std::runtime_error("simulated metadata transaction failure");
@@ -4461,17 +3089,12 @@ public:
 /**
  * @brief A double whose hash reads fail twice and succeed from the third read onward.
  *
- * Models delayed recovery: a diagnostic that asked the deciding predicate a second time and
- * then read the hash and version again separately could combine a second read that still
- * failed with a third read that succeeded, and so report compatible values from its
- * not-compatible arm. The single-snapshot rule
- * DriverAidlImpl::emitCompatibilityRejectionDiagnostic() follows makes that combination
- * unconstructible, and this double is what holds that rule to account.
- *
+ * Models delayed recovery, against which the emitter's single-snapshot rule is held.
  * @warning Not derived from BnHdmiCec, for the reason MetadataDouble's warning gives.
  */
 class DelayedRecoveryMetadataDouble : public cechal::IHdmiCecDefault {
 public:
+    /** @brief Reports the "-1" hash on the first two reads and the frozen digest thereafter. */
     std::string getInterfaceHash() override
     {
         ++hashReads_;
@@ -4487,10 +3110,9 @@ public:
     int32_t getInterfaceVersion() override { return kClientInterfaceVersion; }
 
     /**
-     * @brief How many times getInterfaceHash() has been called on this double
+     * @brief How many times getInterfaceHash() has been called on this double.
      *
-     * @return int - The read count, which is what pins the recovery to the third read
-     *               rather than to an earlier one.
+     * @return int - The read count, which pins the recovery to the third read.
      */
     int hashReads() const { return hashReads_; }
 
@@ -4499,21 +3121,12 @@ private:
     int hashReads_ = 0;
 };
 
-// The observation helpers are tested directly, and that is the only way to cover them here.
-//
-// isServiceAvailable() reaches its compatibility stage only after isBinderPreflightOk() passes
-// on the default driver path, and there is no binder transport on this host, so the production
-// arm that emits this wording is unreachable in this process -- it belongs to invocation C,
-// which is deferred. The two helpers the message is built from are public statics for exactly
-// this reason, so the wording itself is covered rather than assumed.
 /**
  * @brief Each observed hash category is described distinguishably, and no description makes
  *        a causal claim.
- * @pre Runs under every invocation; calls the production classifier directly, so it needs
- *      no service and no resolved back-end.
- * @note Evidence: the four categories each yield their own phrase, and every phrase is
- *       asserted free of the word "because" - which is the whole point, since a
- *       post-decision read is not entitled to say why the decision went the way it did.
+ * @pre Runs under every invocation; calls the production classifier directly, because the
+ *      arm that emits this wording is unreachable without a binder transport.
+ * @note Every phrase is asserted free of "because".
  * @see DriverAidlImpl::describeObservedInterfaceHash()
  */
 TEST_F(DriverAidlCompatibilityTest, TheObservedHashDescriptionNamesEachCategoryWithoutClaimingCause) {
@@ -4541,17 +3154,11 @@ TEST_F(DriverAidlCompatibilityTest, TheObservedHashDescriptionNamesEachCategoryW
     }
 }
 
-// A snapshot that would itself be accepted must never be blamed on the VERSION rule.
-// This is the invariant the production message depends on: when this predicate is true the
-// message says the metadata changed or recovered; when it is false the message names all three
-// possible causes and attributes none.
 /**
  * @brief A snapshot that would itself be accepted is reported as acceptable, so the version
  *        rule can never be blamed for it.
  * @pre Runs under every invocation; calls the production predicate directly.
- * @note Evidence: the frozen digest with this client's own version is accepted, and so is
- *       the same digest with a newer version in the same era and major - a helper that
- *       treated "not equal" as unacceptable would encode a rule that does not exist.
+ * @note A newer same-era, same-major version is accepted too.
  * @see DriverAidlImpl::observedMetadataWouldBeAccepted()
  */
 TEST_F(DriverAidlCompatibilityTest, AnObservedSnapshotThatWouldBeAcceptedReportsChangedMetadata) {
@@ -4570,13 +3177,10 @@ TEST_F(DriverAidlCompatibilityTest, AnObservedSnapshotThatWouldBeAcceptedReports
 }
 
 /**
- * @brief Neither half of an observed snapshot can be waved through: a bad hash or an
- *        incompatible version each makes it unacceptable on its own.
+ * @brief A bad hash or an incompatible version each makes an observed snapshot unacceptable
+ *        on its own.
  * @pre Runs under every invocation; calls the production predicate directly.
- * @note Evidence: each non-digest hash is paired with a compatible version so only the hash
- *       can reject, and the frozen digest is paired with an older-same-major, a cross-major
- *       and a cross-era version so only the version can - which is what shows the version
- *       half delegates to halcompat rather than reimplementing it.
+ * @note Each half is varied with the other held compatible.
  * @see DriverAidlImpl::observedMetadataWouldBeAccepted()
  */
 TEST_F(DriverAidlCompatibilityTest, AnObservedSnapshotIsNotAcceptedForABadHashOrAnIncompatibleVersion) {
@@ -4602,39 +3206,14 @@ TEST_F(DriverAidlCompatibilityTest, AnObservedSnapshotIsNotAcceptedForABadHashOr
         << "a cross-era server version was reported acceptable";
 }
 
-// The verifier's exact sequence, reproduced: fail, fail, then succeed.
-//
-// The hazard was: decision reads and fails; a second predicate call retries and fails, so the
-// code concludes "still not compatible"; a third, separate read then succeeds and returns
-// compatible values; the classification runs on those and blames the version rule. Production
-// now takes one snapshot and asks this predicate about that snapshot alone, so the two halves
-// can no longer be mixed -- and whichever read the snapshot lands on, the reported wording is a
-// property of that one pair.
-// ================================================================================
-// the production emitter, driven directly, with its output captured.
-//
-// Everything above this line tests the observation helpers. That leaves the thing a reviewer
-// actually cares about untested: the wording DriverAidlImpl emits. The cases below close that
-// by calling DriverAidlImpl::emitCompatibilityRejectionDiagnostic() -- the one and only
-// production emitter, called from isServiceAvailable() and from nowhere else -- and asserting
-// on the text it writes. There is no second copy of the message here to drift from the first.
-//
-// Why the emitter rather than isServiceAvailable() itself: that function reaches its
-// compatibility stage only after isBinderPreflightOk() passes on the default driver path, and
-// this host has no binder transport, so the stage is unreachable in this process. It belongs to
-// invocation C. Driving the emitter is what makes the wording verifiable here; invocation C
-// remains what proves the factory reaches it.
-// ================================================================================
+// The production emitter, driven directly with its output captured, so the asserted wording
+// is the wording DriverAidlImpl emits.
 
 /**
  * @brief The production diagnostic names all three rejection rules and claims none of them.
  *
- * @pre Runs under every invocation. Drives the production emitter directly, because
- *      isServiceAvailable() reaches its compatibility stage only after the preflight passes
- *      on the default driver path, and this host has no binder transport.
- * @note Evidence: the captured text is asserted to mention each of the three rules and to
- *       attribute none of them. There is no second copy of the wording here to drift from
- *       the first.
+ * @pre Runs under every invocation, driving the production emitter directly.
+ * @note The observed values are asserted to reach the log as well as the qualification.
  * @see DriverAidlImpl::emitCompatibilityRejectionDiagnostic()
  */
 TEST_F(DriverAidlCompatibilityTest, TheProductionDiagnosticNamesAllThreeRulesAndClaimsNoneOfThem) {
@@ -4668,10 +3247,7 @@ TEST_F(DriverAidlCompatibilityTest, TheProductionDiagnosticNamesAllThreeRulesAnd
            "take them for the values the decision used";
     EXPECT_THAT(emitted, ::testing::HasSubstr("halcompat::isCompatible(), the SOLE decision"))
         << "the diagnostic no longer states that halcompat owns the decision";
-    // The observed values must actually reach the log. This is not a redundant assertion: the
-    // first version of this message was ~900 characters and CCEC_LOG truncates at 499
-    // (MAX_LOG_BUFF in ccec/src/Util.cpp), so the qualification survived and every value the
-    // diagnostic exists to report was cut off. Capturing the output is what exposed it.
+    // The observed values must reach the log, which CCEC_LOG truncates at 499 bytes.
     EXPECT_THAT(emitted, ::testing::HasSubstr("interface hash ["))
         << "the observed interface hash never reached the log -- check the 499-byte CCEC_LOG "
            "limit before assuming the value was not computed";
@@ -4684,11 +3260,8 @@ TEST_F(DriverAidlCompatibilityTest, TheProductionDiagnosticNamesAllThreeRulesAnd
 /**
  * @brief Recovered metadata is reported as changed metadata, never blamed on the version rule.
  *
- * @pre Runs under every invocation, driving the production emitter directly against
+ * @pre Runs under every invocation, driving the production emitter against
  *      RecoveringMetadataDouble.
- * @note Evidence: the captured text names the changed-or-recovered metadata and does not
- *       name the version rule, which is the misattribution a re-reading diagnostic would
- *       make.
  * @see DriverAidlImpl::emitCompatibilityRejectionDiagnostic()
  */
 TEST_F(DriverAidlCompatibilityTest, TheProductionDiagnosticBlamesChangedMetadataNotTheVersionRule) {
@@ -4701,9 +3274,8 @@ TEST_F(DriverAidlCompatibilityTest, TheProductionDiagnosticBlamesChangedMetadata
         << "the deciding call accepted a \"-1\" hash, so no fallback would occur and this case "
            "would not be modelling a rejection at all";
 
-    // The emitter's single snapshot is therefore read 2, which recovers. This is exactly the
-    // sequence production performs -- one decision, then one snapshot -- and it is the sequence
-    // in which a diagnostic that re-read or re-asked would misreport the cause.
+    // The emitter's single snapshot is read 2, which recovers: one decision, then one
+    // snapshot, exactly as production performs them.
     std::string emitted;
     {
         StdoutCapture capture;
@@ -4725,9 +3297,8 @@ TEST_F(DriverAidlCompatibilityTest, TheProductionDiagnosticBlamesChangedMetadata
     EXPECT_THAT(emitted, ::testing::HasSubstr("frozen release digest"))
         << "the recovered hash was not described as a frozen digest, so the observation "
            "misreports what the server answered";
-    // The regression guard proper: the compatible observation must not be presented as a
-    // version failure. The message names the version rule as one of three possibilities,
-    // which is why this asserts on the causal claim rather than on the phrase.
+    // The regression guard: the version rule is named as one possibility, so the causal
+    // claim is what must be absent.
     EXPECT_THAT(emitted, ::testing::Not(::testing::HasSubstr("because the interface version")))
         << "the diagnostic asserted a version cause for a server whose observed version is "
            "compatible, which is a statement the single-snapshot rule exists to make "
@@ -4739,11 +3310,8 @@ TEST_F(DriverAidlCompatibilityTest, TheProductionDiagnosticBlamesChangedMetadata
 /**
  * @brief A recovery that arrives later than the snapshot is still never blamed on the version.
  *
- * @pre Runs under every invocation, driving the production emitter directly against
+ * @pre Runs under every invocation, driving the production emitter against
  *      DelayedRecoveryMetadataDouble, whose hash recovers only on the third read.
- * @note Evidence: the captured text is the same changed-or-recovered wording as for
- *       immediate recovery, so which read the single snapshot lands on cannot change the
- *       rule the message attributes.
  * @see DriverAidlImpl::emitCompatibilityRejectionDiagnostic()
  */
 TEST_F(DriverAidlCompatibilityTest, DelayedMetadataRecoveryOnAThirdReadCannotBeBlamedOnTheVersionRule) {
@@ -4767,9 +3335,8 @@ TEST_F(DriverAidlCompatibilityTest, DelayedMetadataRecoveryOnAThirdReadCannotBeB
     EXPECT_THAT(firstEmission, ::testing::Not(::testing::HasSubstr("WOULD itself have been accepted")))
         << "a snapshot that is still broken was reported as one that would have been accepted";
 
-    // Second decision on read 3 -- which recovers, so halcompat now accepts. That is the
-    // honest outcome and it is asserted rather than worked around: the point of the case is
-    // that no arrangement of reads makes the diagnostic blame the version rule.
+    // Second decision on read 3 recovers, so halcompat now accepts; that honest outcome is
+    // asserted rather than worked around.
     const bool secondVerdict = halcompat::isCompatible<cechal::IHdmiCec>(service);
     ASSERT_TRUE(secondVerdict)
         << "the third read did not recover, so this double is not modelling DELAYED recovery";
@@ -4790,20 +3357,16 @@ TEST_F(DriverAidlCompatibilityTest, DelayedMetadataRecoveryOnAThirdReadCannotBeB
 /**
  * @brief A failed observation costs a less specific message and cannot relabel the cause.
  *
- * @pre Runs under every invocation, driving the production emitter directly against
- *      ThrowingMetadataDouble, whose metadata transaction fails outright.
- * @note Evidence: the captured text is the fallback message rather than a specific one, and
- *       the cause the caller already recorded is unchanged - a failed post-decision read
- *       must cost detail and must never be able to overwrite the decision's own reason.
+ * @pre Runs under every invocation, driving the production emitter against
+ *      ThrowingMetadataDouble.
  * @see DriverAidlImpl::emitCompatibilityRejectionDiagnostic()
  */
 TEST_F(DriverAidlCompatibilityTest, AFailedObservationEmitsTheFallbackMessageAndPreservesTheCause) {
     const ::android::sp<cechal::IHdmiCec> service =
         ::android::sp<ThrowingMetadataDouble>::make();
 
-    // The cause the caller records lives on the instance. The emitter is static, so it has no
-    // `this` and cannot reach availabilityReason at all -- the preservation below is structural
-    // rather than a promise. This asserts the observable half of that guarantee.
+    // The emitter is static and cannot reach an instance's recorded cause; this asserts the
+    // observable half of that guarantee.
     DriverAidlImpl backEnd;
     const std::string reasonBefore(backEnd.unavailabilityReason() != NULL
                                        ? backEnd.unavailabilityReason()
@@ -4812,9 +3375,8 @@ TEST_F(DriverAidlCompatibilityTest, AFailedObservationEmitsTheFallbackMessageAnd
     std::string emitted;
     {
         StdoutCapture capture;
-        // Must not propagate: a diagnostic that threw would reach isServiceAvailable()'s own
-        // handler, which records REASON_QUERY_FAILED -- turning an established compatibility
-        // rejection into an unexplained query failure.
+        // Must not propagate: isServiceAvailable()'s own handler would relabel the rejection
+        // as REASON_QUERY_FAILED.
         ASSERT_NO_THROW(
             DriverAidlImpl::emitCompatibilityRejectionDiagnostic(service, std::string("HdmiCec")));
         emitted = capture.read();
@@ -4839,48 +3401,13 @@ TEST_F(DriverAidlCompatibilityTest, AFailedObservationEmitsTheFallbackMessageAnd
            "instance state and the preserve-cause guarantee is no longer structural";
 }
 
-// The four cases below are about the fake's own interface-metadata controls rather than about
-// halcompat, and they are here rather than in a fixture of their own for a concrete reason: a
-// new fixture would sit outside run_coverage.sh's classification constants, and a fixture in
-// none of those lists is what breaks its selected-plus-excluded reconciliation. This one is
-// already classified CONTRACT_ANY_BACKEND_SUITES, which is exactly right for cases that need
-// no registered service, no binder driver and no resolved back-end.
-//
-// What they establish, and why it is not ceremony. Each fake's two metadata getters trace when
-// - and only when - the value they report differs from their own compiled-in constant. Those
-// three traces (the controller's version and hash getters, and the service's version getter)
-// had no caller that could make them fire, because the setters that install a divergent value
-// did not exist: the fake carried one hash setter, on the service. The controls now exist
-// because AAP 0.4.1 requires the fake to offer overridable getInterfaceHash/getInterfaceVersion,
-// and these cases are what make each of the three a branch that is reached rather than one that
-// is merely reachable. A control nothing exercises is indistinguishable from a control that does
-// not work.
-//
-// Each case asserts three things per class, in this order: the getter reports the compiled-in
-// constant and stays quiet before any override, which pins the trace's false arm and is what
-// stops an ordinary run being flooded; the getter then reports exactly what the setter installed
-// and the trace names it, which is the true arm; and reset() puts both values back and returns
-// both getters to silence. The setters are traced too, and asserted, because a control that
-// changed a value without saying so leaves a captured log in which a later divergence line has
-// no cause anywhere above it.
-//
-// Never registered, in any of the four. Registration calls defaultServiceManager(), which opens
-// the binder driver and aborts on this host, so a case that registered would take the whole
-// binary down rather than fail.
+// The four cases below test the fakes' own interface-metadata controls; none registers a
+// fake, because registration needs a binder driver and these cases also run without one.
 /**
  * @brief The fake service reports the interface metadata installed on it, and says when it
  *        diverges.
- *
- * @pre Runs under every invocation. The fake is constructed locally and never registered, so
- *      nothing here touches the service manager or the binder driver.
- * @note Evidence: before any override both getters report the compiled-in constants and print
- *       no divergence line; after each setter the matching getter reports the installed value
- *       and the divergence line names it. The version half is what drives the service's
- *       previously unreachable version-divergence trace - unreachable because no
- *       setInterfaceVersion existed to install a differing value. A wrong implementation is a
- *       setter that stores nowhere the getter reads (the getter would keep reporting the
- *       constant), or a getter that reports a literal rather than the member (the same
- *       symptom, with reset() also silently a no-op).
+ * @pre Runs under every invocation, on a locally constructed, never registered fake.
+ * @note Defaults are reported quietly; each installed value is reported and traced.
  * @see FakeHdmiCecService::setInterfaceVersion(), FakeHdmiCecService::setInterfaceHash()
  */
 TEST_F(DriverAidlCompatibilityTest, TheServiceFakeReportsTheInterfaceMetadataInstalledOnIt) {
@@ -4943,7 +3470,8 @@ TEST_F(DriverAidlCompatibilityTest, TheServiceFakeReportsTheInterfaceMetadataIns
     EXPECT_THAT(hashOutput, ::testing::HasSubstr("getInterfaceHash] Reporting overridden hash"))
         << "the hash getter reported a divergent value without tracing it";
 
-    // The version half: the previously unreachable trace.
+    // The version half: an installed version is reported without disturbing the hash, and both
+    // its setter and its getter trace it.
     int32_t installedVersion = 0;
     std::string hashAfterVersion;
     std::string versionOutput;
@@ -4979,15 +3507,9 @@ TEST_F(DriverAidlCompatibilityTest, TheServiceFakeReportsTheInterfaceMetadataIns
 /**
  * @brief The fake service restores both metadata values on reset(), so an override cannot
  *        outlive the case that installed it.
- *
- * @pre Runs under every invocation, on a locally constructed and never registered fake.
- * @note Evidence: both values are installed and observed changed, then reset() is called and
- *       both getters report the compiled-in constants again and print no divergence line. This
- *       matters beyond tidiness: the harness registers one fake for the whole process because
- *       the selection resolves once, so a metadata value that survived a reset would decide the
- *       outcome of every later case. A wrong implementation is a reset() that restores the hash
- *       and forgets the version, which would leave the version-divergence trace firing for the
- *       remainder of the run with nothing naming the cause.
+ * @pre Runs under every invocation, on a locally constructed, never registered fake.
+ * @note The harness registers one fake for the whole process, so a surviving value would
+ *       decide every later case.
  * @see FakeHdmiCecService::reset()
  */
 TEST_F(DriverAidlCompatibilityTest, TheServiceFakeRestoresBothMetadataValuesOnReset) {
@@ -5036,21 +3558,9 @@ TEST_F(DriverAidlCompatibilityTest, TheServiceFakeRestoresBothMetadataValuesOnRe
 /**
  * @brief The fake controller reports the interface metadata installed on it, and says when it
  *        diverges.
- *
- * @pre Runs under every invocation, on a controller constructed directly rather than obtained
- *      from a service: the controls are the controller's own, and nothing about them needs a
- *      session. Never registered - a controller is never published under a name in any case,
- *      since a client obtains one from open()'s out-parameter.
- * @note Evidence: both getters report the compiled-in constants and stay quiet before any
- *       override, then each reports the value installed on it and traces the divergence. These
- *       two are the controller's previously unreachable traces - unreachable because the class
- *       carried no metadata setter at all. A wrong implementation is a setter that writes the
- *       service's member instead of the controller's, which would leave both traces here
- *       unreached while appearing to work.
- * @note What this does NOT establish, stated so the case is not over-read: the middleware's
- *       compatibility check reads the service interface's metadata alone, so a divergent value
- *       installed here decides no selection outcome and this case makes no compatibility claim.
- *       Its subject is the control and the fake's own reporting of it.
+ * @pre Runs under every invocation, on a controller constructed directly, never registered.
+ * @note The middleware checks only the service's metadata, so this case makes no
+ *       compatibility claim.
  * @see FakeHdmiCecController::setInterfaceVersion(), FakeHdmiCecController::setInterfaceHash()
  */
 TEST_F(DriverAidlCompatibilityTest, TheControllerFakeReportsTheInterfaceMetadataInstalledOnIt) {
@@ -5125,12 +3635,8 @@ TEST_F(DriverAidlCompatibilityTest, TheControllerFakeReportsTheInterfaceMetadata
  * @brief The fake controller restores both metadata values on reset().
  *
  * @pre Runs under every invocation, on a locally constructed controller.
- * @note Evidence: both values are installed and observed changed, then reset() is called and
- *       both getters report the compiled-in constants again and print no divergence line. The
- *       controller is reset separately from its service - the service's reset() deliberately
- *       does not touch the controller it owns - so a case that configures both must reset both,
- *       and a reset that missed either value would leak an override into the next case through
- *       the one long-lived controller the registered fake hands out.
+ * @note The service's reset() does not touch its controller, so a case configuring both must
+ *       reset both.
  * @see FakeHdmiCecController::reset(), FakeHdmiCecService::reset()
  */
 TEST_F(DriverAidlCompatibilityTest, TheControllerFakeRestoresBothMetadataValuesOnReset) {
@@ -5172,75 +3678,233 @@ TEST_F(DriverAidlCompatibilityTest, TheControllerFakeRestoresBothMetadataValuesO
 }
 
 /**
- * @brief The binder preflight's negative arms, by direct call.
+ * @brief By default the fake controller refuses an add IHdmiCecController forbids - a duplicate,
+ *        an address outside 0..14 or a mixed request - and registers nothing for it.
+ * @pre Runs under every invocation, on a controller constructed directly, never registered.
+ * @see FakeHdmiCecController::addLogicalAddresses()
+ */
+TEST_F(DriverAidlCompatibilityTest, TheControllerFakeRefusesAnAddTheContractForbids) {
+    const ::android::sp<FakeHdmiCecController> controller =
+        ::android::sp<FakeHdmiCecController>::make();
+    ASSERT_TRUE(controller != nullptr);
+
+    bool added = false;
+    ASSERT_TRUE(controller->addLogicalAddresses({ 4 }, &added).isOk());
+    EXPECT_TRUE(added) << "a free address inside 0..14 was refused";
+    ASSERT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 4 }));
+
+    const std::vector<std::vector<int32_t>> refused = { { 4 }, { -1 }, { 15 }, { 5, 15 }, { 6, 4 } };
+
+    for (size_t i = 0; i < refused.size(); i++) {
+        added = true;
+        ASSERT_TRUE(controller->addLogicalAddresses(refused[i], &added).isOk()) << "request " << i;
+        EXPECT_FALSE(added)
+            << "request " << i << " reported success although the contract requires false for an "
+               "already added or out-of-range address";
+        EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 4 }))
+            << "refused request " << i << " changed the registrations";
+        EXPECT_EQ(controller->getLastAddedLogicalAddresses(), refused[i]) << "request " << i;
+    }
+
+    added = false;
+    ASSERT_TRUE(controller->addLogicalAddresses({ 0, 14 }, &added).isOk());
+    EXPECT_TRUE(added) << "the range bounds 0 and 14 were refused";
+    added = false;
+    ASSERT_TRUE(controller->addLogicalAddresses({}, &added).isOk());
+    EXPECT_TRUE(added) << "an empty request was refused";
+    EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 4, 0, 14 }));
+    EXPECT_EQ(controller->getAddLogicalAddressesCallCount(), 8);
+}
+
+/**
+ * @brief By default the fake controller refuses a removal IHdmiCecController forbids - an absent
+ *        address, one outside 0..14 or a mixed request - and deregisters nothing for it.
+ * @pre Runs under every invocation, on a controller constructed directly, never registered.
+ * @see FakeHdmiCecController::removeLogicalAddresses()
+ */
+TEST_F(DriverAidlCompatibilityTest, TheControllerFakeRefusesARemovalTheContractForbids) {
+    const ::android::sp<FakeHdmiCecController> controller =
+        ::android::sp<FakeHdmiCecController>::make();
+    ASSERT_TRUE(controller != nullptr);
+
+    bool result = false;
+    ASSERT_TRUE(controller->addLogicalAddresses({ 4, 5 }, &result).isOk());
+    ASSERT_TRUE(result);
+
+    const std::vector<std::vector<int32_t>> refused = { { 6 }, { -1 }, { 15 }, { 4, 6 }, { 5, 15 } };
+
+    for (size_t i = 0; i < refused.size(); i++) {
+        result = true;
+        ASSERT_TRUE(controller->removeLogicalAddresses(refused[i], &result).isOk()) << "request " << i;
+        EXPECT_FALSE(result)
+            << "request " << i << " reported success although the contract requires false for an "
+               "address not added or out of range";
+        EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 4, 5 }))
+            << "refused request " << i << " changed the registrations";
+        EXPECT_EQ(controller->getLastRemovedLogicalAddresses(), refused[i]) << "request " << i;
+    }
+
+    result = false;
+    ASSERT_TRUE(controller->removeLogicalAddresses({ 4 }, &result).isOk());
+    EXPECT_TRUE(result) << "removing a registered address was refused";
+    EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 5 }));
+
+    result = true;
+    ASSERT_TRUE(controller->removeLogicalAddresses({ 4 }, &result).isOk());
+    EXPECT_FALSE(result) << "removing an address a second time was accepted";
+    EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 5 }));
+    EXPECT_EQ(controller->getRemoveLogicalAddressesCallCount(), 7);
+}
+
+/**
+ * @brief Forced results and non-ok statuses still override the fake controller's validation, and
+ *        reset() restores it.
+ * @pre Runs under every invocation, on a controller constructed directly, never registered.
+ * @see FakeHdmiCecController::setAddLogicalAddressesResult(),
+ *      FakeHdmiCecController::setRemoveLogicalAddressesResult()
+ */
+TEST_F(DriverAidlCompatibilityTest, TheControllerFakeOverridesStillApplyAndResetRestoresValidation) {
+    const ::android::sp<FakeHdmiCecController> controller =
+        ::android::sp<FakeHdmiCecController>::make();
+    ASSERT_TRUE(controller != nullptr);
+    bool result = true;
+
+    controller->setAddLogicalAddressesResult(false);
+    ASSERT_TRUE(controller->addLogicalAddresses({ 4 }, &result).isOk());
+    EXPECT_FALSE(result) << "a forced false add was reported as true";
+    EXPECT_TRUE(controller->getRegisteredLogicalAddresses().empty());
+
+    controller->setAddLogicalAddressesResult(true);
+    ASSERT_TRUE(controller->addLogicalAddresses({ 4 }, &result).isOk());
+    ASSERT_TRUE(controller->addLogicalAddresses({ 4 }, &result).isOk());
+    EXPECT_TRUE(result) << "a forced true add of a held address was reported as false";
+    EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 4 }));
+
+    controller->setRemoveLogicalAddressesResult(false);
+    ASSERT_TRUE(controller->removeLogicalAddresses({ 4 }, &result).isOk());
+    EXPECT_FALSE(result) << "a forced false removal was reported as true";
+    EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 4 }));
+
+    controller->setRemoveLogicalAddressesResult(true);
+    ASSERT_TRUE(controller->removeLogicalAddresses({ 9 }, &result).isOk());
+    EXPECT_TRUE(result) << "a forced true removal of an absent address was reported as false";
+    EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 4 }));
+
+    controller->reset();
+    ASSERT_TRUE(controller->addLogicalAddresses({ 4 }, &result).isOk());
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(controller->addLogicalAddresses({ 4 }, &result).isOk());
+    EXPECT_FALSE(result) << "reset() left the forced add result installed";
+    ASSERT_TRUE(controller->removeLogicalAddresses({ 9 }, &result).isOk());
+    EXPECT_FALSE(result) << "reset() left the forced removal result installed";
+
+    // A write would report true for these valid requests, so a false sentinel proves no write.
+    controller->setAddLogicalAddressesBinderStatus(
+        ::android::binder::Status::fromStatusT(::android::DEAD_OBJECT));
+    controller->setRemoveLogicalAddressesBinderStatus(
+        ::android::binder::Status::fromStatusT(::android::DEAD_OBJECT));
+    result = false;
+    const ::android::binder::Status addStatus = controller->addLogicalAddresses({ 5 }, &result);
+    const ::android::binder::Status removeStatus = controller->removeLogicalAddresses({ 4 }, &result);
+
+    EXPECT_EQ(addStatus.transactionError(), ::android::DEAD_OBJECT);
+    EXPECT_EQ(removeStatus.transactionError(), ::android::DEAD_OBJECT);
+    EXPECT_FALSE(result) << "a non-ok status still wrote the out-parameter";
+    EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 4 }))
+        << "a non-ok status still changed the registrations";
+}
+
+/**
+ * @brief The fake controller fails a self-addressed one-byte allocation poll with the installed
+ *        non-ok send status, records the poll and counts it only in the total.
+ * @pre Runs under every invocation, on a controller constructed directly, never registered.
+ * @see FakeHdmiCecController::setSendMessageBinderStatus(), FakeHdmiCecController::sendMessage()
+ */
+TEST_F(DriverAidlCompatibilityTest, TheControllerFakeFailsAnAllocationPollWithTheInstalledSendStatus) {
+    const ::android::sp<FakeHdmiCecController> controller =
+        ::android::sp<FakeHdmiCecController>::make();
+    ASSERT_TRUE(controller != nullptr);
+
+    controller->setSendMessageBinderStatus(::android::binder::Status::fromStatusT(::android::DEAD_OBJECT));
+
+    // A poll that is answered writes ACK_STATE_1, so BUSY surviving proves no write.
+    cechal::SendMessageStatus reported = cechal::SendMessageStatus::BUSY;
+    const ::android::binder::Status status = controller->sendMessage({ 0x44 }, &reported);
+
+    EXPECT_FALSE(status.isOk()) << "the installed DEAD_OBJECT was ignored for an allocation poll";
+    EXPECT_EQ(status.transactionError(), ::android::DEAD_OBJECT);
+    EXPECT_EQ(reported, cechal::SendMessageStatus::BUSY) << "a failed poll still wrote the out-parameter";
+    EXPECT_EQ(controller->getAllocationPolls(), std::vector<int32_t>({ 4 }));
+    EXPECT_EQ(controller->getTotalSendMessageCallCount(), 1) << "the failed poll was not counted";
+    EXPECT_EQ(controller->getSendMessageCallCount(), 0) << "a poll was counted as an application frame";
+    EXPECT_TRUE(controller->getLastSentMessage().empty());
+}
+
+/**
+ * @brief With an ok send status the fake controller answers a poll ACK_STATE_1 (free), and the
+ *        total send count covers polls and application frames while the frame count covers frames.
+ * @pre Runs under every invocation, on a controller constructed directly, never registered.
+ * @see FakeHdmiCecController::getTotalSendMessageCallCount(), FakeHdmiCecController::getSendMessageCallCount()
+ */
+TEST_F(DriverAidlCompatibilityTest, TheControllerFakeCountsPollsInTheTotalAndFramesInBothCounts) {
+    const ::android::sp<FakeHdmiCecController> controller =
+        ::android::sp<FakeHdmiCecController>::make();
+    ASSERT_TRUE(controller != nullptr);
+
+    cechal::SendMessageStatus reported = cechal::SendMessageStatus::BUSY;
+    ASSERT_TRUE(controller->sendMessage({ 0x88 }, &reported).isOk());
+    EXPECT_EQ(reported, cechal::SendMessageStatus::ACK_STATE_1) << "an unoccupied poll did not answer free";
+    EXPECT_EQ(controller->getTotalSendMessageCallCount(), 1);
+    EXPECT_EQ(controller->getSendMessageCallCount(), 0);
+
+    // One byte but not self-addressed, so an application frame (a directed poll), then a full frame.
+    const std::vector<std::vector<uint8_t>> frames = { { 0x40 }, { 0x40, 0x36 } };
+
+    for (size_t i = 0; i < frames.size(); i++) {
+        reported = cechal::SendMessageStatus::BUSY;
+        ASSERT_TRUE(controller->sendMessage(frames[i], &reported).isOk()) << "frame " << i;
+        EXPECT_EQ(reported, cechal::SendMessageStatus::ACK_STATE_0) << "frame " << i;
+        EXPECT_EQ(controller->getLastSentMessage(), frames[i]) << "frame " << i;
+    }
+
+    EXPECT_EQ(controller->getTotalSendMessageCallCount(), 3);
+    EXPECT_EQ(controller->getSendMessageCallCount(), 2);
+    EXPECT_EQ(controller->getAllocationPolls(), std::vector<int32_t>({ 8 }));
+
+    controller->reset();
+    EXPECT_EQ(controller->getTotalSendMessageCallCount(), 0) << "reset() did not clear the total";
+    EXPECT_EQ(controller->getSendMessageCallCount(), 0);
+}
+
+/**
+ * @brief The binder preflight's decision arms, driven by direct call.
  *
- * DriverAidlImpl::isBinderPreflightOk() is a public static member taking the binder driver
- * path and a context-manager timeout, both defaulted on its declaration in
- * ccec/src/DriverAidlImpl.hpp to DEFAULT_BINDER_DRIVER_PATH and
- * DEFAULT_CONTEXT_MANAGER_TIMEOUT_MS - named by symbol rather than by line, for the reason
- * the closing note of this file gives about citations into files it does not own. Taking
- * the path as a parameter is exactly what makes these cases possible: a nonexistent path
- * and a non-binder node can be probed without rendering a runner's real /dev/binder
- * unusable, and nothing here writes to, chmods or unlinks the real node. The member's own
- * documentation records that it is public so that a test translation unit may call it; a
- * file-local function in the .cpp would not have been callable at all.
- *
- * Why this predicate must exist at all, since a test of a guard reads as ceremony
- * otherwise. On the pinned binder stack, reaching the service manager unguarded is unsafe
- * in two independent ways: a missing or protocol-mismatched driver node is fatal rather
- * than an error return, because the pin extends libbinder's failed-driver
- * LOG_ALWAYS_FATAL_IF to plain Linux; and a working driver with no running servicemanager
- * blocks indefinitely, because obtaining an IServiceManager polls until binder handle 0
- * resolves with no bound of its own. Either one defeats the absolute requirement that a
- * supported SOC without an AIDL HAL reach the legacy back-end. On a host with no kernel
- * binder support - which is the common case for this suite - the first arm below is the one
- * standing between a plain ./run_L1Tests and a SIGABRT that would take all of the other
- * cases in this binary down with it.
- *
- * No driver precondition is established, for the same reason as the compatibility fixture:
- * nothing here touches the process-global driver, the HAL mock or the shared library.
- *
- * Self-sufficiency. Each case supplies its own path, and the one case that needs a real
- * filesystem node creates it, uses it and unlinks it within the case body. No shared state
- * is read or written, so every case passes alone and in any order.
+ * The driver path and context-manager timeout are parameters, so absent and non-binder nodes
+ * are probed without touching the real /dev/binder. The preflight guards libbinder, which
+ * aborts on a missing or mismatched driver and blocks when no servicemanager runs.
+ * @note Every case supplies its own path and probe state, so each passes alone, in any order.
  */
 class DriverAidlPreflightTest : public ::testing::Test {
 };
 
-// An empty path is refused outright, before anything is opened, by the first decision point
-// in DriverAidlImpl::isBinderPreflightOk(). This is the arm a misconfigured deployment reaches - a
-// path variable that resolved to nothing - and refusing it explicitly is what stops
-// ::open("") being attempted and its errno being reported as though a node had been found.
 /**
  * @brief An empty driver path is refused outright, before anything is opened.
- * @pre Runs under every invocation and needs no back-end, no service and no filesystem
- *      node: the predicate is a public static called directly.
- * @note Evidence: the predicate reports false for a default-constructed path. Refusing
- *       explicitly is what stops ::open("") being attempted and its errno reported as
- *       though a node had been found.
+ * @pre Runs under every invocation; the private static predicate is called through
+ *      BinderPreflightTestAccess.
+ * @note Refusing explicitly stops ::open("") being attempted and its errno misreported.
  * @see DriverAidlImpl::isBinderPreflightOk()
  */
 TEST_F(DriverAidlPreflightTest, DeclinesAnEmptyDriverPath) {
-    EXPECT_FALSE(DriverAidlImpl::isBinderPreflightOk(std::string()))
+    EXPECT_FALSE(BinderPreflightTestAccess::isBinderPreflightOk(std::string()))
         << "the preflight accepted an empty driver path, so a deployment whose path variable "
            "resolved to nothing would be told the binder transport is usable";
 }
 
-// A path with no node behind it is declined because ::open fails, at
-// DriverAidlImpl::isBinderPreflightOk()'s second decision point. This is the arm this entire
-// suite depends on: a host
-// without kernel binder support has no /dev/binder, so this is the arm that returns false,
-// the selection falls back to the legacy back-end, and every other case in this binary gets
-// to run. A regression here would not fail one test - it would abort the process inside
-// libbinder before the first test body executed.
 /**
  * @brief A path with nothing behind it is declined because the open fails.
- * @pre Runs under every invocation. The chosen path is asserted absent first, so the case
- *      cannot silently drift onto a different arm.
- * @note This is the arm the whole binary depends on: a host without kernel binder support
- *       has no /dev/binder, so this verdict is what makes the selection fall back and lets
- *       every other case run. A regression here would not fail one test - it would abort
- *       the process inside libbinder before the first test body executed.
+ * @pre Runs under every invocation; the path is asserted absent first.
+ * @note This arm makes a host without kernel binder support fall back to legacy; a regression
+ *       would abort the process inside libbinder.
  * @see DriverAidlImpl::isBinderPreflightOk()
  */
 TEST_F(DriverAidlPreflightTest, DeclinesANonexistentDriverPath) {
@@ -5250,35 +3914,16 @@ TEST_F(DriverAidlPreflightTest, DeclinesANonexistentDriverPath) {
         << "the path chosen to be absent exists on this host, so this case is not exercising the "
            "cannot-open arm; choose another path";
 
-    EXPECT_FALSE(DriverAidlImpl::isBinderPreflightOk(absent))
+    EXPECT_FALSE(BinderPreflightTestAccess::isBinderPreflightOk(absent))
         << "the preflight accepted a driver path with nothing behind it. On a platform with no "
            "binder driver this is what stands between falling back to the legacy back-end and "
            "libbinder aborting the process during initialization";
 }
 
-// A node that opens but is not a binder driver is declined at the next arm along, where the
-// BINDER_VERSION ioctl fails, at DriverAidlImpl::isBinderPreflightOk()'s third decision point.
-//
-// This is a genuinely different branch from the case above and worth separating: "the path
-// opened" and "the thing behind the path speaks binder" are two questions, and a predicate
-// that asked only the first would pass a stale non-binder node straight through to
-// libbinder. A regular file is used because it is the one thing guaranteed to open O_RDWR
-// on any host while refusing every ioctl; an anonymous tmpfile() cannot serve, because the
-// predicate takes a path and opens it itself.
-//
-// The node owns its own removal. It lives in the directory TMPDIR nominates when that value
-// validates, /tmp otherwise, and its destructor unlinks it - so the fatal assertions below can
-// abandon the case without leaving a file behind, which a manual unlink placed after them
-// cannot promise.
 /**
- * @brief A node that opens but does not speak binder is declined at the ioctl arm.
- * @pre Runs under every invocation. Creates its own regular file through TemporaryNode,
- *      which is the one thing guaranteed to open O_RDWR on any host while refusing every
- *      ioctl, and unlinks it from the destructor however the case leaves.
- * @note Evidence: the node is asserted readable and writable first, so the verdict comes
- *       from the ioctl rather than from the open. "The path opened" and "the thing behind
- *       it speaks binder" are two questions, and a predicate asking only the first would
- *       pass a stale non-binder node straight through to libbinder.
+ * @brief An openable regular file, not a character device, is declined at the node-type check.
+ * @pre Runs under every invocation, on a regular file TemporaryNode creates and unlinks.
+ * @note The node is asserted readable and writable first, so the verdict is not the open's.
  * @see DriverAidlImpl::isBinderPreflightOk()
  */
 TEST_F(DriverAidlPreflightTest, DeclinesAPathThatOpensButIsNotABinderDriver) {
@@ -5291,68 +3936,36 @@ TEST_F(DriverAidlPreflightTest, DeclinesAPathThatOpensButIsNotABinderDriver) {
         << "the temporary node is not readable and writable, so the preflight would decline it at "
            "the cannot-open arm instead of at the ioctl arm this case is about";
 
-    EXPECT_FALSE(DriverAidlImpl::isBinderPreflightOk(node.path()))
+    EXPECT_FALSE(BinderPreflightTestAccess::isBinderPreflightOk(node.path()))
         << "the preflight accepted a path that opens but does not speak the binder protocol. "
            "Opening a node is not evidence that it is a binder driver, and handing such a node to "
            "libbinder is the condition the pin treats as fatal";
 }
 
-// The timeout parameter is accepted and honoured as an argument, asserted at both ends of
-// its range on a path that cannot get far enough to wait for anything.
-//
-// What this does and does not prove, stated plainly rather than left to be assumed. It
-// proves the two-argument overload is callable and that neither timeout value changes the
-// verdict for an absent node - which is the property that matters for the production call,
-// since the default two-second bound must not turn a missing node into a two-second stall.
-// It does not reach the context-manager arm itself: that arm needs the node to open and to
-// report a matching protocol version first, which a path and a timeout cannot synthesise
-// because the real driver is absent here. That arm is reached instead through the synthetic
-// probe, by the case below that reports the expected protocol and then declines the ping -
-// see note (3) in the file block for why the seam exists and what it does not change.
 /**
  * @brief The two-argument overload is callable and neither end of the timeout range changes
  *        the verdict for an absent node.
  * @pre Runs under every invocation, on an absent path.
- * @note What this does not establish, stated so it is not read as more: it does not reach
- *       the context-manager arm, which needs the node to open and report a matching
- *       protocol first. That arm is reached through the synthetic probe instead. What it
- *       does establish is that the default bound cannot turn a missing node into a stall.
+ * @note The context-manager arm is not reached here; the synthetic-probe cases reach it.
  * @see DriverAidlImpl::isBinderPreflightOk()
  */
 TEST_F(DriverAidlPreflightTest, HonoursTheContextManagerTimeoutArgumentWithoutWaitingForAbsentNode) {
     const std::string absent = "/dev/blitzy_cec_aidl_no_such_binder_node";
 
-    EXPECT_FALSE(DriverAidlImpl::isBinderPreflightOk(absent, 0u))
+    EXPECT_FALSE(BinderPreflightTestAccess::isBinderPreflightOk(absent, 0u))
         << "a zero timeout was expected to mean 'do not wait at all' and to leave the verdict for "
            "an absent node unchanged";
 
-    EXPECT_FALSE(DriverAidlImpl::isBinderPreflightOk(
+    EXPECT_FALSE(BinderPreflightTestAccess::isBinderPreflightOk(
                      absent, DriverAidlImpl::DEFAULT_CONTEXT_MANAGER_TIMEOUT_MS))
         << "the default timeout changed the verdict for an absent node, which would mean the node "
            "check is no longer short-circuiting ahead of the context-manager probe";
 }
 
-// The default driver path is the one libbinder itself opens, and the default argument is what
-// keeps that path out of every caller.
-//
-// This case asserts the constant rather than the verdict, deliberately: the verdict for the
-// default path is a property of the host - false here, where there is no kernel binder
-// support, and true on a binder-capable runner - so asserting it either way would encode
-// one host's configuration as a rule. What is host-independent is that the production call
-// site names nothing (DriverAidlImpl::isServiceAvailable() calls isBinderPreflightOk() with no
-// arguments) and that the harness's own preflight call does the same (from
-// publishFakeForMode()), so a drift in this constant would silently change what both of
-// them probe. The positive arm - the preflight passing - is reached by invocation B, where the
-// AIDL back-end is selected only because it passed.
 /**
  * @brief The default driver path and a non-zero default bound are the values the production
- *        and harness call sites actually probe.
- * @pre Runs under every invocation. Asserts the constants rather than the verdict,
- *      deliberately: the verdict for the default path is a property of the host, so
- *      asserting it either way would encode one host's configuration as a rule.
- * @note Evidence: both production selection and the L1 harness call the predicate with no
- *       arguments, so a drift in these constants would silently change what both of them
- *       probe. The positive verdict is invocation B's to establish.
+ *        and harness call sites probe.
+ * @pre Runs under every invocation; asserts the constants, since the verdict is the host's.
  * @see DriverAidlImpl::isServiceAvailable()
  */
 TEST_F(DriverAidlPreflightTest, DefaultDriverPathIsTheNodeLibbinderOpens) {
@@ -5368,34 +3981,12 @@ TEST_F(DriverAidlPreflightTest, DefaultDriverPathIsTheNodeLibbinderOpens) {
            "concurrently with the middleware would then be misread as having none";
 }
 
-// Decision point 4: a node that answers BINDER_VERSION with a version this build was not
-// compiled against is declined, and the mismatch is what decides it.
-//
-// libbinder enforces protocol equality when it opens the driver, in both directions, so a
-// platform whose kernel speaks 7 against an SDK built for 8 fails every open. The preflight
-// exists so that condition degrades to "AIDL absent" rather than to the abort the pinned
-// stack would take, and this is the arm that does it.
-//
-// It is reached with the substituted probe rather than with a path, because no path can
-// express it: a node either speaks binder - in which case it speaks this build's protocol on
-// a correctly provisioned host - or it fails the ioctl one decision point earlier. The probe
-// reports a version one greater than the compiled-in expectation, which is a mismatch on
-// every host regardless of whether that expectation is 7, 8 or the 0 a build without the
-// binder UAPI headers reports.
-//
-// The arm is identified, not merely the verdict: pingContextManager must never have been
-// called. Without that, a predicate that ignored the version and declined for some later
-// reason would pass this case while leaving a protocol-mismatched node to reach libbinder.
 /**
  * @brief A node reporting a protocol version other than this build's is declined, and the
  *        mismatch alone decides it.
- * @pre Runs under every invocation, through the substituted probe: no path can express this
- *      condition, because a node either speaks this build's protocol on a correctly
- *      provisioned host or fails the ioctl one decision point earlier.
- * @note Evidence: the probe reports one greater than the compiled-in expectation, which is
- *       a mismatch whatever that expectation is; the ping is configured to succeed, so a
- *       false verdict can only be the version; and the arm is identified rather than only
- *       the verdict, since the ping is asserted never to have been called.
+ * @pre Runs under every invocation, through the substituted probe, since no path can express
+ *      this condition.
+ * @note The ping would succeed and is asserted never called, so the version decides.
  * @see DriverAidlImpl::expectedBinderProtocolVersion()
  */
 TEST_F(DriverAidlPreflightTest, DeclinesANodeWhoseProtocolVersionDiffersFromThisBuild) {
@@ -5410,7 +4001,7 @@ TEST_F(DriverAidlPreflightTest, DeclinesANodeWhoseProtocolVersionDiffersFromThis
     // the version comparison.
     resetSyntheticProbe(kSyntheticBinderFd, 0, mismatched, true);
 
-    EXPECT_FALSE(DriverAidlImpl::isBinderPreflightOk(
+    EXPECT_FALSE(BinderPreflightTestAccess::isBinderPreflightOk(
                      DriverAidlImpl::DEFAULT_BINDER_DRIVER_PATH,
                      DriverAidlImpl::DEFAULT_CONTEXT_MANAGER_TIMEOUT_MS,
                      syntheticProbe()))
@@ -5429,29 +4020,11 @@ TEST_F(DriverAidlPreflightTest, DeclinesANodeWhoseProtocolVersionDiffersFromThis
         << "the descriptor opened for the probe was not released on the mismatch arm";
 }
 
-// Decision point 5, negative: a node whose protocol matches but whose context manager never
-// answers within the bound is declined.
-//
-// This is the second of the two hazards the preflight exists for, and it is the one that
-// would not fail loudly - it would hang. Obtaining an IServiceManager polls until binder
-// handle 0 resolves, with no bound of its own, so a platform with a working driver and no
-// running servicemanager would stall LibCCEC::init forever rather than fall back. The bounded
-// ping is what turns that into a verdict, and this case is the arm that returns it.
-//
-// The version matches exactly, so the only remaining decision is the ping - which is what
-// makes the false verdict attributable. The deadline handed to the probe is asserted too,
-// because a predicate that passed 0 or some constant of its own instead of the caller's
-// timeout would leave the production two-second allowance unreachable.
 /**
  * @brief A node whose protocol matches but whose context manager never answers within the
- *        bound is declined, and the caller's own bound is what reaches the probe.
- * @pre Runs under every invocation, through the substituted probe with the version matching
- *      exactly, so the ping is the only remaining decision.
- * @note This is the hazard that would not fail loudly but hang: obtaining an
- *       IServiceManager polls until handle 0 resolves with no bound of its own, so a
- *       platform with a working driver and no servicemanager would stall initialization
- *       forever. Evidence: one ping, on the descriptor that was opened, carrying the
- *       caller's 250 ms rather than a constant of the predicate's own, and one close.
+ *        bound is declined, and the caller's own bound reaches the probe.
+ * @pre Runs under every invocation, through the substituted probe with the version matching.
+ * @note One ping on the opened descriptor carries the caller's 250 ms, then one close.
  */
 TEST_F(DriverAidlPreflightTest, DeclinesAMatchingProtocolWhoseContextManagerNeverAnswers) {
     const unsigned int expected = DriverAidlImpl::expectedBinderProtocolVersion();
@@ -5460,7 +4033,7 @@ TEST_F(DriverAidlPreflightTest, DeclinesAMatchingProtocolWhoseContextManagerNeve
 
     const unsigned int chosenTimeoutMs = 250u;
 
-    EXPECT_FALSE(DriverAidlImpl::isBinderPreflightOk(
+    EXPECT_FALSE(BinderPreflightTestAccess::isBinderPreflightOk(
                      DriverAidlImpl::DEFAULT_BINDER_DRIVER_PATH, chosenTimeoutMs, syntheticProbe()))
         << "the preflight accepted a node whose context manager did not answer. Reaching the "
            "service manager anyway is what blocks LibCCEC::init indefinitely, since obtaining an "
@@ -5480,35 +4053,18 @@ TEST_F(DriverAidlPreflightTest, DeclinesAMatchingProtocolWhoseContextManagerNeve
         << "the descriptor was not released after the context-manager probe";
 }
 
-// The direct positive verdict: an openable node that reports this build's protocol and whose
-// context manager answers is accepted.
-//
-// Every other preflight case here is a rejection, and a predicate that returned false
-// unconditionally would pass all of them. This is the case that rules that out, and it is the
-// only assertion in this file that the preflight can say yes at all on a host with no binder
-// kernel support - the production positive arm is invocation B's, where the AIDL back-end is
-// selected only because the real preflight passed.
-//
-// All five decision points are traversed, which is asserted rather than assumed: the path was
-// opened, the version was read, the ping was made, and the descriptor was released exactly
-// once. The open flags are checked too, because O_RDWR is a requirement of the driver rather
-// than a detail - a read-only descriptor cannot carry a binder transaction.
 /**
- * @brief The direct positive verdict: an openable node reporting this build's protocol and
- *        answering on handle 0 is accepted, and all five decision points are traversed.
- * @pre Runs under every invocation, through the substituted probe. This is the only
- *      assertion here that the preflight can say yes at all on a host with no binder kernel
- *      support; the production positive arm belongs to invocation B.
- * @note Evidence: one open of the given path with O_RDWR set, one version read, one ping
- *       and exactly one close. Without this case a predicate returning false
- *       unconditionally would pass every other case in the fixture.
+ * @brief An openable, root-owned character device that reports this build's protocol and
+ *        answers on handle 0 is accepted, after all eight decision points pass in order.
+ * @pre Runs under every invocation, through the substituted probe.
+ * @note One O_RDWR open, one version read, one ping and exactly one close are asserted.
  */
 TEST_F(DriverAidlPreflightTest, AcceptsANodeWhoseProtocolMatchesAndWhoseContextManagerAnswers) {
     const unsigned int expected = DriverAidlImpl::expectedBinderProtocolVersion();
 
     resetSyntheticProbe(kSyntheticBinderFd, 0, expected, true);
 
-    EXPECT_TRUE(DriverAidlImpl::isBinderPreflightOk(
+    EXPECT_TRUE(BinderPreflightTestAccess::isBinderPreflightOk(
                     DriverAidlImpl::DEFAULT_BINDER_DRIVER_PATH,
                     DriverAidlImpl::DEFAULT_CONTEXT_MANAGER_TIMEOUT_MS,
                     syntheticProbe()))
@@ -5534,28 +4090,10 @@ TEST_F(DriverAidlPreflightTest, AcceptsANodeWhoseProtocolMatchesAndWhoseContextM
            "runs at every initialization on a binder-capable platform";
 }
 
-// The context-manager timeout ceiling, both arms.
-//
-// isBinderPreflightOk() takes its bound as an `unsigned int`, so a caller - or a future
-// configuration value - can name a figure far larger than any plausible servicemanager
-// start-up delay, and every millisecond of it would be time LibCCEC::init() spends blocked
-// before the legacy fallback is even considered. The predicate therefore clamps to
-// MAX_CONTEXT_MANAGER_TIMEOUT_MS before it probes, and the clamp is observable exactly where
-// it matters: the probe records the bound it was actually handed, so these two cases read the
-// effective value rather than inferring it from elapsed time, which on a loaded host would be
-// a flaky measurement of the same fact.
-//
-// Both arms are asserted because a predicate that clamped unconditionally would be just as
-// wrong as one that never clamped: a caller asking for less than the ceiling must get what it
-// asked for, or the whole parameter becomes decorative.
 /**
  * @brief A bound above the ceiling is clamped to the ceiling before the probe is made.
- * @pre Runs under every invocation, through the substituted probe with the ping declining,
- *      so the case stays on the context-manager arm.
- * @note Evidence: the probe records the bound it was handed, so the effective value is read
- *       rather than inferred from elapsed time - which on a loaded host would be a flaky
- *       measurement of the same fact. An unclamped bound is time initialization spends
- *       blocked before the legacy fallback is even considered.
+ * @pre Runs under every invocation, through the substituted probe with the ping declining.
+ * @note The probe records the bound it was handed, so the effective value is read, not timed.
  */
 TEST_F(DriverAidlPreflightTest, ClampsAContextManagerTimeoutAboveTheCeilingToTheCeiling) {
     const unsigned int expected = DriverAidlImpl::expectedBinderProtocolVersion();
@@ -5568,7 +4106,7 @@ TEST_F(DriverAidlPreflightTest, ClampsAContextManagerTimeoutAboveTheCeilingToThe
         << "the requested bound is not above the ceiling, so this case would exercise the "
            "pass-through arm rather than the clamp";
 
-    EXPECT_FALSE(DriverAidlImpl::isBinderPreflightOk(
+    EXPECT_FALSE(BinderPreflightTestAccess::isBinderPreflightOk(
                      DriverAidlImpl::DEFAULT_BINDER_DRIVER_PATH, requested, syntheticProbe()))
         << "the verdict changed for a node whose context manager does not answer, so this case is "
            "no longer reaching the context-manager arm at all";
@@ -5583,25 +4121,17 @@ TEST_F(DriverAidlPreflightTest, ClampsAContextManagerTimeoutAboveTheCeilingToThe
            "which is the one thing the preflight exists to prevent";
 }
 
-// The pass-through arm of the same branch: a bound at the ceiling is handed through unchanged.
-//
-// The boundary value is used rather than a comfortable middle one, because `>` and `>=` differ
-// only here and a clamp written with the wrong comparison would lower a legitimate request by
-// nothing observable at any other value.
 /**
- * @brief A bound exactly at the ceiling is handed through unchanged, so the clamp cannot
- *        lower a legitimate request.
+ * @brief A bound exactly at the ceiling is handed through unchanged.
  * @pre Runs under every invocation, through the substituted probe with the ping declining.
- * @note The boundary value is used rather than a comfortable middle one because `>` and
- *       `>=` differ only here: a clamp written with the wrong comparison would lower every
- *       request at the ceiling and nothing at any other value.
+ * @note The boundary value is the only one at which `>` and `>=` differ.
  */
 TEST_F(DriverAidlPreflightTest, PassesAContextManagerTimeoutAtTheCeilingThroughUnchanged) {
     const unsigned int expected = DriverAidlImpl::expectedBinderProtocolVersion();
 
     resetSyntheticProbe(kSyntheticBinderFd, 0, expected, false);
 
-    EXPECT_FALSE(DriverAidlImpl::isBinderPreflightOk(
+    EXPECT_FALSE(BinderPreflightTestAccess::isBinderPreflightOk(
                      DriverAidlImpl::DEFAULT_BINDER_DRIVER_PATH,
                      DriverAidlImpl::MAX_CONTEXT_MANAGER_TIMEOUT_MS,
                      syntheticProbe()))
@@ -5614,20 +4144,10 @@ TEST_F(DriverAidlPreflightTest, PassesAContextManagerTimeoutAtTheCeilingThroughU
            "using the wrong comparison and every request at the ceiling is being lowered";
 }
 
-// The default bound is below the ceiling, so the clamp cannot fire on the production call path.
-//
-// Asserted as a relation between the two constants rather than as behaviour: if a later change
-// raised the default above the ceiling, every initialization would silently take the clamp arm
-// and the default would stop meaning what it says. This is the one place that relation is
-// checked.
 /**
  * @brief The default bound is below the ceiling, so the clamp cannot fire on the production
  *        call path.
  * @pre Runs under every invocation; compares two constants and calls nothing.
- * @note Asserted as a relation rather than as behaviour: were a later change to raise the
- *       default above the ceiling, every initialization would silently take the clamp arm
- *       and the default would stop meaning what it says. This is the one place that
- *       relation is checked.
  */
 TEST_F(DriverAidlPreflightTest, TheDefaultContextManagerTimeoutSitsBelowTheCeiling) {
     EXPECT_LT(DriverAidlImpl::DEFAULT_CONTEXT_MANAGER_TIMEOUT_MS,
@@ -5638,28 +4158,13 @@ TEST_F(DriverAidlPreflightTest, TheDefaultContextManagerTimeoutSitsBelowTheCeili
            "would take the clamp arm at every initialization and the default would be unreachable";
 }
 
-// Descriptor hygiene, swept across all five decision points in one case.
-//
-// The predicate opens the driver node itself and must release it on every exit, including the
-// three that leave early. A leak here is not cosmetic: the preflight runs at initialization
-// in a long-lived middleware process, and on the pinned stack a lingering descriptor on
-// /dev/binder is a driver context that nothing will close until the process exits.
-//
-// The rule asserted is "exactly one close per successful open", which is why the first two
-// rows expect zero closes: an empty path opens nothing, and a failed open has nothing to
-// release - closing a negative descriptor would be a bug of its own. The sweep is one case
-// rather than five because the property is uniform and a gap in it is far easier to see in
-// one table than spread across five bodies.
 /**
- * @brief Every preflight arm releases exactly the descriptors it opened, including the three
- *        that leave early.
- * @pre Runs under every invocation, sweeping the arms through one table driven by the
+ * @brief Each configured row (empty path, failed open, failed version read, version mismatch,
+ *        declined ping, answered ping) releases exactly the descriptors it opened.
+ * @pre Runs under every invocation, sweeping those six rows through one table driven by the
  *      substituted probe.
- * @note The rule is one close per successful open, which is why the first rows expect zero:
- *       an empty path opens nothing, and a failed open has nothing to release, so closing a
- *       negative descriptor would be a defect of its own. A leak here is not cosmetic - the
- *       preflight runs at initialization in a long-lived process, and a lingering descriptor
- *       on the driver node is a context nothing will close until the process exits.
+ * @note The rule is one close per successful open, so the empty-path and failed-open rows
+ *       expect none.
  */
 TEST_F(DriverAidlPreflightTest, EveryPreflightArmReleasesExactlyTheDescriptorsItOpened) {
     const unsigned int expected = DriverAidlImpl::expectedBinderProtocolVersion();
@@ -5701,7 +4206,7 @@ TEST_F(DriverAidlPreflightTest, EveryPreflightArmReleasesExactlyTheDescriptorsIt
         resetSyntheticProbe(arm.answerOpen, arm.answerProtocolRead, arm.answerProtocolVersion,
                             arm.answerPing);
 
-        const bool verdict = DriverAidlImpl::isBinderPreflightOk(
+        const bool verdict = BinderPreflightTestAccess::isBinderPreflightOk(
             std::string(arm.path), DriverAidlImpl::DEFAULT_CONTEXT_MANAGER_TIMEOUT_MS,
             syntheticProbe());
 
@@ -5723,18 +4228,12 @@ TEST_F(DriverAidlPreflightTest, EveryPreflightArmReleasesExactlyTheDescriptorsIt
     }
 }
 
-// THE RESTATED POSIX CONSTANTS, CROSS-CHECKED AGAINST THE SYSTEM HEADERS.
-//
-// ccec/src/DriverAidlImpl.hpp restates S_IFMT, S_IFCHR and root's uid as constants of its
-// own, because that header must still compile where the binder kernel UAPI definitions are
-// absent and it therefore includes no <sys/stat.h>. A restatement that drifts from the value
-// it restates would be invisible: the file-type test would compare against the wrong mask,
-// every real character device would look like something else, and the AIDL path would be
-// declined on every correctly provisioned platform with a message blaming the node.
-//
-// This is the one place the two are compared, and it is why the identity fixtures above build
-// their modes from the POSIX macros rather than from the production constants - so the two
-// sides of the comparison are independent and a wrong constant cannot agree with itself.
+/**
+ * @brief The POSIX node constants DriverAidlImpl restates match the system headers.
+ * @pre Runs under every invocation; compares constants and calls nothing.
+ * @note A drifted file-type mask would decline the AIDL path on every correctly provisioned
+ *       platform.
+ */
 TEST_F(DriverAidlPreflightTest, TheRestatedPosixNodeConstantsMatchTheSystemHeaders) {
     EXPECT_EQ(DriverAidlImpl::BINDER_NODE_MODE_TYPE_MASK, static_cast<unsigned int>(S_IFMT))
         << "the restated file-type mask (0" << std::oct << DriverAidlImpl::BINDER_NODE_MODE_TYPE_MASK
@@ -5753,10 +4252,8 @@ TEST_F(DriverAidlPreflightTest, TheRestatedPosixNodeConstantsMatchTheSystemHeade
            "node as root, so anything else here either refuses every real platform or accepts a "
            "node an unprivileged process could have created";
 
-    // The three permission constants, restated for the same reason and checked the same way.
-    // They feed a DIAGNOSTIC rather than a verdict, which does not make them exempt: a wrong
-    // mask makes the permissive-node line report the wrong number, or report nothing at all on
-    // exactly the platform an integrator needs to be told about.
+    // The three permission constants, checked the same way: a wrong mask makes the
+    // permissive-node diagnostic report the wrong bits, or nothing.
     EXPECT_EQ(DriverAidlImpl::BINDER_NODE_MODE_PERMISSION_MASK,
               static_cast<unsigned int>(S_IRWXU | S_IRWXG | S_IRWXO))
         << "the restated permission mask (0" << std::oct
@@ -5797,25 +4294,19 @@ TEST_F(DriverAidlPreflightTest, TheRestatedPosixNodeConstantsMatchTheSystemHeade
            "permissions - are no longer independent";
 }
 
-// Decision point 3 of 8: a node that OPENS but whose identity cannot be read is declined,
-// before the protocol ioctl is attempted.
-//
-// This arm is not a formality. The identity is the ONLY thing that makes the later re-check
-// mean anything - without it there is nothing to compare the pre-lookup resolution of the
-// same pathname against - so a preflight that shrugged at a failed fstat and carried on would
-// hand libbinder a name it had certified on no evidence, and on the pinned stack libbinder
-// aborts rather than fails when that name turns out not to be a usable binder driver.
-//
-// The ordering assertion is the second half of the case: the protocol read must NOT have been
-// attempted, because an arm that ran after the ioctl would have already spent a syscall on a
-// node it was about to refuse and, more importantly, would have moved the identity check
-// further from the open it describes.
+/**
+ * @brief A node that opens but whose identity cannot be read is declined before the protocol
+ *        ioctl.
+ * @pre Runs under every invocation, through the substituted probe.
+ * @note The identity is what the pre-lookup re-check compares against; the protocol read is
+ *       asserted never attempted.
+ */
 TEST_F(DriverAidlPreflightTest, DeclinesANodeWhoseDescriptorCannotBeIdentified) {
     resetSyntheticProbe(kSyntheticBinderFd, 0, DriverAidlImpl::expectedBinderProtocolVersion(),
                         true);
     g_syntheticProbe.answerIdentifyDescriptor = -1;
 
-    EXPECT_FALSE(DriverAidlImpl::isBinderPreflightOk(
+    EXPECT_FALSE(BinderPreflightTestAccess::isBinderPreflightOk(
                      DriverAidlImpl::DEFAULT_BINDER_DRIVER_PATH,
                      DriverAidlImpl::DEFAULT_CONTEXT_MANAGER_TIMEOUT_MS, syntheticProbe()))
         << "the preflight accepted a node it could not identify, so it certified a pathname with "
@@ -5835,22 +4326,17 @@ TEST_F(DriverAidlPreflightTest, DeclinesANodeWhoseDescriptorCannotBeIdentified) 
         << "the descriptor was not released on the identity-failure arm";
 }
 
-// Decision point 4 of 8: a node that is not a CHARACTER DEVICE is declined.
-//
-// A regular file at /dev/binder is the shape a substitution takes when an unprivileged
-// process wins a race to create the node - and it is also the shape of a plain
-// mis-provisioning. Either way it is not the binder driver, and the point of refusing it here
-// rather than letting the ioctl arm catch it is that the identity carried forward to the
-// pre-lookup re-check has to be the identity of a node that IS a binder driver, not merely of
-// something that happened to answer BINDER_VERSION.
-//
-// Only the file type is changed from a good node, so this case isolates one property.
+/**
+ * @brief A node that is not a character device is declined.
+ * @pre Runs under every invocation, through the substituted probe; only the file type differs
+ *      from a good node.
+ */
 TEST_F(DriverAidlPreflightTest, DeclinesANodeThatIsNotACharacterDevice) {
     resetSyntheticProbe(kSyntheticBinderFd, 0, DriverAidlImpl::expectedBinderProtocolVersion(),
                         true);
     g_syntheticProbe.answerDescriptorIdentity.mode = static_cast<unsigned int>(S_IFREG | 0666);
 
-    EXPECT_FALSE(DriverAidlImpl::isBinderPreflightOk(
+    EXPECT_FALSE(BinderPreflightTestAccess::isBinderPreflightOk(
                      DriverAidlImpl::DEFAULT_BINDER_DRIVER_PATH,
                      DriverAidlImpl::DEFAULT_CONTEXT_MANAGER_TIMEOUT_MS, syntheticProbe()))
         << "the preflight accepted a REGULAR FILE as the binder driver. Every supported binder "
@@ -5863,17 +4349,13 @@ TEST_F(DriverAidlPreflightTest, DeclinesANodeThatIsNotACharacterDevice) {
         << "the descriptor was not released on the file-type arm";
 }
 
-// Decision point 5 of 8: a character device NOT OWNED BY ROOT is declined.
-//
-// devtmpfs and binderfs both create the node as root. A character device at that path owned
-// by anyone else is one an unprivileged process was able to create or replace - and selecting
-// the AIDL path against it would put the whole HAL boundary, every frame transmitted and every
-// frame delivered, behind whatever published itself there. That is the finding this arm exists
-// for, and it is the half of it that IS inside the middleware's reach; the other half is the
-// platform prerequisite recorded on isServiceAvailable().
-//
-// The node is left a well-formed character device and only its owner is changed, so a
-// regression that merged the two checks into one would fail here rather than pass by accident.
+/**
+ * @brief A character device not owned by root is declined.
+ * @pre Runs under every invocation, through the substituted probe; only the owner differs
+ *      from a good node.
+ * @note devtmpfs and binderfs create the node as root, so another owner means an unprivileged
+ *       process could have created or replaced it.
+ */
 TEST_F(DriverAidlPreflightTest, DeclinesACharacterDeviceThatIsNotOwnedByRoot) {
     resetSyntheticProbe(kSyntheticBinderFd, 0, DriverAidlImpl::expectedBinderProtocolVersion(),
                         true);
@@ -5885,7 +4367,7 @@ TEST_F(DriverAidlPreflightTest, DeclinesACharacterDeviceThatIsNotOwnedByRoot) {
         << "this case is meant to isolate OWNERSHIP, and the node it configures is not a "
            "character device, so it would be refused one arm earlier";
 
-    EXPECT_FALSE(DriverAidlImpl::isBinderPreflightOk(
+    EXPECT_FALSE(BinderPreflightTestAccess::isBinderPreflightOk(
                      DriverAidlImpl::DEFAULT_BINDER_DRIVER_PATH,
                      DriverAidlImpl::DEFAULT_CONTEXT_MANAGER_TIMEOUT_MS, syntheticProbe()))
         << "the preflight accepted a binder node owned by an unprivileged user. Anything able to "
@@ -5898,19 +4380,12 @@ TEST_F(DriverAidlPreflightTest, DeclinesACharacterDeviceThatIsNotOwnedByRoot) {
         << "the descriptor was not released on the ownership arm";
 }
 
-// CUSTODY, BOTH WAYS ROUND, IN ONE CASE because the two halves are one property.
-//
-// The preflight validates a pathname and libbinder then opens the SAME pathname for itself.
-// Releasing the validated descriptor before returning left a window in which the node could
-// change meaning, and on the pinned stack losing that window is a process abort rather than a
-// wrong answer. So a caller that intends to proceed to the lookup takes CUSTODY: the
-// descriptor stays open - which also pins the inode, so the identity cannot be satisfied by a
-// recycled node number - and the identity travels with it.
-//
-// The second half matters just as much: a caller that asks for nothing must get the original
-// behaviour, descriptor released, process left exactly as it was found. That is what the
-// harness's own preflight assertion and every negative-arm case above rely on, and a preflight
-// that retained unconditionally would leak a driver context at every one of them.
+/**
+ * @brief The validated descriptor and its identity are retained only when custody is
+ *        requested; otherwise the descriptor is released.
+ * @pre Runs under every invocation, through the substituted probe.
+ * @note A retained descriptor pins the inode until libbinder reopens the same pathname.
+ */
 TEST_F(DriverAidlPreflightTest, RetainsTheValidatedDescriptorAndItsIdentityOnlyWhenCustodyIsRequested) {
     const unsigned int expected = DriverAidlImpl::expectedBinderProtocolVersion();
 
@@ -5921,7 +4396,7 @@ TEST_F(DriverAidlPreflightTest, RetainsTheValidatedDescriptorAndItsIdentityOnlyW
 
     memset(&identity, 0, sizeof(identity));
 
-    ASSERT_TRUE(DriverAidlImpl::isBinderPreflightOk(
+    ASSERT_TRUE(BinderPreflightTestAccess::isBinderPreflightOk(
                     DriverAidlImpl::DEFAULT_BINDER_DRIVER_PATH,
                     DriverAidlImpl::DEFAULT_CONTEXT_MANAGER_TIMEOUT_MS, syntheticProbe(),
                     &retained, &identity))
@@ -5945,10 +4420,10 @@ TEST_F(DriverAidlPreflightTest, RetainsTheValidatedDescriptorAndItsIdentityOnlyW
     EXPECT_EQ(identity.uid, kValidatedNodeIdentity.uid)
         << "the retained identity does not carry the validated node's owner";
 
-    // The other half: no custody requested, original behaviour, nothing left open.
+    // The other half: no custody requested, so the descriptor is released and nothing is left open.
     resetSyntheticProbe(kSyntheticBinderFd, 0, expected, true);
 
-    ASSERT_TRUE(DriverAidlImpl::isBinderPreflightOk(
+    ASSERT_TRUE(BinderPreflightTestAccess::isBinderPreflightOk(
                     DriverAidlImpl::DEFAULT_BINDER_DRIVER_PATH,
                     DriverAidlImpl::DEFAULT_CONTEXT_MANAGER_TIMEOUT_MS, syntheticProbe()))
         << "the preflight declined the same well-formed node when custody was NOT requested";
@@ -5961,16 +4436,15 @@ TEST_F(DriverAidlPreflightTest, RetainsTheValidatedDescriptorAndItsIdentityOnlyW
         << "the descriptor released is not the one that was opened";
 }
 
-// THE CUSTODY SLOT IS CLEARED BEFORE ANY ARM CAN RETURN, swept across every decline.
-//
-// A caller reads the slot after the call. If a decline left it untouched, the caller would see
-// whatever it happened to hold - in production, a stack value; in the sequence below, a
-// descriptor from a previous call - and would either release something it does not own or hold
-// a custody window it never opened. The slot is therefore set to -1 first, so "not retained"
-// and "stale" are the same observation and no caller has to tell them apart.
+/**
+ * @brief Every decline clears the custody slot to -1, so no caller sees a stale descriptor.
+ * @pre Runs under every invocation, sweeping all eight decision points through the
+ *      substituted probe.
+ */
 TEST_F(DriverAidlPreflightTest, ClearsTheCustodySlotOnEveryDeclineSoNoStaleDescriptorIsReported) {
     const unsigned int expected = DriverAidlImpl::expectedBinderProtocolVersion();
 
+    /** @brief One decline row: the probe's answers and the decision point they stop at. */
     struct Decline {
         const char *name;
         const char *path;
@@ -6010,7 +4484,7 @@ TEST_F(DriverAidlPreflightTest, ClearsTheCustodySlotOnEveryDeclineSoNoStaleDescr
 
         memset(&identity, 0, sizeof(identity));
 
-        EXPECT_FALSE(DriverAidlImpl::isBinderPreflightOk(
+        EXPECT_FALSE(BinderPreflightTestAccess::isBinderPreflightOk(
                          std::string(decline.path),
                          DriverAidlImpl::DEFAULT_CONTEXT_MANAGER_TIMEOUT_MS, syntheticProbe(),
                          &retained, &identity))
@@ -6022,32 +4496,15 @@ TEST_F(DriverAidlPreflightTest, ClearsTheCustodySlotOnEveryDeclineSoNoStaleDescr
     }
 }
 
+// The pre-lookup re-verification cases drive isServiceAvailable() on a local instance and
+// decline before the service lookup, so nothing reaches libbinder.
 /**
- * @brief The pre-lookup re-verification: the check and the use are ONE path.
- *
- * WHY THESE CASES DRIVE isServiceAvailable() RATHER THAN THE PREFLIGHT. The preflight's
- * verdict is worth acting on only while it still describes the name libbinder is about to
- * open, and the code that establishes that sits between the preflight and the lookup - so it
- * is reachable only through the query itself. All four cases below decline BEFORE the service
- * lookup is entered, which is what makes them safe to run on a host with no binder transport:
- * nothing here reaches libbinder, and the synthetic probe is what guarantees that.
- *
- * The instance is local in every case, so the process-global driver and the resolved selection
- * are untouched and these run identically under every invocation.
+ * @brief The service query declines when the name resolves to a different node between the
+ *        check and the use.
+ * @pre Runs under every invocation, through the substituted probe.
+ * @note One path resolution, no second open and the retained descriptor's release locate the
+ *       decline at the identity comparison.
  */
-// The name resolves to a DIFFERENT node between the check and the use, and the AIDL path is
-// declined instead of libbinder being handed the substituted node.
-//
-// THE EXPLOIT THIS CLOSES, stated concretely so the case is not read as ceremony. The preflight
-// validates /dev/binder; before libbinder opens the same name, the node is replaced - unlinked
-// and re-created, bind-mounted over, or a symlink re-pointed. Nothing in the middleware would
-// have noticed, and libbinder's own open is not a recoverable failure on the pinned stack: it
-// is a LOG_ALWAYS_FATAL_IF abort. So the check that exists to guarantee a nonfatal legacy
-// fallback would have caused the abort it was written to prevent.
-//
-// The observation counters are the proof that the decline happened at the identity comparison
-// and not somewhere convenient: exactly one path resolution, no second open, and the retained
-// descriptor released.
 TEST_F(DriverAidlPreflightTest, TheServiceQueryDeclinesWhenTheNameResolvesToADifferentNodeBeforeTheLookup) {
     resetSyntheticProbe(kSyntheticBinderFd, 0, DriverAidlImpl::expectedBinderProtocolVersion(),
                         true);
@@ -6083,12 +4540,12 @@ TEST_F(DriverAidlPreflightTest, TheServiceQueryDeclinesWhenTheNameResolvesToADif
         << "the descriptor released is not the retained one";
 }
 
-// The name cannot be resolved at all between the check and the use - the node was removed -
-// and that is a decline, never a "nothing changed".
-//
-// The direction matters: a failed re-resolution says nothing about whether the node is still
-// the validated one, so treating it as "unchanged" would be the same as not checking. It is
-// therefore refused, and the refusal is nonfatal, which is the whole point.
+/**
+ * @brief The service query declines when the path cannot be resolved between the check and
+ *        the use.
+ * @pre Runs under every invocation, through the substituted probe.
+ * @note A failed re-resolution is refused, nonfatally, never treated as "unchanged".
+ */
 TEST_F(DriverAidlPreflightTest, TheServiceQueryDeclinesWhenThePathCannotBeResolvedBeforeTheLookup) {
     resetSyntheticProbe(kSyntheticBinderFd, 0, DriverAidlImpl::expectedBinderProtocolVersion(),
                         true);
@@ -6113,51 +4570,17 @@ TEST_F(DriverAidlPreflightTest, TheServiceQueryDeclinesWhenThePathCannotBeResolv
         << "the retained descriptor was not released when the re-resolution failed";
 }
 
-// THE STAGE-ONE DECLINE, WHICH IS A DIFFERENT ARM FROM EVERY CASE ABOVE and until now had no
-// case of its own on a host that has a working binder driver.
-//
-// isServiceAvailable() declines in four ordered stages - preflight, custody re-verification,
-// service lookup, compatibility - and the two the cases above drive are the first two: they let
-// the preflight PASS and then break the re-identification or the liveness re-check, so they
-// reach the transport reason by the second assignment inside the function rather than the
-// first. The two later stages need a binder driver and cannot be reached from this host at
-// all. The arm this case drives is the FIRST one - the preflight
-// itself refusing - and the distinction is not cosmetic, because that arm is the one every
-// legacy-only SOC takes on every boot. It is the single most-travelled path in this file on real
-// hardware and the one whose failure would abort LibCCEC::init() instead of falling back.
-//
-// Why it needed writing at all, stated plainly because the answer is the reason the branch-arm
-// gate exists. On a host with NO binder driver the factory takes this arm unaided: the default
-// path cannot be opened, the preflight declines, and the arm is covered as a side effect of
-// every driverless run. On a host that HAS a usable driver - which is the only kind of host that
-// can run the AIDL invocations at all - the factory never takes it, so the arm silently went
-// unmeasured on exactly the runs that measure everything else. A test that only ever ran where
-// the platform happened to force the arm was not testing the arm.
-//
-// The unusable path is an EMPTY one rather than a plausible-looking absent filename, and that is
-// deliberate: an empty path is rejected by isBinderPreflightOk() before it calls the probe at
-// all, so the two probe-call assertions below can state something no reason-string comparison
-// can - that the decline happened at stage one, ahead of any node work, rather than later on
-// with the same reason text. A nonexistent filename would decline for the right reason at the
-// wrong stage and this case could not tell the difference.
 /**
- * @brief The service query declines at its FIRST stage when the driver path is unusable, and
+ * @brief The service query declines at its first stage when the driver path is unusable, and
  *        does so before touching the node.
- * @pre None beyond a constructed local instance. Runs under every invocation, including one on a
- *      host with a fully working binder driver, which is the point of it.
- * @note Complements DriverAidlImpl::isBinderPreflightOk()'s own empty-path case: that one
- *       establishes the predicate refuses, this one establishes isServiceAvailable() ACTS on the
- *       refusal - returns false, records the transport reason, and issues no lookup.
- * @note The probe counters are asserted at zero rather than merely "not more than one". They are
- *       what locates the decline at stage one; the reason text alone is assigned at two
- *       different stages and cannot distinguish them.
- * @see DriverAidlImpl::isServiceAvailable()
- * @see DriverAidlImpl::isBinderPreflightOk()
+ * @pre Runs under every invocation, including on a host with a working binder driver.
+ * @note The empty path is refused before the probe is called, so the probe counters at zero
+ *       locate the decline at the first stage.
+ * @see DriverAidlImpl::isServiceAvailable(), DriverAidlImpl::isBinderPreflightOk()
  */
 TEST_F(DriverAidlPreflightTest, TheServiceQueryDeclinesAtThePreflightStageWhenTheDriverPathIsUnusable) {
-    // A probe that would answer every question correctly if it were ever asked. That is the
-    // control: a decline recorded here cannot be attributed to a probe rigged to fail, and the
-    // counters below show it was not consulted.
+    // A probe that would answer every question correctly is the control: the counters show
+    // it was never consulted.
     resetSyntheticProbe(kSyntheticBinderFd, 0, DriverAidlImpl::expectedBinderProtocolVersion(),
                         true);
 
@@ -6186,14 +4609,13 @@ TEST_F(DriverAidlPreflightTest, TheServiceQueryDeclinesAtThePreflightStageWhenTh
         << "a descriptor was released although none should ever have been opened";
 }
 
-// The pathname still resolves to the validated node, but the descriptor REOPENED for the
-// liveness check does not - so the reopen is validated in its own right rather than trusted.
-//
-// This is the arm that stops the second descriptor being a hole in the guarantee. The liveness
-// ping cannot go over the retained descriptor - see the case below for the kernel reason - so a
-// second one is opened, and a second open is a second resolution of the same name with its own
-// race. Identifying it and comparing it against the SAME validated identity is what makes it
-// inherit the whole of the guarantee instead of widening the window it was added to close.
+/**
+ * @brief The service query declines when the descriptor reopened for the liveness check is
+ *        not the validated node.
+ * @pre Runs under every invocation, through the substituted probe.
+ * @note The reopen is a second resolution of the name, so it is compared against the same
+ *       validated identity.
+ */
 TEST_F(DriverAidlPreflightTest, TheServiceQueryDeclinesWhenTheReopenedDescriptorIsNotTheValidatedNode) {
     resetSyntheticProbe(kSyntheticBinderFd, 0, DriverAidlImpl::expectedBinderProtocolVersion(),
                         true);
@@ -6221,21 +4643,13 @@ TEST_F(DriverAidlPreflightTest, TheServiceQueryDeclinesWhenTheReopenedDescriptor
            "released, and " << g_syntheticProbe.closeCalls << " release(s) were made";
 }
 
-// The descriptor reopened for the liveness check CANNOT BE IDENTIFIED AT ALL, which is a
-// different arm from the one above and is not implied by it: that case answers with a
-// different node, this one answers with nothing.
-//
-// WHY BOTH ARMS EXIST SEPARATELY. The re-verification's third point is a disjunction - the
-// reopened descriptor is refused if it cannot be identified OR if it identifies as some other
-// object - and the whole point of mapping arms rather than lines is that a disjunction's two
-// operands are two decisions. An fstat that fails on a descriptor the open just returned is
-// the shape a revoked or torn-down binderfs mount takes, and trusting the descriptor because
-// the failure was in the CHECK rather than in the object would be the same category of error
-// the retained-identity path exists to remove.
-//
-// The probe fails identifyDescriptor on its SECOND call only. It has to: the preflight's own
-// call is the first, and a probe that failed every call would decline at the preflight and
-// never reach the re-verification this case is about.
+/**
+ * @brief The service query declines when the descriptor reopened for the liveness check
+ *        cannot be identified at all.
+ * @pre Runs under every invocation, through a probe failing only its second identification.
+ * @note A separate arm from the case above: an unidentifiable descriptor is refused, not
+ *       trusted.
+ */
 TEST_F(DriverAidlPreflightTest, TheServiceQueryDeclinesWhenTheReopenedDescriptorCannotBeIdentified) {
     resetSyntheticProbe(kSyntheticBinderFd, 0, DriverAidlImpl::expectedBinderProtocolVersion(),
                         true);
@@ -6269,22 +4683,13 @@ TEST_F(DriverAidlPreflightTest, TheServiceQueryDeclinesWhenTheReopenedDescriptor
            "descriptor this check opened";
 }
 
-// The context manager answered the PREFLIGHT and has stopped answering by the time the lookup
-// is about to happen: declined, under the same bound, instead of hanging inside libbinder.
-//
-// WHAT THIS BOUNDS AND WHAT IT DOES NOT. defaultServiceManager() polls until binder handle 0
-// resolves with no upper bound of its own, so a wedged or dying servicemanager is the dominant
-// stall mode for a platform whose driver is perfectly healthy. Asking again here, under the
-// preflight's own bound, turns that stall into a decline. It bounds nothing INSIDE getService
-// once entered - the pinned libbinder offers no client-side transaction deadline, which is
-// recorded as a platform prerequisite on isServiceAvailable() rather than papered over.
-//
-// THE PING GOES OVER THE SECOND DESCRIPTOR, AND THAT IS ASSERTED, because it is forced by the
-// driver rather than chosen: the ping maps the driver's transaction buffer, and the binder
-// driver permits exactly ONE mapping per open descriptor for that descriptor's lifetime -
-// unmapping releases the range but not the right. A re-ping over the retained descriptor would
-// therefore fail on every correctly provisioned platform and decline the AIDL path everywhere,
-// which is why this assertion is here rather than the simpler one.
+/**
+ * @brief The service query declines, under the same bound, when the context manager stops
+ *        answering between the preflight and the lookup.
+ * @pre Runs under every invocation, through the substituted probe.
+ * @note The re-ping is asserted to use the reopened descriptor, since the driver allows one
+ *       transaction-buffer mapping per descriptor.
+ */
 TEST_F(DriverAidlPreflightTest, TheServiceQueryDeclinesWhenTheContextManagerStopsAnsweringBeforeTheLookup) {
     resetSyntheticProbe(kSyntheticBinderFd, 0, DriverAidlImpl::expectedBinderProtocolVersion(),
                         true);
@@ -6322,27 +4727,8 @@ TEST_F(DriverAidlPreflightTest, TheServiceQueryDeclinesWhenTheContextManagerStop
         << " release(s) were made; the reopened descriptor is opened inside the check and must "
            "not outlive it";
 
-    // CUSTODY IS HELD ACROSS THE WINDOW, ASSERTED THROUGH THE RELEASE ORDER, and this is the
-    // one property on which the whole identity comparison rests rather than an ordering detail.
-    //
-    // An open descriptor pins an inode. That is the ONLY reason comparing `inode` across the
-    // check-to-use window means anything: without a descriptor held open on the validated node,
-    // the kernel is free to recycle that inode number for a replacement created at the same
-    // path, and the comparison would report "unchanged" for a node that had in fact been
-    // substituted. So the retained descriptor must still be open while the re-verification runs.
-    //
-    // Nothing else in this suite can see that. `closeCalls == 2` counts the releases but not
-    // when they happened; `lastPingFd` proves the ping used the fresh descriptor but not that
-    // the retained one was still alive at the time. A "simplification" that released the
-    // retained descriptor as soon as the preflight returned - which reads as tidier, since the
-    // re-verification opens its own - would keep both of those assertions green and silently
-    // delete the pinning guarantee. The release ORDER is what distinguishes the two: the fresh
-    // descriptor is released inside the re-verification, and the retained one only when
-    // isServiceAvailable() returns, so the fresh one must be released FIRST.
-    //
-    // This is also the assertion that pins the residual recorded on BinderNodeIdentity: the
-    // window is narrowed to its structural minimum and not closed, and the narrowing is worth
-    // exactly as much as the custody that backs it.
+    // Custody across the window: the reopened descriptor must be released before the
+    // retained one, which pins the validated inode while the re-verification runs.
     ASSERT_EQ(g_syntheticProbe.closedFds.size(), 2u)
         << "the release sequence was not recorded as two entries, so the custody order cannot be "
            "checked at all";
@@ -6361,30 +4747,20 @@ TEST_F(DriverAidlPreflightTest, TheServiceQueryDeclinesWhenTheContextManagerStop
            "the query returns";
 }
 
-// THE SAME INODE, RE-PERMISSIONED between the check and the use: declined.
-//
-// THE EXPLOIT, CONCRETELY, because this is the half of the window a comparison of
-// `(device, inode, rdev)` alone reported as "unchanged". The preflight validates /dev/binder -
-// character device, owned by root, protocol matched, context manager answering - and carries
-// its identity forward. Before libbinder resolves the same name, the node is `chmod`ed. It is
-// not replaced: device, inode and rdev are untouched, and the retained descriptor still pins
-// that very inode. An adversary who cannot win a race to create a node at that path can
-// nevertheless widen write access to the one that is there, and every check that could have
-// noticed - the file-type test and the root-owner test - has already run. So the ONLY thing
-// standing in that window is whether the re-verification enforces the attributes it captured.
-//
-// The divergence is asserted through the LOG as well as through the verdict, because a decline
-// alone would not distinguish "the mode was compared" from "something else refused it": the
-// numeric divergence mask names bit3, and bit3 is the mode.
+/**
+ * @brief The service query declines when the validated node is re-permissioned between the
+ *        check and the use.
+ * @pre Runs under every invocation, through the substituted probe: same object, new mode.
+ * @note The logged divergence mask names bit3, the mode, beside the declining verdict.
+ */
 TEST_F(DriverAidlPreflightTest, TheServiceQueryDeclinesWhenTheValidatedNodeIsRePermissionedBeforeTheLookup) {
     resetSyntheticProbe(kSyntheticBinderFd, 0, DriverAidlImpl::expectedBinderProtocolVersion(),
                         true);
     g_syntheticProbe.hasSecondDescriptorIdentity = true;
     g_syntheticProbe.answerDescriptorIdentitySecond = kRePermissionedNodeIdentity;
 
-    // The premise of the case, asserted rather than assumed: SAME OBJECT, DIFFERENT MODE. If
-    // the fixtures ever drifted so that another field differed too, this would silently become
-    // a substituted-node case and would pass for the wrong reason.
+    // The premise, asserted: same object, different mode, so the case cannot pass as a
+    // substituted-node case.
     ASSERT_EQ(kRePermissionedNodeIdentity.device, kValidatedNodeIdentity.device);
     ASSERT_EQ(kRePermissionedNodeIdentity.inode, kValidatedNodeIdentity.inode);
     ASSERT_EQ(kRePermissionedNodeIdentity.rdev, kValidatedNodeIdentity.rdev);
@@ -6442,16 +4818,12 @@ TEST_F(DriverAidlPreflightTest, TheServiceQueryDeclinesWhenTheValidatedNodeIsReP
            "of the process";
 }
 
-// THE SAME INODE, RE-OWNED between the check and the use: declined.
-//
-// Not implied by the mode case and deliberately separate. `chmod` and `chown` are different
-// operations, a comparison can be written to cover one and miss the other, and the consequence
-// here is worse: the driver node is handed to an unprivileged owner, who can then re-permission
-// it at will. The preflight's own root-owner check cannot catch it, for the reason that makes
-// this whole family of cases necessary - that check ran before the change.
-//
-// Everything except the owner is identical, so a decline can only come from the uid being
-// compared, and bit4 of the divergence mask is what proves it did.
+/**
+ * @brief The service query declines when the validated node is re-owned between the check
+ *        and the use.
+ * @pre Runs under every invocation, through the substituted probe; only the owner differs.
+ * @note Bit4 of the logged divergence mask proves the uid was compared.
+ */
 TEST_F(DriverAidlPreflightTest, TheServiceQueryDeclinesWhenTheValidatedNodeIsReOwnedBeforeTheLookup) {
     resetSyntheticProbe(kSyntheticBinderFd, 0, DriverAidlImpl::expectedBinderProtocolVersion(),
                         true);
@@ -6508,21 +4880,12 @@ TEST_F(DriverAidlPreflightTest, TheServiceQueryDeclinesWhenTheValidatedNodeIsReO
         << " release(s) were made";
 }
 
-// THE OVER-TIGHTENING GUARD: five attributes that all AGREE must still pass both comparisons.
-//
-// WHY THIS CASE IS NECESSARY AND WHY IT IS SHAPED THIS WAY. Adding mode and uid to the
-// comparison is the kind of change that can be made too enthusiastically - comparing a value
-// that legitimately differs between a `stat` of the path and an `fstat` of a descriptor, say,
-// would decline every correctly provisioned platform, and a suite full of negative cases would
-// not notice. So the positive direction needs an assertion of its own.
-//
-// It cannot be asserted by letting the query SUCCEED: that would enter halcompat::getService,
-// which reaches defaultServiceManager() and aborts this process on a host with no binder driver
-// (SIGABRT, taking every other case in the binary with it). What it does instead is let both
-// identity comparisons pass and refuse the LAST of the four re-verification points - the second
-// context-manager ping. Reaching that ping at all is the proof: it sits after the path
-// comparison and after the reopened-descriptor comparison, so `pingCalls == 2` cannot happen
-// unless all five attributes agreed, twice.
+/**
+ * @brief Five agreeing identity attributes pass both comparisons, so the re-verification is
+ *        not over-tightened.
+ * @pre Runs under every invocation, through a probe that declines only the second ping.
+ * @note Reaching that ping, two ping calls in all, proves both identity comparisons passed.
+ */
 TEST_F(DriverAidlPreflightTest, TheServiceQueryAcceptsAnUnchangedNodeOnAllFiveIdentityAttributes) {
     resetSyntheticProbe(kSyntheticBinderFd, 0, DriverAidlImpl::expectedBinderProtocolVersion(),
                         true);
@@ -6576,21 +4939,14 @@ TEST_F(DriverAidlPreflightTest, TheServiceQueryAcceptsAnUnchangedNodeOnAllFiveId
         << " release(s) were made";
 }
 
-// A GROUP- OR WORLD-WRITABLE BINDER NODE IS ACCEPTED, AND THE WARNING IS EMITTED.
-//
-// THIS CASE IS A REGRESSION GUARD AND ITS DIRECTION IS THE POINT. Refusing a permissive binder
-// node reads like a security improvement and is a production-breaking bug: a binder device node
-// must be openable by every client process that uses binder, so AOSP-derived platforms - and
-// this port vendors AOSP android-13.0.0_r74 - publish it broadly accessible BY DESIGN, and a
-// binderfs deployment takes whatever mode binderfs assigns. A restrictive-mode requirement
-// would pass in this suite's own CI guest, where the node is root-owned and everything runs as
-// root, and would DECLINE THE AIDL PATH ON EVERY CONFORMANT PRODUCTION PLATFORM - green where
-// it is measured, migration defeated where it ships.
-//
-// So the verdict asserted here is TRUE, and the line is asserted as an OBSERVATION beside it:
-// the middleware reports what it cannot require, which is the honest boundary. What it does
-// require of the node is asserted by the two cases above it - character device, root owner -
-// and what it enforces ACROSS the window is asserted by the two re-permissioned/re-owned cases.
+/**
+ * @brief A group- or world-writable binder node is accepted, and its permission bits are
+ *        reported.
+ * @pre Runs under every invocation, through the substituted probe on a root-owned character
+ *      device.
+ * @note A regression guard: binder nodes are broadly accessible by design, so refusing one
+ *       would decline the AIDL path on conformant platforms.
+ */
 TEST_F(DriverAidlPreflightTest, AcceptsAWorldWritableNodeAndReportsItsPermissionBits) {
     resetSyntheticProbe(kSyntheticBinderFd, 0, DriverAidlImpl::expectedBinderProtocolVersion(),
                         true);
@@ -6620,7 +4976,7 @@ TEST_F(DriverAidlPreflightTest, AcceptsAWorldWritableNodeAndReportsItsPermission
             << "stdout could not be redirected, so the permissive-node line cannot be read; "
                "failing rather than asserting against an empty capture";
 
-        verdict = DriverAidlImpl::isBinderPreflightOk(
+        verdict = BinderPreflightTestAccess::isBinderPreflightOk(
             DriverAidlImpl::DEFAULT_BINDER_DRIVER_PATH,
             DriverAidlImpl::DEFAULT_CONTEXT_MANAGER_TIMEOUT_MS, syntheticProbe());
 
@@ -6662,35 +5018,92 @@ TEST_F(DriverAidlPreflightTest, AcceptsAWorldWritableNodeAndReportsItsPermission
 }
 
 /**
+ * @brief The permissive-node line is informational: at the WARN level it is suppressed and the
+ *        verdict stays positive, so a healthy start on a standard 0666 node logs no warning.
+ * @pre Runs under every invocation, through the substituted probe; the level is set to WARN with
+ *      ScopedCecLogLevel and its restoration asserted.
+ * @note The non-root-owner refusal, a WARN line, is the positive control that WARN still prints.
+ */
+TEST_F(DriverAidlPreflightTest, ThePermissiveNodeObservationLogsNoWarning) {
+    bool acceptedVerdict = false;
+    bool refusedVerdict = true;
+    std::string accepted;
+    std::string refused;
+    bool levelWasSet = false;
+    std::string levelRefusal;
+
+    {
+        // Set before the captures open, so the guard's own level probes stay out of them.
+        ScopedCecLogLevel warnLevel("WARN");
+        levelWasSet = warnLevel.isRaised();
+        levelRefusal = warnLevel.failureReason();
+
+        {
+            StdoutCapture capture;
+            ASSERT_TRUE(capture.isValid())
+                << "stdout could not be redirected, so the absence of the permissive-node line "
+                   "cannot be told from an empty capture";
+
+            resetSyntheticProbe(kSyntheticBinderFd, 0, DriverAidlImpl::expectedBinderProtocolVersion(),
+                                true);
+            g_syntheticProbe.answerDescriptorIdentity = kWorldWritableNodeIdentity;
+            acceptedVerdict = BinderPreflightTestAccess::isBinderPreflightOk(
+                DriverAidlImpl::DEFAULT_BINDER_DRIVER_PATH,
+                DriverAidlImpl::DEFAULT_CONTEXT_MANAGER_TIMEOUT_MS, syntheticProbe());
+            accepted = capture.read();
+        }
+
+        {
+            StdoutCapture capture;
+            ASSERT_TRUE(capture.isValid())
+                << "stdout could not be redirected, so the positive control cannot be read";
+
+            resetSyntheticProbe(kSyntheticBinderFd, 0, DriverAidlImpl::expectedBinderProtocolVersion(),
+                                true);
+            g_syntheticProbe.answerDescriptorIdentity = kWorldWritableNodeIdentity;
+            g_syntheticProbe.answerDescriptorIdentity.uid = 1000u;
+            refusedVerdict = BinderPreflightTestAccess::isBinderPreflightOk(
+                DriverAidlImpl::DEFAULT_BINDER_DRIVER_PATH,
+                DriverAidlImpl::DEFAULT_CONTEXT_MANAGER_TIMEOUT_MS, syntheticProbe());
+            refused = capture.read();
+        }
+
+        // Restoration is asserted under the custody lock; the destructor is only a backstop.
+        std::string restoreDetail;
+        ASSERT_TRUE(warnLevel.restoreAndVerify(restoreDetail)) << restoreDetail;
+    }
+
+    ASSERT_TRUE(levelWasSet)
+        << "the middleware log level could not be set to WARN, so whether the permissive-node line "
+           "is a warning cannot be observed. Reported reason: [" << levelRefusal << "]";
+
+    EXPECT_TRUE(acceptedVerdict)
+        << "the preflight declined a root-owned character device because its mode was permissive";
+    EXPECT_EQ(accepted.find("is writable beyond its owner"), std::string::npos)
+        << "the permissive-node line printed at the WARN level, so every healthy AIDL start on a "
+           "standard 0666 binder node reports a warning. Captured: [" << accepted << "]";
+
+    EXPECT_FALSE(refusedVerdict) << "the positive control's node, owned by uid 1000, was accepted";
+    EXPECT_THAT(refused, ::testing::HasSubstr("is owned by uid 1000"))
+        << "the non-root-owner refusal did not print at the WARN level, so the absence asserted "
+           "above proves nothing about the permissive-node line's level. Captured: [" << refused << "]";
+}
+
+/**
  * @brief The resolved selection under invocation A: legacy, once, and stable thereafter.
  *
- * Requires invocation a - CEC_TEST_AIDL_MODE=absent, or unset, which means the same thing
- * (established by publishFakeForMode()). SetUp asserts that precondition rather than adapting to whatever
- * it finds, so a mis-wired --gtest_filter fails with a diagnostic naming the mode instead of
- * failing somewhere further in with no explanation.
- *
- * How the selection is observed, given that no production introspection API exists and none
- * was added. Two independent routes, both used: a dynamic_cast against the two concrete
- * types, which a test translation unit may name because neither ccec/src/DriverImpl.hpp nor
- * ccec/src/DriverAidlImpl.hpp is an installed header; and the selected-path log line, which
- * is the route the coverage runner and device-level validation use because the concrete
- * headers are out of scope for them.
- *
- * Self-sufficiency. No case here opens, closes or otherwise mutates the process-global
- * driver - they only ask the factory which object it holds, which is a pure read - so there
- * is no shared driver state to establish or restore and TearDown has nothing to do. The one
- * case that changes anything outside itself publishes a service, and its own comment records
- * exactly what that leaves behind and why it is harmless.
+ * SetUp asserts that the resolved back-end is the legacy DriverImpl rather than adapting to
+ * another. The selection is observed by dynamic_cast against the concrete types and by the
+ * selected-path log line.
+ * @pre Invocation A: the harness runs with CEC_TEST_AIDL_MODE `absent` or unset.
+ * @note No case mutates the process-global driver, so TearDown has nothing to do.
  */
 class DriverAidlSelectionTest : public ::testing::Test {
 protected:
     /**
-     * @brief Establishes that the resolved back-end is the legacy one, and caches it
+     * @brief Establishes that the resolved back-end is the legacy one, and caches it.
      *
-     * @pre Invocation A: CEC_TEST_AIDL_MODE is `absent` or unset, so the factory resolved to
-     *      DriverImpl. The selection resolves once per process inside LibCCEC::init and
-     *      cannot be changed from here, so this is asserted rather than arranged.
-     *
+     * @pre Invocation A: CEC_TEST_AIDL_MODE is `absent` or unset.
      * @post @c legacyBackEnd holds the resolved instance, non-null.
      */
     void SetUp() override {
@@ -6708,18 +5121,10 @@ protected:
     DriverImpl *legacyBackEnd = nullptr;
 };
 
-// SC6(b), first half: with no AIDL service registered the factory selects the legacy
-// back-end. Asserted by concrete type, in both directions - it is a DriverImpl and it is not
-// a DriverAidlImpl - because a one-sided assertion would also pass against some third
-// implementation, and because the two casts together are what make "exactly one of the two"
-// an assertion rather than a description.
 /**
- * @brief SC6(b), first half: with no AIDL service published the factory selects the legacy
- *        back-end.
+ * @brief With no AIDL service published, the factory selects the legacy back-end.
  * @pre Invocation A, established by the fixture's SetUp.
- * @note Evidence: two casts against the concrete types, in both directions. A one-sided
- *       assertion would also pass against some third implementation, so the pair is what
- *       makes "exactly one of the two" an assertion rather than a description.
+ * @note Casts in both directions make "exactly one of the two" an assertion.
  */
 TEST_F(DriverAidlSelectionTest, AbsentServiceSelectsTheLegacyBackEnd) {
     Driver &resolved = Driver::getInstance();
@@ -6732,31 +5137,12 @@ TEST_F(DriverAidlSelectionTest, AbsentServiceSelectsTheLegacyBackEnd) {
            "selection is not resting on service availability at all";
 }
 
-// SC6(b), second half: the selected-path log line names the legacy back-end.
-//
-// The line the factory actually emitted went to the process log during LibCCEC::init, before
-// any test body existed, so it cannot be captured here - and re-emitting it into the process
-// log would break the runner's one-hit-per-process grep. What this case does instead is
-// drive the production logger with the transcribed contract format, into an anonymous
-// temporary, and assert the line that comes out. That proves three things a pair of local
-// string comparisons could not: the format is one CCEC_LOG accepts and substitutes the
-// back-end name into; the line still survives the default log-level filter, so a lowered
-// default that silently broke every consumer of the line is caught here; and the substituted
-// name agrees with what the dynamic_cast above established.
 /**
- * @brief SC6(b), second half: the selected-path log line names the legacy back-end and
- *        survives the default log-level filter.
- * @pre Invocation A. The line the factory itself emitted went to the process log during
- *      LibCCEC::init, before any test body existed, so it cannot be captured here - and
- *      re-emitting it into the process log would break the runner's one-hit-per-process
- *      grep. This case drives the production logger with the transcribed contract format
- *      into an anonymous temporary instead.
- * @note Evidence: the format's shape is asserted first - exactly one substitution and the
- *       \r\n terminator - then the captured line is asserted to carry the substituted
- *       name, and the two back-end names are asserted distinguishable. That establishes
- *       three things local string comparisons could not: the format is one CCEC_LOG
- *       accepts, the line is not filtered out by the default level, and the name agrees
- *       with what the cast established.
+ * @brief The selected-path log line names the legacy back-end and survives the default
+ *        log-level filter.
+ * @pre Invocation A; drives the production logger with the transcribed contract format,
+ *      since the factory's own line was logged before any test body ran.
+ * @note The captured name must agree with what the casts established.
  */
 TEST_F(DriverAidlSelectionTest, SelectedPathLogLineNamesTheLegacyBackEnd) {
     // The format is a contract, so its shape is asserted before it is used: exactly one
@@ -6803,21 +5189,11 @@ TEST_F(DriverAidlSelectionTest, SelectedPathLogLineNamesTheLegacyBackEnd) {
            "which back-end was selected";
 }
 
-// SC6(c), first half: the factory hands back the same object every time.
-//
-// Driver::getInstance(), in ccec/src/Driver.cpp, holds a reference to a function-local static
-// - cited by name rather than by line, as the closing note of this file requires of any
-// citation into a file it does not own - so this is what makes "resolved once" observable: a
-// factory that re-decided per call, or returned a fresh object, would break the state
-// machine every caller depends on - Bus's reader and writer threads and LibCCEC would each
-// be talking to a different driver.
 /**
- * @brief SC6(c), first half: the factory hands back the same object on every call.
+ * @brief The factory hands back the same object on every call.
  * @pre Invocation A, though the property is independent of which back-end resolved.
- * @note Evidence: three successive calls yield one address. This is what makes "resolved
- *       once" observable: a factory that re-decided per call, or returned a fresh object,
- *       would leave Bus's reader thread, its writer thread and LibCCEC each talking to a
- *       different driver.
+ * @note A factory that re-decided per call would leave Bus's threads and LibCCEC talking to
+ *       different drivers.
  * @see Driver::getInstance()
  */
 TEST_F(DriverAidlSelectionTest, FactoryReturnsTheSameObjectOnEveryCall) {
@@ -6835,72 +5211,12 @@ TEST_F(DriverAidlSelectionTest, FactoryReturnsTheSameObjectOnEveryCall) {
            "established there does not describe what the rest of this suite is talking to";
 }
 
-// SC6(c), second half, and the one that actually needs arranging: registering a service
-// mid-process does not change an already-resolved selection.
-//
-// This is the property that makes a session deterministic. The selection resolves once,
-// inside LibCCEC::init, and is then fixed for the lifetime of the process - so a HAL that
-// comes up late must not be picked up half way through, leaving one part of a session
-// talking to the legacy back-end and another to the AIDL one.
-//
-// The direction is forced. Proving stability by taking a service away is not expressible:
-// the pinned C++ IServiceManager has no service-removal API and retains a reference to
-// whatever was published, so there is nothing to deregister - see unreachable path (4) in
-// the file block. Adding one is the direction that can be expressed, and it is also the more
-// dangerous direction in practice, since it is the one a late-starting HAL produces.
-//
-// The preflight is not optional here. registerFakeHdmiCecService() guards on the driver node
-// itself and so cannot abort, but it does not guard the other hazard: on a host that has a
-// driver node and no running servicemanager, defaultServiceManager() blocks until binder
-// handle 0 resolves, with no bound, which would hang this binary rather than fail it.
-// isBinderPreflightOk() covers both, which is why it is asked first here exactly as the
-// harness asks it in publishFakeForMode().
-//
-// Two forms, and the strong one is mandatory wherever it is possible. The preflight's answer
-// decides which form this case runs, and the difference is not cosmetic:
-//
-//   Strong form, taken whenever the preflight passes - a service really is published while
-//   the process is running, and the publication succeeding is asserted. Only then does
-//   "the resolved back-end did not change" mean anything, because only then did anything
-//   appear for it to change to.
-//
-//   Weak form, taken only where the preflight declines - no service can be published at all,
-//   so the assertions below degenerate into the repeated-singleton identity that
-//   FactoryReturnsTheSameObjectOnEveryCall already covers. That is not evidence for SC6(c)
-//   and the case says so, in its own log line and in every failure message below, so that a
-//   green result on a driverless host cannot be read as the strong form having run.
-//
-// Why the verdict decides the form rather than the outcome being reported either way. A case
-// that only reported a refused publication would make the strong form unreachable: a runner
-// where addService refused would print "was refused" and still pass, so the evidence would
-// silently be absent on precisely the hosts that can produce it. Asking the preflight first
-// binds the form to the environment, and the form is stated in every message.
-//
-// What this leaves behind, and why it is harmless. Where the registration does succeed, the
-// fake stays published for the rest of the process, because there is no way to withdraw it.
-// No sibling suite is affected: the selection is already resolved and cannot be re-decided,
-// nothing else in this binary looks the name up, and the entry lives only as long as this
-// process - the service manager's reference dies with it. The strong reference is held in a
-// function-local static rather than in the fixture so that the published binder outlives
-// this case; dropping it at the end of the case would leave the service manager advertising
-// a destroyed object, which is a worse state than leaving it advertising a live one.
 /**
- * @brief SC6(c), second half: publishing a service after the selection has resolved does not
- *        change which back-end the factory holds.
- * @pre Invocation A. Adding a service is the only direction that can be expressed - the
- *      pinned C++ IServiceManager offers no withdrawal - and it is also the dangerous one
- *      in practice, since it is what a late-starting HAL produces.
- * @note Two forms, and the preflight's verdict decides which runs. Where it passes, a
- *       service really is published and the publication is asserted, so "the resolved
- *       back-end did not change" has something to have changed to. Where it declines, the
- *       assertions reduce to the repeated-singleton identity the previous case already
- *       covers; that is not SC6(c) evidence, and the case says so in its own log line and
- *       in every failure message, so a green result on a driverless host cannot be misread.
- * @warning Where publication succeeds the fake stays published for the rest of the process,
- *          held in a function-local static so the binder outlives the case. Nothing else in
- *          this binary looks the name up, the selection cannot be re-decided, and the entry
- *          dies with the process - whereas dropping the reference here would leave the
- *          service manager advertising a destroyed object.
+ * @brief Publishing a service after the selection has resolved does not change which back-end
+ *        the factory holds.
+ * @pre Invocation A; the binder preflight picks the form: strong (a service is published and
+ *      asserted) where it passes, weak (singleton identity only) where it declines.
+ * @warning A fake published here stays published for the rest of the process.
  * @see DriverAidlImpl::isBinderPreflightOk()
  */
 TEST_F(DriverAidlSelectionTest, RegisteringAServiceMidProcessDoesNotChangeTheResolvedBackEnd) {
@@ -6913,7 +5229,7 @@ TEST_F(DriverAidlSelectionTest, RegisteringAServiceMidProcessDoesNotChangeTheRes
 
     // The environment's own answer decides the form, and it is asked exactly once so that
     // both the branch taken and every message below describe the same verdict.
-    const bool canPublish = DriverAidlImpl::isBinderPreflightOk();
+    const bool canPublish = BinderPreflightTestAccess::isBinderPreflightOk();
 
     // Named once and reused in every message, so a failure states which form produced it
     // rather than leaving a reader of the log to work it out.
@@ -6926,10 +5242,8 @@ TEST_F(DriverAidlSelectionTest, RegisteringAServiceMidProcessDoesNotChangeTheRes
         latePublishedFake = ::android::sp<FakeHdmiCecService>::make();
         ASSERT_TRUE(latePublishedFake != nullptr) << "the fake service could not be constructed";
 
-        // Asserted, not reported. The preflight has just said that this host has a usable
-        // binder transport and a reachable context manager, so a refusal here is a real
-        // failure of the environment this case depends on - and tolerating it would leave the
-        // strong form silently unreached on precisely the runners that can reach it.
+        // Asserted, not reported: the preflight passed, so a refusal is a real environment
+        // failure, and tolerating it would leave the strong form unreached.
         ASSERT_TRUE(registerFakeHdmiCecService(latePublishedFake))
             << "the binder preflight passed, so this host can publish a service, and the service "
                "manager refused this one anyway. Without a successful publication there is nothing "
@@ -6965,87 +5279,32 @@ TEST_F(DriverAidlSelectionTest, RegisteringAServiceMidProcessDoesNotChangeTheRes
     EXPECT_EQ(dynamic_cast<DriverAidlImpl *>(after), nullptr)
         << "the AIDL back-end was adopted mid-process. Form: " << form;
 
-    // No test property is recorded for the form on purpose: the runner consumes this suite's
-    // JSON, and a key it does not know is a change to a contract another file owns. The form
-    // is on stdout, which is where the runner's per-invocation log keeps it, and in every
-    // failure message above, which is where a reader needs it.
+    // No test property records the form, because the runner's JSON contract is another
+    // file's; the form is on stdout and in every failure message.
 }
 
 /**
- * @brief The AIDL back-end's closed-state behaviour, on a local instance.
+ * @brief The AIDL back-end's behaviour on locally constructed instances, under every invocation.
  *
- * Runs under every invocation, and that is the whole point of the fixture. DriverAidlImpl's
- * constructor touches no binder at all - it sets the state to CLOSED, the legacy handle
- * field to 0 and an empty address list (DriverAidlImpl::DriverAidlImpl()), exactly as
- * DriverImpl's does (DriverImpl.cpp:87-90) - which is precisely what makes the factory's
- * construct-then-query order safe on a legacy-only SOC. The consequence for testing is
- * large: a local instance is constructible even where no service, no service manager and no
- * binder driver exist, so every status != OPENED guard, the writeAsync prelude ordering, and
- * the three methods that carry no guard at all are reachable without a HAL of any kind.
- *
- * A local instance is used rather than the shared driver, following the idiom the
- * neighbouring async suite established (test_DriverImpl_Async.cpp:515, :532, :543, :556,
- * :567, :581): the process-global driver is open, every other suite in this binary shares
- * it, and closing it to reach a guard would hand a closed driver to whichever suite runs
- * next.
- *
- * And a local instance is never OPENED here, which is a hazard worth naming rather than
- * discovering. IHdmiCec::open() is single-instance and fails EX_ILLEGAL_STATE if a session
- * is already held, so opening a local instance under invocation B - where the
- * process-global AIDL back-end holds the session - is a designed-in failure. It happens
- * that a local instance cannot open at all, on any invocation: its service proxy is only
- * ever cached by its own isServiceAvailable(), so open() raises IOException first
- * (the no-proxy guard at the head of DriverAidlImpl::open()) - which is itself asserted
- * below, and is what keeps every
- * instance here CLOSED and its destructor off the close path.
- *
- * Self-sufficiency. Every case constructs its own instance inside its own body and lets it
- * go out of scope at the end; nothing is shared between cases and nothing outside the
- * fixture is written. The HAL mock is consulted only through Times(0) expectations - what
- * these cases assert about it is that it is not reached - and those are cleared in TearDown.
+ * Plain instances stay CLOSED, so the state guards, the writeAsync prelude and the unguarded
+ * methods are reached with no HAL. Probes force the lifecycle state or inject in-process service
+ * and controller doubles, so OPENED-state paths run without a live HAL. The legacy HAL mock is
+ * reached only through Times(0) expectations, which TearDown clears.
  */
-/* ------------------------------------------------------------------------------------------
- * the receive-queue ownership handoff, and what it takes to test it.
- *
- * The helpers below and the five cases at the end of this fixture's group exist for one
- * production guarantee: DriverAidlImpl::offerReceivedFrame() must report whether the incoming
- * queue actually took a frame, and close()'s NULL sentinel must be serialized against it on
- * queueProducerMutex so that the receive path's occupancy observation cannot go stale. Neither
- * property is reachable through the public surface on a host with no binder driver, because
- * the OPENED state only arrives through open() and open() needs a live compatible AIDL
- * service - hence the test-local subclass, and hence `protected` on the back-end's internal
- * section.
- *
- * Everything here has internal linkage: it is one anonymous namespace, so nothing it declares
- * can collide with a name in another translation unit of this suite.
- * ------------------------------------------------------------------------------------------ */
+/* ---- Receive-queue ownership handoff: test-local helpers, all with internal linkage. ---- */
 
 namespace {
 
 /**
- * @brief A DriverAidlImpl whose incoming queue can be driven directly
+ * @brief A DriverAidlImpl whose incoming queue can be driven directly.
  *
- * Why a subclass and not the instance itself. offerReceivedFrame() only accepts a frame while
- * the state is OPENED, and the state only becomes OPENED through open(), which needs a live
- * compatible AIDL service - so on this host, with no binder driver, the ownership contract
- * this turns on would have no coverage at all through the public surface. The back-end's internal
- * section is `protected` for exactly this reason (ccec/src/DriverAidlImpl.hpp), so a test-local
- * subclass can establish the precondition and call the handoff, on any host, with no service,
- * no listener and no threadpool - none of which the queue handoff touches.
- *
- * Forcing the state field is not the same as holding a session, and the distinction is what
- * keeps this honest: markOpened() writes the middleware's own lifecycle field and nothing else,
- * so what these cases exercise is precisely the queue arithmetic, the producer serialization
- * and the ownership report. Anything that would dereference a proxy is not reachable from here
- * and is not asserted here.
- *
- * It cleans up after itself on every exit path. The destructor drains whatever the queue still
- * holds and returns the state to CLOSED, so a case that ends early on a failed expectation
- * neither leaks a frame nor leaves the base destructor to run close() into an EventQueue that
- * would then report leftover elements.
+ * Forces only the lifecycle field, so the queue arithmetic, the producer serialization and the
+ * ownership report are reachable with no service, listener or threadpool. The destructor drains
+ * the queue and returns the state to CLOSED on every exit path.
  */
 class ReceiveQueueProbe : public DriverAidlImpl {
 public:
+    /** @brief Drains the queue and returns to CLOSED, so the base destructor never closes. */
     ~ReceiveQueueProbe() override {
         drain();
         markClosed();
@@ -7060,21 +5319,14 @@ public:
     /**
      * @brief Puts the instance into CLOSING, the state close() sets before it offers its sentinel.
      *
-     * The state a blocked reader must observe for read() to take its FLUSH arm. Reachable only
-     * from here: production sets it inside close(), between the guard and the HAL call, so no
-     * case could otherwise observe read() while the instance is in it.
+     * Lets a case observe read() in the state that takes its FLUSH arm.
      */
     void markClosing(void) { status = CLOSING; }
 
     /**
      * @brief Offers one NULL close sentinel exactly as close() does, under the producer lock.
      *
-     * WHY THE PRODUCER LOCK IS TAKEN HERE TOO. close() offers its sentinel under
-     * queueProducerMutex because it is a producer on this queue and not merely its
-     * terminator; a helper that offered without it would be modelling a close that does not
-     * exist. Calling this twice models the two-sentinel state a stop/reopen/close sequence
-     * leaves - one sentinel per transition out of OPENED - which is the state read()'s flush
-     * loop must survive.
+     * Lets a case place the sentinel without leaving OPENED, or while it holds the instance lock.
      */
     void postCloseSentinel(void) {
         {CCEC_OSAL::AutoLock lock_(queueProducerMutex);
@@ -7083,24 +5335,13 @@ public:
     }
 
     /**
-     * @brief Places a real frame on the queue the way one that was already there got there.
+     * @brief Queues a frame as one accepted while OPENED and still queued when close() runs.
      *
-     * THE ONE PRODUCER PATH THAT SKIPS THE OPENED GUARD, and it models a real state rather than
-     * inventing one. offerReceivedFrame() refuses once the instance stops being OPENED, so a
-     * frame cannot be ADDED during a close - but a frame accepted while the instance WAS opened
-     * is still in the queue when close() runs, and read()'s flush is the code that meets it.
-     * offer() cannot express that: a frame offered before the close is consumed by the reader's
-     * own poll, so the flush never sees it, and a frame offered after the close is refused.
+     * @param [in] frame - Heap frame; ownership passes to the queue, and read()'s flush frees it.
      *
-     * @param [in] frame - Heap frame to place. Ownership passes to the queue, and read()'s flush
-     *                     releases it exactly as it releases one the HAL delivered.
-     *
-     * @pre The caller holds the instance lock, so the reader is parked between its poll and its
-     *      state re-check and cannot consume this entry before the flush does.
+     * @pre The caller holds the instance lock, so the reader cannot consume this entry first.
      * @post The frame is queued behind whatever was already there.
-     * @warning Takes queueProducerMutex, exactly as every other producer on this queue does, so
-     *          the occupancy this places is visible to the check in offerReceivedFrame().
-     *
+     * @warning Takes queueProducerMutex, as every producer on this queue does.
      * @see postCloseSentinel()
      */
     void postFrameBehindSentinel(CECFrame *frame) {
@@ -7112,88 +5353,54 @@ public:
     /**
      * @brief The instance lock read() takes to re-check the state, for a test to hold.
      *
-     * THE GATE THAT MAKES THE FLUSH ARM DETERMINISTIC. read() polls the queue and only then
-     * takes this lock to re-check the state, so a test that holds it can place a second
-     * sentinel in the queue while the reader is already past its poll and cannot yet see the
-     * state change. Without the gate the reader would consume both sentinels in its
-     * poll-and-loop path and never reach the flush at all.
+     * Holding it parks the reader between its poll and its state re-check, which makes the
+     * flush arm deterministic.
      *
-     * @warning The holder must not also take queueProducerMutex through producerLock():
-     *          close() takes the instance lock first and the producer lock inside it, and
-     *          reversing that here would invert the only nesting order that exists.
-     *          postCloseSentinel() takes the producer lock ALONE, so it is safe to call
-     *          while this one is held - which is exactly what the two-sentinel case does.
+     * @warning Take this before producerLock() or postCloseSentinel(), as close() nests them;
+     *          never take it while holding producerLock().
      */
     Mutex &instanceLock(void) { return mutex; }
 
     /**
      * @brief Calls the production handoff and reports exactly what it reported.
      *
-     * @param [in] frame Frame to hand off. Ownership passes to the queue only if this
-     *                  returns true; on false the caller still owns it.
-     * @return bool - Exactly what DriverAidlImpl::offerReceivedFrame() reported. Nothing is
-     *                reinterpreted here, because the agreement between this value and what
-     *                the queue actually holds is the property under test.
+     * @param [in] frame - Frame to hand off; the queue owns it only if this returns true.
+     * @return bool - DriverAidlImpl::offerReceivedFrame()'s result, uninterpreted.
      */
     bool offer(CECFrame *frame) { return offerReceivedFrame(frame); }
 
     /**
      * @brief The lock every producer on the incoming queue must take, for the test to hold.
      *
-     * The one thing that makes the close-side acquisition observable. The defect it guards
-     * against was a
-     * missing lock acquisition in close(), and a serial case cannot see a lock that is not
-     * taken. A case that holds this lock and then drives the real close() from another
-     * thread can: while it is held, close()'s sentinel offer must not complete, and
-     * completing anyway is the regression itself.
+     * While a case holds it, a close() driven from another thread must not complete its offer.
      *
-     * Handing out the lock rather than a "take it for me" helper is deliberate - the test
-     * holds it across a scope of its own, under CCEC_OSAL::AutoLock, exactly as production
-     * does.
-     *
-     * @return Mutex& - DriverAidlImpl::queueProducerMutex, this instance's own.
-     *
-     * @warning The holder must not also take the instance mutex. close() takes the instance
-     *          lock first and this one inside it, so a test holding this one and then
-     *          reaching for that one would invert the only nesting order that exists.
-     *          Nothing these cases call needs it: occupancy() and take() reach the
-     *          EventQueue's own internal lock and nothing else.
+     * @return Mutex& - This instance's DriverAidlImpl::queueProducerMutex.
+     * @warning Never take the instance mutex while holding this: close() nests them the other way.
      */
     Mutex &producerLock(void) { return queueProducerMutex; }
 
     /**
      * @brief Current occupancy of the incoming queue.
      *
-     * @return size_t - Entries currently queued, sentinels included. A figure alone cannot
-     *                  tell a swallowed sentinel from one frame too many, which is why the
-     *                  counting drains exist alongside it.
+     * @return size_t - Entries currently queued, sentinels included.
      */
     size_t occupancy(void) { return rQueue.size(); }
 
     /**
      * @brief Takes one entry exactly as the Bus reader does.
      *
-     * @return CECFrame* - The frame taken, or NULL for close()'s wake-the-reader sentinel.
-     *                     Only call this while occupancy() is non-zero: EventQueue::poll()
-     *                     blocks on an empty queue, which is the reader's contract too.
+     * @return CECFrame* - The frame taken, or NULL for a close() sentinel.
+     * @pre occupancy() is non-zero: EventQueue::poll() blocks on an empty queue.
      */
     CECFrame *take(void) { return rQueue.poll(); }
 
     /**
      * @brief Empties the queue, counting frames and close sentinels apart and releasing frames.
      *
-     * The counting drain. Distinguishing the two is what turns "the queue holds N entries"
-     * into "the queue holds these frames and close()'s one sentinel", which is the assertion
-     * the reserved-slot rule is actually about - an occupancy figure alone cannot tell a
-     * swallowed sentinel from one frame too many.
+     * @param [out] frames    - Number of non-NULL entries taken; each one is released here.
+     * @param [out] sentinels - Number of NULL entries, i.e. close() sentinels the queue accepted.
      *
-     * @param [out] frames    - Receives the number of non-NULL entries taken. Each one is
-     *                          released here, so the caller must not hold a pointer to any.
-     * @param [out] sentinels - Receives the number of NULL entries taken, i.e. the number of
-     *                          close() sentinels the queue really accepted.
-     *
-     * @pre Nothing else is producing onto the queue. EventQueue::poll() blocks on an empty
-     *      queue, so this drains strictly while the occupancy it reads is non-zero.
+     * @pre Nothing else is producing onto the queue.
      */
     void drainCounting(size_t &frames, size_t &sentinels) {
         std::vector<CECFrame *> taken;
@@ -7210,18 +5417,10 @@ public:
     /**
      * @brief Empties the queue, retaining each frame's identity and counting sentinels apart.
      *
-     * The variant the ownership cases need. Counting frames establishes how many the queue
-     * took; naming them establishes which ones it took, which is what an exactly-one-owner
-     * ledger is built from - a count cannot distinguish "the queue kept the frame the caller
-     * also released" from "the queue kept a different frame".
+     * @param [out] frames    - Every non-NULL entry, in queue order; the caller now owns each.
+     * @param [out] sentinels - Number of NULL entries, i.e. close() sentinels the queue accepted.
      *
-     * @param [out] frames    - Receives every non-NULL entry, in queue order. Ownership
-     *                          passes to the caller: nothing is released here.
-     * @param [out] sentinels - Receives the number of NULL entries taken, i.e. the number of
-     *                          close() sentinels the queue really accepted.
-     *
-     * @pre Nothing else is producing onto the queue. EventQueue::poll() blocks on an empty
-     *      queue, so this drains strictly while the occupancy it reads is non-zero.
+     * @pre Nothing else is producing onto the queue.
      */
     void drainInto(std::vector<CECFrame *> &frames, size_t &sentinels) {
         sentinels = 0;
@@ -7241,16 +5440,9 @@ public:
     /**
      * @brief Releases everything still queued and reports how many entries were taken.
      *
-     * Expressed through drainCounting() rather than by polling the queue itself, so that
-     * take() stays the one place in this fixture that touches EventQueue::poll(). That is
-     * not tidiness: EventQueue::poll() leaves its `E front;` local unassigned on the arm
-     * where the queue is emptied between the size read and the poll, so every distinct
-     * call site of it produces its own pre-existing -Wmaybe-uninitialized diagnostic, and
-     * osal/include/osal/EventQueue.hpp is out of bounds for this migration. Funnelling
-     * through take() keeps that diagnostic count where it was rather than adding to it.
+     * Goes through drainCounting(), so take() stays the only EventQueue::poll() call site here.
      *
-     * @return size_t - How many entries were taken in total, frames and sentinels together.
-     *                  Every frame is released, so the caller must not retain a pointer to any.
+     * @return size_t - Frames and sentinels taken in total; every frame is released.
      */
     size_t drain(void) {
         size_t frames = 0;
@@ -7265,30 +5457,9 @@ public:
 /**
  * @brief A sticky latch whose timed wait is bounded on a monotonic clock.
  *
- * Why this exists rather than CCEC_OSAL::ConditionVariable, which is what the concurrent
- * cases would otherwise signal completion through. The OSAL primitive is right in shape - a
- * timed wait on a sticky
- * condition, so a worker that finishes before the test thread starts waiting is still
- * observed - and wrong in two details that a bounded observation cannot tolerate:
- *
- * - its timed wait computes an absolute deadline and normalises only
- *   `tv_nsec > 1000000000`, not equality, so a wait begun at exactly a 600000-microsecond
- *   boundary hands pthread_cond_timedwait a tv_nsec of exactly 1000000000, which is invalid;
- *   the call returns EINVAL immediately and the wait can spin on it instead of waiting;
- * - it waits on CLOCK_REALTIME, so an NTP step or a manual clock adjustment moves the
- *   deadline underneath a wait already in progress - a wait bounded at 400 ms can expire
- *   instantly or last far longer than its bound.
- *
- * Both live in osal/, which this migration does not touch, so the bound is established here
- * instead: std::chrono::steady_clock cannot be stepped, and the predicate form of
- * wait_until() re-checks the deadline against that same clock on every spurious wake, so the
- * bound holds whatever the wall clock does. The OSAL types are still used where no timed wait
- * is involved - the test thread holds queueProducerMutex under CCEC_OSAL::AutoLock, exactly as
- * production does.
- *
- * Stickiness is load bearing and is preserved: notify() sets the flag as well as waking
- * waiters, so a wait that starts after the notify still returns true, and a false return means
- * a genuine timeout rather than a missed signal.
+ * Replaces CCEC_OSAL::ConditionVariable, whose timed wait runs on CLOCK_REALTIME and can hand
+ * pthread_cond_timedwait an invalid tv_nsec. notify() sets the flag as well as waking waiters,
+ * so a false return from wait() is a genuine timeout, never a missed signal.
  */
 class MonotonicLatch {
 public:
@@ -7299,7 +5470,7 @@ public:
      */
     MonotonicLatch(void) : signalled(false) {}
 
-    /** @brief Sets the latch and wakes every waiter. Idempotent, and safe from any thread. */
+    /** @brief Sets the latch and wakes every waiter; idempotent and safe from any thread. */
     void notify(void) {
         {
             std::lock_guard<std::mutex> held(guard);
@@ -7341,74 +5512,30 @@ private:
     std::condition_variable wakeUp;
     bool                    signalled;
 
+    /** @brief Copy construction is disabled: declared private and never defined. */
     MonotonicLatch(const MonotonicLatch &);
+    /** @brief Copy assignment is disabled: declared private and never defined. */
     MonotonicLatch & operator = (const MonotonicLatch &);
 };
 
 /**
- * @brief How long a worker is given to finish before it is abandoned rather than waited on.
+ * @brief How long the overlap harness gives a worker to finish before abandoning it.
  *
- * The bound on the disposition path, and it exists because an unconditional join() there
- * defeats every other bound in these cases. The disposition runs after the case body has
- * finished - including after an early return from a failed assertion - and by then the test
- * thread has released the producer lock, so what a worker can have left is one
- * CCEC_OSAL::EventQueue::offer() and, for close(), a transaction that fails immediately on an
- * instance holding no proxy.
- *
- * What that offer does and does not guarantee, because this deadline must not be read as
- * resting on more than the queue provides. offer() takes the queue's own mutex under
- * CCEC_OSAL::AutoLock, so it can wait on whatever holds that mutex; it may allocate, because
- * it appends through std::deque::push_back; and it signals its condition variable while still
- * holding the lock. The one wait it never performs is a wait for capacity: a full queue
- * discards the element instead of parking the producer. So there is no unbounded wait inside
- * it, but no constant-time or nonblocking property either.
- *
- * This deadline is consequently an empirical bound rather than one derived from that work, and
- * it is deliberately generous: two seconds is orders of magnitude above what these workers
- * measure at on this host, so a worker still running when it expires has stopped making
- * progress rather than merely being slow. Its purpose is to keep the disposition path off an
- * unbounded join at all - waiting for ever would turn a reported failure into a hung suite,
- * because the assertion that fired on one of the timeouts above would unwind straight into an
- * unbounded join on the very worker it just reported as not completing - and not to certify
- * how long the remaining work takes.
- *
- * Shorter than PRODUCER_COMPLETION_TIMEOUT_MS deliberately. That timeout is the one a passing
- * run must never hit and can afford to be generous; this one is only ever reached once a
- * failure has already been reported, where the remaining value is a prompt report rather than
- * one more chance for a broken worker to finish.
+ * Keeps the disposition path off an unbounded join, so a stuck worker yields a reported failure
+ * rather than a hung suite. Empirical and generous, yet shorter than
+ * PRODUCER_COMPLETION_TIMEOUT_MS because it is reached only after a failure was reported.
  */
 const long WORKER_ABANDON_DEADLINE_MS = 2000;
 
 /**
- * @brief One worker thread and the bounded disposition every exit path takes.
+ * @brief One worker thread and its bounded join-or-detach disposal.
  *
- * Why this exists rather than a bare join() at the end of the case. The concurrent cases below
- * park a worker on queueProducerMutex on purpose, and they use ASSERT_* while it is parked -
- * and ASSERT_* returns from the case body. A joinable std::thread destroyed by that return
- * calls std::terminate, which would replace a reported failure with an abort and take every
- * remaining case in the binary with it.
+ * dispose() waits a caller-supplied bound (WORKER_ABANDON_DEADLINE_MS from the overlap harness,
+ * kStalledTransmitBoundMs from the stall harness), joining a body that returned and detaching one
+ * that did not; after a detach the caller must retain everything the thread can reach.
  *
- * And why it is not a joiner either, which is the sharper point. An unconditional join on the
- * disposition path is exactly as bad in the one situation the bounds exist for: if a bounded
- * completion assertion fails because a worker is genuinely stuck, unwinding runs the join and
- * the run hangs on the very thread the assertion just reported as not completing. So disposal
- * waits for the body to return, for at most WORKER_ABANDON_DEADLINE_MS of monotonic time, and
- * takes one of two routes:
- *
- * - the body returned: join(), which from that point waits out thread teardown and nothing
- *   else, because the latch this class sets is the body's last statement;
- * - the body did not return: detach(), which does not wait for the thread - that is the whole
- *   of the property relied on here, rather than any claim about how long the call itself takes.
- *   The state the abandoned thread can still reach is what QueueHandoffOverlapHarness then
- *   leaks by design - see there.
- *
- * The declaration order is still part of the mechanism, so it is stated rather than left to be
- * rediscovered. The harness that owns these workers is declared in the case body outside the
- * scope that holds the lock, and the lock is taken in an inner scope. Locals are destroyed in
- * reverse order of declaration, so an early return unwinds the inner scope first - releasing
- * the lock, which is what lets a parked worker finish - and only then disposes the workers.
- * Disposing while the lock was still held would make every disposal hit its deadline and
- * abandon a worker that was merely parked.
+ * @warning Declare the owning harness outside the scope that holds the producer lock, so an
+ *          early return releases the lock before the workers are disposed.
  */
 class BoundedWorker {
 public:
@@ -7418,12 +5545,9 @@ public:
     BoundedWorker(void) {}
 
     /**
-     * @brief Last-resort disposition, unreachable in this file's own use.
+     * @brief Last-resort disposition: detaches a still-joinable thread rather than joining it.
      *
-     * QueueHandoffOverlapHarness disposes every worker before it deletes any, so a joinable thread
-     * here would mean dispose() was never called. Detaching rather than joining keeps even
-     * this path off an unbounded wait; the harness's leak-by-design rule is what keeps the
-     * detached thread's state alive, and it never deletes a worker it abandoned.
+     * Unreachable in this file's use, because the owning harness disposes every worker first.
      */
     ~BoundedWorker(void) {
         if (worker.joinable()) {
@@ -7434,9 +5558,9 @@ public:
     /**
      * @brief Runs @p body on a new thread and sets the finished latch when it returns.
      *
-     * @param [in] body - The worker body. Copied into the thread, so it must capture the
-     *                    heap-resident QueueHandoffOverlapState pointer and nothing on the test
-     *                    stack: an abandoned worker outlives the case body.
+     * @param [in] body - The worker body. Copied into the thread, so it must capture a
+     *                    heap-resident state pointer and nothing on the test stack: an
+     *                    abandoned worker outlives the case body.
      */
     template <typename Body>
     void start(Body body) {
@@ -7467,8 +5591,9 @@ public:
      * @brief Bounded disposition: join a finished worker, abandon one that is not.
      *
      * @param [in] boundMs - How long to wait for the body to return before abandoning.
-     * @return bool - true when the worker was joined, false when it had to be detached, in
-     *                which case the caller must not release anything the thread can reach.
+     * @return bool - true when the worker was joined or holds no thread (never started or
+     *                already disposed); false when it had to be detached, in which case the
+     *                caller must not release anything the thread can reach.
      */
     bool dispose(long boundMs) {
         if (!worker.joinable()) {
@@ -7489,25 +5614,21 @@ private:
     std::thread    worker;
     MonotonicLatch finished;
 
+    /** @brief Copy construction is disabled: declared private and never defined. */
     BoundedWorker(const BoundedWorker &);
+    /** @brief Copy assignment is disabled: declared private and never defined. */
     BoundedWorker & operator = (const BoundedWorker &);
 };
 
 /**
  * @brief Everything a concurrent producer-overlap worker can touch, allocated off the test stack.
  *
- * The counterpart of BoundedWorker's abandonment route. A detached worker may still be inside
- * production close() or offerReceivedFrame() when the case body returns, so every object it
- * can reach - the probe whose queue and locks it uses, the latches it signals, the flags it
- * writes and the frame whose ownership it decides - lives here and is reached through a
- * pointer, never as a reference to a case-body local. A stack local would be gone the moment
- * the case returned, and an abandoned worker would then be writing into a dead frame.
- *
- * One struct serves all three concurrent cases rather than one per case. They need overlapping
- * subsets of the same few fields, and a shared holder keeps the abandonment rule in one place;
- * a case simply leaves the fields it does not use at their initial values.
+ * A detached worker may still be inside production close() or offerReceivedFrame() when the case
+ * returns, so everything it reaches lives here, behind a pointer. One struct serves all three
+ * concurrent cases; each leaves the fields it does not use at their initial values.
  */
 struct QueueHandoffOverlapState {
+    /** @brief Creates the state with no contending frame and every flag and counter clear. */
     QueueHandoffOverlapState(void)
         : contending(NULL)
         , contendingAccepted(false)
@@ -7521,7 +5642,7 @@ struct QueueHandoffOverlapState {
         , rendezvousTimedOut(false)
     {}
 
-    /** @brief The instance under test. Its queue and its two locks are the shared state. */
+    /** @brief The instance under test, whose queue and two locks are the shared state. */
     ReceiveQueueProbe probe;
 
     /** @brief Set by the receive worker immediately before it enters the production handoff. */
@@ -7531,17 +5652,14 @@ struct QueueHandoffOverlapState {
     MonotonicLatch closeEntered;
 
     /**
-     * @brief Every frame the case allocated, released by the harness on every exit path.
+     * @brief Every frame the case allocated, released by the harness once every worker joined.
      *
-     * The ledger exists because a case that allocates frames and then returns early from a
-     * failed assertion would otherwise leak them, and because the release has to happen in
-     * exactly one order to be safe: after every worker is disposed, and after the queue has
-     * been drained so that the probe's own destructor cannot release the same frame a second
-     * time. The harness destructor is the one place that order is expressed.
+     * Released exactly once, after the queue is drained; deliberately retained if any worker was
+     * abandoned.
      */
     std::vector<CECFrame *> allocated;
 
-    /** @brief The frame the receive worker offers. Owned by the case, decided by the race. */
+    /** @brief The frame the receive worker offers, owned by the case and decided by the race. */
     CECFrame *contending;
 
     /** @brief What the production handoff reported for @c contending. */
@@ -7565,10 +5683,8 @@ struct QueueHandoffOverlapState {
     /**
      * @brief Counts the producers that have reached the stress case's rendezvous.
      *
-     * The second producer to arrive is the one that releases the pair, which is what makes the
-     * overlap real without the test thread having to be scheduled at the right moment - and
-     * without leaning on the production lock, which is the very thing under test and is absent
-     * in the mutation this case has to catch.
+     * The second to arrive releases the pair, so the overlap needs neither scheduling luck nor
+     * the production lock under test.
      */
     std::atomic<unsigned int> producersAtRendezvous;
 
@@ -7584,22 +5700,18 @@ struct QueueHandoffOverlapState {
     std::atomic<bool> rendezvousTimedOut;
 
 private:
+    /** @brief Copy construction is disabled: declared private and never defined. */
     QueueHandoffOverlapState(const QueueHandoffOverlapState &);
+    /** @brief Copy assignment is disabled: declared private and never defined. */
     QueueHandoffOverlapState & operator = (const QueueHandoffOverlapState &);
 };
 
 /**
  * @brief Owns the shared state and every worker, and disposes both without an unbounded wait.
  *
- * The one rule this class enforces: nothing a worker can still reach is released while a
- * worker that could reach it is still running. Disposal is bounded (BoundedWorker::dispose),
- * so a stuck worker is detached rather than waited on - and a detached worker is still
- * executing production code against this state, which is why, if any worker was abandoned,
- * the state and the worker objects are deliberately leaked rather than freed. That is a
- * few hundred bytes plus one queue, once, on a path that only runs when a case has already
- * failed and the binary is about to report it; freeing them instead would be a use-after-free
- * in a thread nothing can any longer synchronise with, which is the one outcome worse than a
- * leak. Every clean run - which is every passing run - joins its workers and frees everything.
+ * Nothing a worker can still reach is released while that worker may run: if any worker had to
+ * be abandoned, the state and the workers are deliberately leaked. Every passing run joins its
+ * workers and frees everything.
  */
 class QueueHandoffOverlapHarness {
 public:
@@ -7611,24 +5723,19 @@ public:
      */
     QueueHandoffOverlapHarness(void) : state(new QueueHandoffOverlapState()), abandoned(false) {}
 
+    /**
+     * @brief Disposes every worker, then frees frames, workers and state unless one was abandoned.
+     */
     ~QueueHandoffOverlapHarness(void) {
         disposeWorkers();
 
         if (abandoned) {
-            /* leaked by design. See the class documentation: a detached worker can still be
-             * inside production code holding this state, and there is no longer any way to
-             * find out when it stops. */
+            /* Leaked by design: a detached worker may still be inside production code using it. */
             return;
         }
 
-        /*
-         * the ownership sweep, in the one order that is safe. Every worker is disposed above,
-         * so nothing is producing onto the queue any more; the queue is drained first, so the
-         * probe's own destructor finds it empty and cannot release a frame this sweep is about
-         * to release; and every allocation the case registered is then released exactly once,
-         * whatever the case asserted and however it returned. A case that returned early from a
-         * failed assertion therefore reports its failure without leaking on top of it.
-         */
+        /* Workers are disposed, so drain the queue first (the probe's destructor then finds it
+         * empty), then release every registered frame exactly once. */
         std::vector<CECFrame *> leftInQueue;
         size_t                  sentinelsLeftInQueue = 0;
 
@@ -7671,7 +5778,7 @@ public:
     }
 
     /**
-     * @brief Disposes every worker, boundedly. Idempotent, and called again by the destructor.
+     * @brief Disposes every worker boundedly; idempotent, and called again by the destructor.
      *
      * @return bool - true when every worker was joined; false when one had to be abandoned,
      *                which also arms the leak-by-design rule above.
@@ -7687,11 +5794,9 @@ public:
     }
 
     /**
-     * @brief Whether any worker had to be abandoned rather than joined, for a case to assert on
+     * @brief Whether any worker had to be abandoned rather than joined, for a case to assert on.
      *
-     * @return bool - True once a bounded disposition gave up on a worker, which is also
-     *                what makes this harness leak its shared state deliberately rather
-     *                than free it. False on every clean run.
+     * @return bool - true once a bounded disposition gave up on a worker; false on a clean run.
      */
     bool workerWasAbandoned(void) const { return abandoned; }
 
@@ -7700,64 +5805,33 @@ private:
     std::vector<BoundedWorker *>  workers;
     bool                          abandoned;
 
+    /** @brief Copy construction is disabled: declared private and never defined. */
     QueueHandoffOverlapHarness(const QueueHandoffOverlapHarness &);
+    /** @brief Copy assignment is disabled: declared private and never defined. */
     QueueHandoffOverlapHarness & operator = (const QueueHandoffOverlapHarness &);
 };
 
 /**
  * @brief How long a producer is watched for not completing while the test holds the lock.
  *
- * The bound on the negative observation in the two concurrent cases, and the asymmetry it
- * rests on is what makes those cases deterministic rather than racy:
- *
- * - with the production lock in place the watched producer cannot complete, whatever the
- *   scheduler does, so no length of window can produce a false failure. The window is pure
- *   cost in a passing run, which is why it is a few hundred milliseconds and not seconds;
- * - with the acquisition removed the producer completes in microseconds, so any window
- *   whatsoever detects it. 400 ms is roughly five orders of magnitude of margin over the
- *   work being watched - two size reads, a deque push and a condition signal - so the only
- *   way the removal escapes detection is a machine that deschedules a runnable thread for
- *   two fifths of a second, which would fail this binary's existing timing cases first.
- *
- * Measured both ways before it was committed: with the acquisition deleted from close() both
- * concurrent cases fail on this observation; with it restored both pass.
+ * With the production lock in place the producer cannot complete however long the window; without
+ * the acquisition nothing holds it, so it completes and the non-completion observation fails.
  */
 const long PRODUCER_LOCK_OBSERVATION_MS = 400;
 
 /**
  * @brief How long a released producer is given to finish before the case fails.
  *
- * The positive half of the same observation. Generous by design - it is only reached after
- * the lock has been released, where the remaining work is one CCEC_OSAL::EventQueue::offer()
- * and, for close(), a transaction that fails immediately because a local instance holds no
- * proxy. That offer is a queue-mutex acquisition, a possible std::deque::push_back allocation
- * and a notification issued under that lock, with no wait for capacity anywhere in it; none
- * of that is constant time, so this figure is an empirical margin and not a derived one. Ten
- * seconds sits three to four orders of magnitude above what the work measures at here, which
- * is what makes a timeout mean the producer has stopped making progress rather than that it
- * is slow. Bounded rather than an unqualified join, so a regression that deadlocks the
- * producer is reported as a failure instead of hanging the run.
+ * Generous and empirical, so a timeout means the producer stopped making progress; bounded, so a
+ * deadlock is reported rather than hanging the run.
  */
 const long PRODUCER_COMPLETION_TIMEOUT_MS = 10000;
 
 /**
  * @brief How many independent overlaps the stress case drives.
  *
- * The number is chosen from what the case has to catch rather than from a taste for round
- * figures. The illegal state the ownership contract forbids is reachable only while the two
- * producers are genuinely interleaved: the sentinel has to land inside
- * offerReceivedFrame()'s occupancy-check-to-read-back window, which is a deque push, a
- * condition signal and two size reads - a few
- * hundred nanoseconds. A single overlap may miss it, so one iteration proves nothing and many
- * iterations prove it by arithmetic: with the per-iteration hit rate measured on this host at
- * roughly one attempt in eight, 256 attempts leave a miss vanishingly unlikely, and the case
- * still finishes in a fraction of a second because each iteration is two thread creations and
- * about thirty offers, each of them a queue-mutex acquisition, a possible deque append and a
- * notification rather than a free operation.
- *
- * The point of the count is that the detection does not rest on timing. Each iteration asserts
- * an invariant that the fix makes unconditional and the defect makes violable; the iterations
- * exist to give the violation a chance to occur, not to give a wait a chance to expire.
+ * The forbidden state is reachable only inside a narrow window, hit in roughly one attempt in
+ * fifteen as measured here, so 256 attempts make a miss vanishingly unlikely.
  */
 const size_t OVERLAP_STRESS_ITERATIONS = 256;
 
@@ -7767,33 +5841,22 @@ const unsigned int OVERLAP_RENDEZVOUS_PRODUCERS = 2;
 /**
  * @brief How long a producer waits at the rendezvous for its partner before giving up.
  *
- * The bound on the only spin in this file. It is reached exactly when the partner worker never
- * ran at all - a thread that could not be created - so it is a harness failure and is asserted
- * as one; a passing run leaves the rendezvous within nanoseconds of the second arrival. The
- * spin is bounded on std::chrono::steady_clock, so no clock adjustment can extend it.
+ * Reached only when the partner never ran, which is asserted as a harness failure.
  */
 const long OVERLAP_RENDEZVOUS_BOUND_MS = 5000;
 
 /**
  * @brief The widest deliberate offset between the two producers, in burnOffset() units.
  *
- * Why an offset sweep at all. Released from the same instant, the two producers arrive at the
- * queue with whatever fixed skew this machine's scheduler and cache state happen to impose, and
- * a case that sampled only that one alignment would be sampling one schedule 256 times. Varying
- * the offset between iterations walks the alignment across the window instead, so the sampled
- * interleavings differ by construction rather than by luck. The spread is a few hundred units -
- * a unit being one volatile increment, on the order of a nanosecond - which covers the window
- * the missing lock opens with room on both sides of it.
+ * Varying the offset per iteration walks the producers' alignment across the race window, so the
+ * sampled interleavings differ by construction rather than by luck.
  */
 const unsigned int OVERLAP_OFFSET_SPREAD = 384;
 
 /**
- * @brief Burns @p units of a few nanoseconds each, without sleeping or yielding.
+ * @brief Burns @p units of short, fixed busy work, without sleeping or yielding.
  *
- * The offset primitive. It must not sleep and must not yield: both hand the CPU away for
- * microseconds, which is three orders of magnitude wider than the window being walked across
- * and would turn a fine sweep into a coin toss. A volatile store per unit cannot be elided by
- * the optimiser, which a plain loop or a compiler barrier alone could be.
+ * A volatile store per unit cannot be elided by the optimiser.
  *
  * @param [in] units - How many increments to perform. Zero returns immediately.
  */
@@ -7808,19 +5871,11 @@ void burnOffset(unsigned int units) {
 /**
  * @brief Arrives at the two-producer rendezvous and returns once both producers are there.
  *
- * The release is done by the second arriver, not by the test thread, and that is the whole
- * reason this exists. A rendezvous the test thread had to release would need the test thread to
- * be scheduled between the two producers' arrivals, on a host where the producers are the
- * runnable threads; and a rendezvous built on the production producer lock - which is what the
- * two timing cases use - releases nothing at all in the mutation this case must catch, because
- * a close() that does not take the lock never parks on it. Handing the release to whichever
- * producer arrives second removes both dependencies: the pair leaves the gate within tens of
- * nanoseconds of each other whatever the scheduler is doing, and nothing about the arrangement
- * depends on production taking a lock.
+ * The second arriver releases the pair, so the release depends neither on the test thread's
+ * scheduling nor on the production lock under test.
  *
  * @param [in,out] shared - The state carrying the arrival counter and the release flag.
- * @return bool - true when the pair was released; false when the bound expired, which means the
- *                partner producer never arrived and the iteration is a harness failure.
+ * @return bool - true when released; false when the bound expired and the partner never arrived.
  */
 bool awaitOverlapRendezvous(QueueHandoffOverlapState *shared) {
     const unsigned int arrived =
@@ -7845,40 +5900,27 @@ bool awaitOverlapRendezvous(QueueHandoffOverlapState *shared) {
 }
 
 /**
- * @brief An IHdmiCec double whose close() reports whatever a case needs it to report
+ * @brief An IHdmiCec double whose close() reports whatever a case needs it to report.
  *
- * THE FAILING CLOSE IS THE POINT. DriverAidlImpl::close() has two failure shapes - a non-ok
- * transaction, and an ok transaction reporting a false result - and both raise IOException
- * AFTER the instance has already released its session references. Nothing in the suite could
- * reach either shape before this double existed: the fake service always closes successfully,
- * and a real HAL cannot be told to fail.
+ * Reaches both close() failure shapes, a non-ok transaction and an ok one with a false result,
+ * in direct, binder-free tests on an injected session. Derived from IHdmiCecDefault rather than
+ * BnHdmiCec, so it can never be registered.
  *
- * Derived from IHdmiCecDefault, and deliberately NOT from BnHdmiCec, for the reason
- * MetadataDouble's own warning gives - a Bn* object could be registered and answer real
- * lookups, which is not wanted from a case-local double.
- *
- * @warning Only close() is overridden. Every other interface method keeps
- *          IHdmiCecDefault's UNKNOWN_TRANSACTION answer, so a case that accidentally
- *          reached one would fail rather than silently succeed. open() is NOT overridden
- *          because it is unreachable from a local instance on a host without a Binder
- *          driver: DriverAidlImpl::open() calls `ProcessState::self()->startThreadPool()`
- *          before it calls the service, and the pinned libbinder terminates the process
- *          when the driver cannot be opened. The reopen half of the B2 residual is
- *          asserted from the instance state and the status contract instead.
- *
+ * @warning Only close() is overridden; every other method keeps UNKNOWN_TRANSACTION.
  * @see DriverAidlImpl::close()
  */
 class ClosingServiceDouble : public cechal::IHdmiCecDefault {
 public:
-    /** @brief The status the next close() transaction reports. Default: ok. */
+    /** @brief The status the next close() transaction reports (default: ok). */
     ::android::binder::Status closeStatus = ::android::binder::Status::ok();
-    /** @brief The boolean result the next close() writes out. Default: success. */
+    /** @brief The boolean result the next close() writes out (default: success). */
     bool closeResult = true;
     /** @brief How many times close() has been called on this double. */
     unsigned int closeCalls = 0;
     /** @brief The controller reference the last close() was handed, for identity assertions. */
     ::android::sp<cechal::IHdmiCecController> lastControllerClosed;
 
+    /** @brief Records the call and its controller, writes closeResult, returns closeStatus. */
     ::android::binder::Status close(const ::android::sp<cechal::IHdmiCecController> &hdmiCecController,
                                    bool *_aidl_return) override {
         closeCalls++;
@@ -7893,32 +5935,26 @@ public:
 };
 
 /**
- * @brief An IHdmiCec double that reports whatever logical-address vector a case needs
+ * @brief An IHdmiCec double that reports whatever logical-address vector a case needs.
  *
- * WHAT AN OUT-OF-PROCESS HAL CAN ACTUALLY SEND, which is the point. The generated proxy
- * reads `int32_t` entries straight out of the parcel, so the vector reaching
- * getLogicalAddress() is an arbitrary sequence of 32-bit integers - not a sequence of
- * plausible CEC addresses. Neither the fake service nor a real HAL can be asked to report
- * 256 or -1, so without this double the out-of-contract arms are unreachable.
- *
- * Derived from IHdmiCecDefault and deliberately not from BnHdmiCec, for the reason
- * MetadataDouble's own warning gives.
+ * The generated proxy hands getLogicalAddress() arbitrary 32-bit integers, so this double feeds
+ * the out-of-contract arms (256, -1) to direct, binder-free tests through an injected service.
+ * Derived from IHdmiCecDefault rather than BnHdmiCec.
  *
  * @warning Only getLogicalAddresses() is overridden; every other method keeps
- *          IHdmiCecDefault's UNKNOWN_TRANSACTION answer, so a case that reached one fails
- *          rather than passing quietly.
- *
+ *          UNKNOWN_TRANSACTION.
  * @see DriverAidlImpl::getLogicalAddress()
  */
 class AddressReportingDouble : public cechal::IHdmiCecDefault {
 public:
     /** @brief The vector the next getLogicalAddresses() writes out, verbatim. */
     std::vector<int32_t> addresses;
-    /** @brief The status the next getLogicalAddresses() transaction reports. Default: ok. */
+    /** @brief The status the next getLogicalAddresses() transaction reports (default: ok). */
     ::android::binder::Status readStatus = ::android::binder::Status::ok();
     /** @brief How many times getLogicalAddresses() has been called on this double. */
     unsigned int readCalls = 0;
 
+    /** @brief Counts the call, writes @c addresses verbatim and returns readStatus. */
     ::android::binder::Status getLogicalAddresses(::std::vector<int32_t> *_aidl_return) override {
         readCalls++;
 
@@ -7931,30 +5967,27 @@ public:
 };
 
 /**
- * @brief An IHdmiCecController double whose sendMessage() reports any int32 a case needs
+ * @brief An IHdmiCecController double whose sendMessage() reports any int32 a case needs.
  *
- * THE OUT-OF-CONTRACT STATUS IS THE POINT. `sendMessage()`'s result is an `int32_t` the
- * generated proxy reads out of a parcel and hands over as a `SendMessageStatus`, so a HAL can
- * return a value outside the three documented enumerators. Neither the fake service nor a real
- * HAL can be asked to do that, which is why the status is held here as a raw integer and cast
- * on the way out rather than stored as an enumerator.
+ * Holds the result as a raw integer cast on the way out, so a case can report a value outside
+ * the three documented SendMessageStatus enumerators, as a parcel-reading proxy may deliver.
  *
  * @warning Only sendMessage() is overridden; the address-mutation methods keep
- *          IHdmiCecControllerDefault's UNKNOWN_TRANSACTION answer.
- *
+ *          UNKNOWN_TRANSACTION.
  * @see DriverAidlImpl::write()
  */
 class TransmitResultDouble : public cechal::IHdmiCecControllerDefault {
 public:
     /** @brief The value the next sendMessage() writes out, cast to the enum unchecked. */
     int32_t reportedStatus = static_cast<int32_t>(cechal::SendMessageStatus::ACK_STATE_0);
-    /** @brief The status the next sendMessage() transaction reports. Default: ok. */
+    /** @brief The status the next sendMessage() transaction reports (default: ok). */
     ::android::binder::Status transactionStatus = ::android::binder::Status::ok();
     /** @brief How many times sendMessage() has been called on this double. */
     unsigned int sendCalls = 0;
     /** @brief The bytes the last sendMessage() was handed, for marshalling assertions. */
     std::vector<uint8_t> lastMessage;
 
+    /** @brief Records the call and message, writes reportedStatus, returns transactionStatus. */
     ::android::binder::Status sendMessage(const ::std::vector<uint8_t> &message,
                                          cechal::SendMessageStatus *_aidl_return) override {
         sendCalls++;
@@ -7969,30 +6002,19 @@ public:
 };
 
 /**
- * @brief A DriverAidlImpl that can be placed in an OPENED session without a live HAL
+ * @brief A DriverAidlImpl that can be placed in an OPENED session without a live HAL.
  *
- * WHY INJECTION RATHER THAN open(). Driving the real open() would abort this process, for
- * the ProcessState reason recorded on ClosingServiceDouble, so the session state close()
- * consumes is established directly. That is sufficient for the close-side claims because
- * close() reads exactly three things - the state, the service proxy and the controller
- * reference - and every one of them is set here to the value a successful open() would have
- * left.
+ * Injects the state, service proxy and controller reference, the three things close() reads,
+ * because driving the real open() would abort this process. The listener cannot be populated
+ * here, so close()'s listener detach is covered by the session suite.
  *
- * The listener is the one member a local instance cannot populate: EventListener is a
- * protected nested class that the header only forward declares, so no test translation unit
- * can construct one. close()'s listener detach is therefore covered by the session suite,
- * which runs against the fake service on a Binder-capable host; what these cases establish is
- * that close() releases the CONTROLLER and the STATE on both arms and leaves the service
- * proxy in place, and that it tolerates a null listener exactly as its own guard promises.
- *
- * @warning The destructor forces the state to CLOSED before the base destructor runs, so no
- *          case's teardown re-enters close() and perturbs the call counters it just asserted.
- *
+ * @warning The destructor forces CLOSED, so a case's teardown never re-enters close().
  * @see DriverAidlImpl::close()
  * @see ClosingServiceDouble
  */
 class SessionStateProbe : public DriverAidlImpl {
 public:
+    /** @brief Forces CLOSED, so the base destructor never re-enters close(). */
     ~SessionStateProbe() override { status = CLOSED; }
 
     /**
@@ -8011,9 +6033,7 @@ public:
     /**
      * @brief Attaches only the service proxy, leaving the instance CLOSED.
      *
-     * getLogicalAddress() carries NO state guard - matching DriverImpl::getLogicalAddress() -
-     * so it is reachable on a closed instance and needs nothing but the proxy. Injecting the
-     * session state as well would be modelling a precondition the method does not have.
+     * getLogicalAddress() carries no state guard, so the proxy is its only precondition.
      *
      * @param [in] service - The service proxy getLogicalAddress() must call.
      */
@@ -8027,9 +6047,7 @@ public:
     /**
      * @brief The CLOSED value of DriverAidlImpl's unnamed lifecycle enum.
      *
-     * The enum has no type name, so a case cannot spell `DriverAidlImpl::CLOSED` in an
-     * assertion and a literal 0 would encode the value rather than the meaning. Reading it
-     * back through the class keeps the assertion tied to the definition.
+     * Read back through the class, so an assertion is tied to the definition, not a literal 0.
      */
     int closedState(void) const { return CLOSED; }
     /** @brief The OPENED value of the same unnamed enum, for the same reason. */
@@ -8044,21 +6062,445 @@ public:
     size_t logicalAddressCount(void) const { return logicalAddresses.size(); }
 };
 
+/**
+ * @brief A SessionStateProbe that also exposes the enable-time address allocation.
+ *
+ * Drives DriverAidlImpl::registerDeviceLogicalAddress() on an injected session, because the real
+ * open() cannot run on a driverless host, and exposes the protected candidate table.
+ */
+class AllocationProbe : public SessionStateProbe {
+public:
+    using DriverAidlImpl::logicalAddressCandidates;
+
+    /** @brief Runs the allocation open() performs once the session is OPENED. */
+    void registerAddress(void) { registerDeviceLogicalAddress(); }
+
+    /** @brief The local logical-address list, in order. */
+    std::vector<int> heldAddresses(void) const {
+        std::vector<int> held;
+        for (std::list<LogicalAddress>::const_iterator it = logicalAddresses.begin();
+             it != logicalAddresses.end(); ++it) {
+            held.push_back(it->toInt());
+        }
+        return held;
+    }
+};
+
+/**
+ * @brief A FakeHdmiCecController that refuses one chosen address and accepts every other.
+ *
+ * Reaches the allocation arm where the HAL declines a free candidate and the next one is tried.
+ */
+class DecliningControllerDouble : public FakeHdmiCecController {
+public:
+    /** @brief The address whose addLogicalAddresses() call reports false. */
+    int32_t declinedAddress = LogicalAddress::PLAYBACK_DEVICE_1;
+    /** @brief How many add calls this double refused. */
+    unsigned int declinedCalls = 0;
+
+    /** @brief Reports false for a one-element call naming declinedAddress; defers otherwise. */
+    ::android::binder::Status addLogicalAddresses(const ::std::vector<int32_t> &logicalAddresses,
+                                                 bool *_aidl_return) override {
+        if ((logicalAddresses.size() == 1) && (logicalAddresses[0] == declinedAddress)) {
+            declinedCalls++;
+            if (_aidl_return != nullptr) {
+                *_aidl_return = false;
+            }
+            return ::android::binder::Status::ok();
+        }
+        return FakeHdmiCecController::addLogicalAddresses(logicalAddresses, _aidl_return);
+    }
+};
+
+/**
+ * @brief An IHdmiCecController that journals every address call in order and forwards each call.
+ *
+ * Forwards to the service's own FakeHdmiCecController, so FakeHdmiCecService::getLogicalAddresses()
+ * keeps reporting exactly what the journalled calls left registered.
+ */
+class JournalingControllerDouble : public cechal::BnHdmiCecController {
+public:
+    /** @brief One journalled call: its operation, its vector and the registrations it left. */
+    struct Entry {
+        /** @brief "add" or "remove". */
+        std::string operation;
+        /** @brief The vector the adapter marshalled. */
+        std::vector<int32_t> addresses;
+        /** @brief The forwarded fake's registrations once the call returned. */
+        std::vector<int32_t> registeredAfter;
+    };
+
+    /**
+     * @brief Journals and forwards every address call to @p forwardTo.
+     *
+     * @param [in] forwardTo - The fake that answers, normally FakeHdmiCecService::getController().
+     */
+    explicit JournalingControllerDouble(const ::android::sp<FakeHdmiCecController> &forwardTo)
+        : target(forwardTo) {}
+
+    /** @brief Forwards the add, then journals it with the registrations it left. */
+    ::android::binder::Status addLogicalAddresses(const ::std::vector<int32_t> &logicalAddresses,
+                                                 bool *_aidl_return) override {
+        const ::android::binder::Status status = target->addLogicalAddresses(logicalAddresses, _aidl_return);
+        journal.push_back({ "add", logicalAddresses, target->getRegisteredLogicalAddresses() });
+        return status;
+    }
+
+    /** @brief Forwards the removal, then journals it with the registrations it left. */
+    ::android::binder::Status removeLogicalAddresses(const ::std::vector<int32_t> &logicalAddresses,
+                                                    bool *_aidl_return) override {
+        const ::android::binder::Status status = target->removeLogicalAddresses(logicalAddresses, _aidl_return);
+        journal.push_back({ "remove", logicalAddresses, target->getRegisteredLogicalAddresses() });
+        return status;
+    }
+
+    /** @brief Forwards a transmit, allocation polls included, without journalling it. */
+    ::android::binder::Status sendMessage(const ::std::vector<uint8_t> &message,
+                                         cechal::SendMessageStatus *_aidl_return) override {
+        return target->sendMessage(message, _aidl_return);
+    }
+
+    /**
+     * @brief Renders the calls from index @p first on as, for example, "remove{4} add{5}".
+     *
+     * @param [in] first - Index of the first journalled call to render.
+     * @return std::string - The calls in order, space separated; empty when there are none.
+     */
+    std::string sequenceSince(size_t first) const {
+        std::string rendered;
+        for (size_t i = first; i < journal.size(); i++) {
+            rendered += (rendered.empty() ? "" : " ") + journal[i].operation + "{";
+            for (size_t j = 0; j < journal[i].addresses.size(); j++) {
+                rendered += (j == 0 ? "" : ",") + std::to_string(journal[i].addresses[j]);
+            }
+            rendered += "}";
+        }
+        return rendered;
+    }
+
+    /** @brief The most addresses the fake held after any journalled call. */
+    size_t mostRegisteredAtOnce(void) const {
+        size_t most = 0;
+        for (size_t i = 0; i < journal.size(); i++) {
+            most = std::max(most, journal[i].registeredAfter.size());
+        }
+        return most;
+    }
+
+    /** @brief Every forwarded add and remove call, in call order. */
+    std::vector<Entry> journal;
+
+protected:
+    /** @brief The fake every call is forwarded to. */
+    const ::android::sp<FakeHdmiCecController> target;
+};
+
+/**
+ * @brief A FakeHdmiCecController whose allocation poll of one address raises a non-CEC exception.
+ *
+ * Reaches the allocation arms where a poll fails with a standard or a non-standard exception.
+ */
+class RaisingPollControllerDouble : public FakeHdmiCecController {
+public:
+    /** @brief The address whose self-addressed one-byte poll raises instead of answering. */
+    int32_t raisingAddress = LogicalAddress::PLAYBACK_DEVICE_1;
+    /** @brief true to raise an int rather than std::runtime_error. */
+    bool raisesNonStandard = false;
+    /** @brief How many polls this double raised from. */
+    unsigned int raisedPolls = 0;
+
+    /** @brief Raises for the poll of raisingAddress; defers every other message to the fake. */
+    ::android::binder::Status sendMessage(const ::std::vector<uint8_t> &message,
+                                         cechal::SendMessageStatus *_aidl_return) override {
+        if ((message.size() == 1) &&
+            (message[0] == static_cast<uint8_t>(((raisingAddress & 0x0F) << 4) | (raisingAddress & 0x0F)))) {
+            raisedPolls++;
+            if (raisesNonStandard) {
+                throw raisingAddress;
+            }
+            throw std::runtime_error("injected allocation poll failure");
+        }
+        return FakeHdmiCecController::sendMessage(message, _aidl_return);
+    }
+};
+
+/**
+ * @brief A FakeHdmiCecController whose addLogicalAddresses() raises, before or after registering.
+ *
+ * Reaches the allocation arm where the add itself raises and a compensating removal is attempted.
+ */
+class RaisingAddControllerDouble : public FakeHdmiCecController {
+public:
+    /** @brief true to register through the fake and then raise; false to raise std::bad_alloc first. */
+    bool registersBeforeRaising = false;
+    /** @brief true to make the compensating removeLogicalAddresses() raise as well. */
+    bool removalRaises = false;
+    /** @brief false to defer every add to the fake, as a HAL that has recovered does. */
+    bool addRaises = true;
+    /** @brief How many add calls this double raised from. */
+    unsigned int raisedAdds = 0;
+    /** @brief How many removal calls this double raised from. */
+    unsigned int raisedRemovals = 0;
+
+    /**
+     * @brief Raises std::bad_alloc, or registers through the fake and then raises std::runtime_error;
+     *        defers to the fake while addRaises is false.
+     */
+    ::android::binder::Status addLogicalAddresses(const ::std::vector<int32_t> &logicalAddresses,
+                                                 bool *_aidl_return) override {
+        if (!addRaises) {
+            return FakeHdmiCecController::addLogicalAddresses(logicalAddresses, _aidl_return);
+        }
+        raisedAdds++;
+        if (registersBeforeRaising) {
+            FakeHdmiCecController::addLogicalAddresses(logicalAddresses, _aidl_return);
+            throw std::runtime_error("injected failure after the registration took effect");
+        }
+        throw std::bad_alloc();
+    }
+
+    /** @brief Raises std::runtime_error when removalRaises is set; defers to the fake otherwise. */
+    ::android::binder::Status removeLogicalAddresses(const ::std::vector<int32_t> &logicalAddresses,
+                                                    bool *_aidl_return) override {
+        if (removalRaises) {
+            raisedRemovals++;
+            throw std::runtime_error("injected compensating removal failure");
+        }
+        return FakeHdmiCecController::removeLogicalAddresses(logicalAddresses, _aidl_return);
+    }
+};
+
+/**
+ * @brief A JournalingControllerDouble whose next add or removal ends without a confirmed outcome.
+ *
+ * The call raises std::bad_alloc or returns FAILED_TRANSACTION, before or after the fake applies it,
+ * or raises an int before it, and is journalled with "!" after its operation, so "remove!{4}" is a
+ * call the adapter saw fail.
+ */
+class UnconfirmedOutcomeControllerDouble : public JournalingControllerDouble {
+public:
+    /** @brief How the next add or removal ends. */
+    enum class Outcome {
+        CONFIRMED,        /**< Forwarded and answered by the fake. */
+        RAISES_UNAPPLIED, /**< Raises std::bad_alloc without reaching the fake. */
+        RAISES_APPLIED,   /**< Reaches the fake, then raises std::bad_alloc. */
+        FAILS_UNAPPLIED,  /**< Returns FAILED_TRANSACTION without reaching the fake. */
+        FAILS_APPLIED,    /**< Reaches the fake, then returns FAILED_TRANSACTION. */
+        RAISES_NON_STANDARD_UNAPPLIED /**< Raises an int, not a std::exception, without reaching the fake. */
+    };
+
+    using JournalingControllerDouble::JournalingControllerDouble;
+
+    /** @brief How the next add ends; reverts to CONFIRMED once used. */
+    Outcome nextAdd = Outcome::CONFIRMED;
+    /** @brief How the next removal ends; reverts to CONFIRMED once used. */
+    Outcome nextRemove = Outcome::CONFIRMED;
+
+    /** @brief Journals the add, forwarding it unless nextAdd says otherwise, and ends it as nextAdd says. */
+    ::android::binder::Status addLogicalAddresses(const ::std::vector<int32_t> &logicalAddresses,
+                                                 bool *_aidl_return) override {
+        const Outcome outcome = nextAdd;
+        nextAdd = Outcome::CONFIRMED;
+        if (!applies(outcome)) {
+            return endUnapplied("add", logicalAddresses, outcome);
+        }
+        return endApplied(outcome, JournalingControllerDouble::addLogicalAddresses(logicalAddresses, _aidl_return));
+    }
+
+    /** @brief Journals the removal, forwarding it unless nextRemove says otherwise, and ends it as nextRemove says. */
+    ::android::binder::Status removeLogicalAddresses(const ::std::vector<int32_t> &logicalAddresses,
+                                                    bool *_aidl_return) override {
+        const Outcome outcome = nextRemove;
+        nextRemove = Outcome::CONFIRMED;
+        if (!applies(outcome)) {
+            return endUnapplied("remove", logicalAddresses, outcome);
+        }
+        return endApplied(outcome, JournalingControllerDouble::removeLogicalAddresses(logicalAddresses, _aidl_return));
+    }
+
+private:
+    /** @brief Whether @p outcome lets the call reach the fake. */
+    static bool applies(Outcome outcome) {
+        return (outcome != Outcome::RAISES_UNAPPLIED) && (outcome != Outcome::FAILS_UNAPPLIED) &&
+               (outcome != Outcome::RAISES_NON_STANDARD_UNAPPLIED);
+    }
+
+    /** @brief Journals a call that never reached the fake, then raises or fails as @p outcome says. */
+    ::android::binder::Status endUnapplied(const char *operation, const ::std::vector<int32_t> &addresses,
+                                           Outcome outcome) {
+        journal.push_back({ std::string(operation) + "!", addresses, target->getRegisteredLogicalAddresses() });
+        if (outcome == Outcome::RAISES_UNAPPLIED) {
+            throw std::bad_alloc();
+        }
+        if (outcome == Outcome::RAISES_NON_STANDARD_UNAPPLIED) {
+            throw static_cast<int>(addresses.size());
+        }
+        return ::android::binder::Status::fromStatusT(::android::FAILED_TRANSACTION);
+    }
+
+    /** @brief Returns the fake's @p status, or marks the journalled call and raises or fails instead. */
+    ::android::binder::Status endApplied(Outcome outcome, const ::android::binder::Status &status) {
+        if (outcome == Outcome::CONFIRMED) {
+            return status;
+        }
+        journal.back().operation += "!";
+        if (outcome == Outcome::RAISES_APPLIED) {
+            throw std::bad_alloc();
+        }
+        return ::android::binder::Status::fromStatusT(::android::FAILED_TRANSACTION);
+    }
+};
+
+/**
+ * @brief Asserts the HAL's registrations, the HAL-backed query and the local list after one step.
+ *
+ * @param [in] service    - The service whose own controller fake holds the registrations.
+ * @param [in] probe      - The instance under test.
+ * @param [in] registered - The registrations the fake must hold; never more than one.
+ * @param [in] held       - The local list the probe must hold, which isValidLogicalAddress() must match.
+ * @param [in] step       - Names the step in every failure message.
+ */
+void expectRegistrationState(const ::android::sp<FakeHdmiCecService> &service, AllocationProbe &probe,
+                             const std::vector<int32_t> &registered, const std::vector<int> &held,
+                             const std::string &step) {
+    const std::vector<int32_t> actual = service->getController()->getRegisteredLogicalAddresses();
+    const int addresses[] = { LogicalAddress::PLAYBACK_DEVICE_1, LogicalAddress::AUDIO_SYSTEM,
+                              LogicalAddress::PLAYBACK_DEVICE_2, LogicalAddress::PLAYBACK_DEVICE_3 };
+
+    EXPECT_LE(actual.size(), 1u) << step << ": the HAL holds more than one address";
+    EXPECT_EQ(actual, registered) << step << ": the HAL's registrations differ";
+    EXPECT_EQ(probe.getLogicalAddress(DeviceType::PLAYBACK_DEVICE), registered.empty() ? 0 : registered[0])
+        << step << ": the HAL-backed query reports a different address";
+    EXPECT_EQ(probe.heldAddresses(), held) << step << ": the local list differs";
+    for (size_t i = 0; i < sizeof(addresses) / sizeof(addresses[0]); i++) {
+        EXPECT_EQ(probe.isValidLogicalAddress(LogicalAddress(addresses[i])),
+                  std::find(held.begin(), held.end(), addresses[i]) != held.end())
+            << step << ": isValidLogicalAddress(" << addresses[i] << ") disagrees with the local list";
+    }
+}
+
+/** @brief Global operator new calls this thread has left before the injected failure; 0 when disarmed. */
+thread_local unsigned long tlAllocationsUntilFailure = 0;
+
+/** @brief Global operator new calls made on this thread while a ScopedAllocationFailure is in scope. */
+thread_local unsigned long tlAllocationsCounted = 0;
+
+/** @brief Whether a ScopedAllocationFailure is in scope on this thread. */
+thread_local bool tlAllocationsWatched = false;
+
+/** @brief Whether this thread's armed countdown has raised its one std::bad_alloc. */
+thread_local bool tlAllocationFailureInjected = false;
+
+/**
+ * @brief Counts this thread's global operator new calls while in scope and, when armed, makes one raise.
+ *
+ * Only the constructing thread is affected, and only until destruction, so every other allocation in
+ * this binary takes the default path of this file's replacement operator new.
+ *
+ * @see operator new(std::size_t)
+ */
+class ScopedAllocationFailure {
+public:
+    /**
+     * @brief Starts counting and arms the countdown.
+     *
+     * @param [in] failingAllocation - 1-based index of the call that raises std::bad_alloc; 0 only counts.
+     */
+    explicit ScopedAllocationFailure(unsigned long failingAllocation) {
+        tlAllocationsCounted = 0;
+        tlAllocationFailureInjected = false;
+        tlAllocationsUntilFailure = failingAllocation;
+        tlAllocationsWatched = true;
+    }
+
+    /** @brief Stops counting and disarms the countdown. */
+    ~ScopedAllocationFailure() {
+        tlAllocationsWatched = false;
+        tlAllocationsUntilFailure = 0;
+    }
+
+    /** @brief Not copyable: each scope owns the thread's one countdown. */
+    ScopedAllocationFailure(const ScopedAllocationFailure &) = delete;
+    /** @brief Not assignable, for the same reason. */
+    ScopedAllocationFailure &operator=(const ScopedAllocationFailure &) = delete;
+
+    /** @brief Calls counted so far, the raising one included. */
+    unsigned long allocations(void) const { return tlAllocationsCounted; }
+
+    /** @brief Whether the armed call was reached and raised. */
+    bool injected(void) const { return tlAllocationFailureInjected; }
+};
+
 } // namespace
 
 /**
- * @brief Fixture for the properties that hold on a locally constructed back-end, under
- *        every invocation and whichever back-end the process resolved to.
+ * @brief Replaces the global operator new for run_L1Tests: the default behaviour, plus the one
+ *        std::bad_alloc a ScopedAllocationFailure on the calling thread arms.
  *
- * Every case here builds its own DriverAidlImpl or DriverImpl on the stack rather than
- * reaching through Driver::getInstance(), which is what makes the set
- * invocation-independent: no service, no proxy and no resolved selection is involved, so
- * the same assertions hold whether the process selected the AIDL or the legacy back-end.
- * That is also why a local instance is always CLOSED - only a successful
- * isServiceAvailable() caches a proxy, and a locally built object never has one.
+ * Unwatched, it is the default: malloc, retried through the installed new_handler, and
+ * std::bad_alloc when there is none.
  *
- * @see DriverAidlSessionFixture for the properties that need an opened AIDL session, and
- *      so have to be partitioned by invocation.
+ * @param [in] size - Bytes requested; 0 is served as 1.
+ * @return void* - The allocation, never null.
+ * @see ScopedAllocationFailure
+ */
+void *operator new(std::size_t size)
+{
+    if (tlAllocationsWatched) {
+        tlAllocationsCounted++;
+        if ((tlAllocationsUntilFailure != 0) && (--tlAllocationsUntilFailure == 0)) {
+            tlAllocationFailureInjected = true;
+            throw std::bad_alloc();
+        }
+    }
+
+    if (size == 0) {
+        size = 1;
+    }
+
+    for (;;) {
+        void *block = std::malloc(size);
+        if (block != nullptr) {
+            return block;
+        }
+
+        const std::new_handler handler = std::get_new_handler();
+        if (handler == nullptr) {
+            throw std::bad_alloc();
+        }
+        handler();
+    }
+}
+
+/**
+ * @brief Releases a block from the replacement operator new, as the default does.
+ *
+ * @param [in] block - The block, or null.
+ */
+__attribute__((noinline)) void operator delete(void *block) noexcept
+{
+    std::free(block);
+}
+
+/**
+ * @brief The sized form compiled code calls; the size is not needed to release the block.
+ *
+ * @param [in] block - The block, or null.
+ */
+__attribute__((noinline)) void operator delete(void *block, std::size_t) noexcept
+{
+    std::free(block);
+}
+
+/**
+ * @brief Fixture for the properties that hold on a locally constructed back-end, under every
+ *        invocation and whichever back-end the process resolved to.
+ *
+ * Every case builds its own DriverAidlImpl or DriverImpl rather than using Driver::getInstance(),
+ * so the resolved selection and the shared driver are never involved. Plain instances stay
+ * CLOSED; probes force the lifecycle state or inject in-process service and controller doubles.
+ *
+ * @see DriverAidlSessionFixture for properties that need the shared driver's opened AIDL session.
  */
 class DriverAidlLocalInstanceTest : public ::testing::Test {
 protected:
@@ -8073,9 +6515,8 @@ protected:
             ::testing::Mock::VerifyAndClearExpectations(mock);
         }
 
-        // No driver precondition is established and none is needed: every case here drives a
-        // local instance. The process-global driver is deliberately left exactly as it is,
-        // which is also why TearDown does not restore it - nothing here disturbs it.
+        // No driver precondition is needed: every case drives a local instance and leaves the
+        // process-global driver untouched, so TearDown restores nothing.
     }
 
     /**
@@ -8093,42 +6534,17 @@ protected:
     /**
      * @brief The legacy HAL mock, retained so expectations can be cleared around each case.
      *
-     * @note Held rather than used to set expectations: most cases here assert that no
-     *       legacy entry point is reached, which is a strict-mock property rather than an
-     *       EXPECT_CALL.
+     * @note Most cases assert that no legacy entry point is reached, a strict-mock property.
      */
     HdmiCecDriverMock *mock = nullptr;
 };
 
-// Ordering proof, on the AIDL back-end. writeAsync takes the frame buffer and logs the frame
-// before it locks and checks the state (the prelude at the head of
-// DriverAidlImpl::writeAsync(), mirroring DriverImpl.cpp:203-204 ahead of the guard at
-// :207-209), so a closed driver handed an empty
-// frame reports the decode failure - not the invalid state, and not the
-// operation-not-supported that is this back-end's authorized difference.
-//
-// Why std::out_of_range escapes at all: printFrameDetails constructs a Header, which reads
-// frame.at(0) and raises std::out_of_range on an empty frame, and its handler catches only
-// Exception. Exception and std::out_of_range are siblings under std::exception - not
-// related by inheritance - so catch(Exception &e) cannot catch it and it propagates. The
-// neighbouring async suite records the same boundary for the legacy back-end
-// (test_DriverImpl_Async.cpp:38-46).
-//
-// The positive control is what makes this an ordering proof rather than one more guard case:
-// with a well-formed frame the same closed instance gets past the prelude and is then
-// stopped by the state guard instead. If the two were ever reordered, the first expectation
-// would start reporting InvalidStateException and fail loudly.
 /**
- * @brief writeAsync's frame prelude runs before its state guard on the AIDL back-end, so a
- *        closed driver handed an empty frame reports the decode failure rather than the
- *        invalid state.
- * @pre Runs under every invocation, on a locally constructed CLOSED DriverAidlImpl. No
- *      service, no proxy and no process-global driver are involved.
- * @note Evidence: the empty frame raises std::out_of_range, and a well-formed frame on the
- *       same closed instance is stopped by the state guard instead. The second is the
- *       positive control that makes this an ordering proof - were the two reordered, the
- *       first expectation would start reporting InvalidStateException and fail loudly. No
- *       legacy HAL entry point may be reached either way.
+ * @brief writeAsync's frame prelude runs before its state guard on the AIDL back-end, so a closed
+ *        driver handed an empty frame reports the decode failure rather than the invalid state.
+ * @pre A locally constructed CLOSED DriverAidlImpl, under every invocation.
+ * @note A well-formed frame on the same instance is stopped by the state guard: the positive
+ *       control that makes this an ordering proof. No legacy HAL entry point is reached.
  */
 TEST_F(DriverAidlLocalInstanceTest, FrameLoggingPrecedesStateGuardInWriteAsync) {
     ASSERT_NE(mock, nullptr);
@@ -8150,24 +6566,12 @@ TEST_F(DriverAidlLocalInstanceTest, FrameLoggingPrecedesStateGuardInWriteAsync) 
            "the state guard is no longer reached";
 }
 
-// The same ordering, on the legacy back-end, so that the two are compared rather than
-// asserted separately and assumed to agree.
-//
-// This is the half of the writeAsync difference that must be identical on both back-ends.
-// The authorized difference is only what happens once the prelude and the guard have both
-// passed - success on legacy, OperationNotSupportedException on AIDL - and that arm needs an
-// open driver, so it is asserted in the invocation-specific fixtures below. What is asserted
-// here is that the two failure modes reached before the guard passes are the same on both,
-// which is what makes the difference a single declared one rather than a diffuse divergence.
 /**
- * @brief The same prelude-before-guard ordering holds on the legacy back-end, so the two
- *        are compared rather than asserted separately and assumed to agree.
- * @pre Runs under every invocation, on a locally constructed CLOSED DriverImpl.
- * @note This is the half of the writeAsync difference that must be identical on both. The
- *       authorized difference is only what happens once prelude and guard have both passed,
- *       which needs an open driver and belongs to the invocation-specific fixtures; asserting
- *       the shared failure modes here is what makes that difference a single declared one
- *       rather than a diffuse divergence.
+ * @brief The same prelude-before-guard ordering holds on the legacy back-end, so the two are
+ *        compared rather than assumed to agree.
+ * @pre A locally constructed CLOSED DriverImpl, under every invocation.
+ * @note The authorized writeAsync difference arises only once prelude and guard have both passed,
+ *       so the failure modes before that point must match on both back-ends.
  */
 TEST_F(DriverAidlLocalInstanceTest, WriteAsyncPreludeOrderIsIdenticalOnTheLegacyBackEnd) {
     ASSERT_NE(mock, nullptr);
@@ -8187,26 +6591,12 @@ TEST_F(DriverAidlLocalInstanceTest, WriteAsyncPreludeOrderIsIdenticalOnTheLegacy
            "a closed driver";
 }
 
-// Every state-guarded operation refuses a closed AIDL driver, and refuses it before touching
-// any HAL. The guards are swept together rather than one case each because the property being
-// asserted is uniform - status != OPENED means InvalidStateException, for all of them - and a
-// gap in that set is much easier to see in one list than spread across five cases.
-//
-// poll() is included and is not redundant: it carries no guard of its own, reaching the guard
-// through this back-end's own DriverAidlImpl::write(), so it is the one case
-// here that proves the internal call goes to the right place.
 /**
- * @brief Every state-guarded operation refuses a closed AIDL driver, and refuses before
- *        touching any HAL.
- * @pre Runs under every invocation, on a locally constructed CLOSED DriverAidlImpl.
- * @note Swept together rather than one case each because the property is uniform, and a gap
- *       in the set is far easier to see in one list. poll() is included and is not
- *       redundant: it carries no guard of its own and reaches the guard through this
- *       back-end's own write(), so it is the one entry here that proves the internal call
- *       goes to the right place.
- * @warning read() must refuse on entry. With an empty queue EventQueue::poll() blocks by
- *          contract, so a read that got past the guard would hang the whole binary rather
- *          than fail one case.
+ * @brief Every state-guarded operation refuses a closed AIDL driver before touching any HAL.
+ * @pre A locally constructed CLOSED DriverAidlImpl, under every invocation.
+ * @note poll() has no guard of its own and reaches it through this back-end's write(), so it
+ *       proves the internal call goes to the right place.
+ * @warning A read() that got past the guard would block on the empty queue and hang the binary.
  */
 TEST_F(DriverAidlLocalInstanceTest, EveryStateGuardedOperationRefusesAClosedDriver) {
     ASSERT_NE(mock, nullptr);
@@ -8242,17 +6632,12 @@ TEST_F(DriverAidlLocalInstanceTest, EveryStateGuardedOperationRefusesAClosedDriv
            "past the guard here would hang the whole test binary rather than fail";
 }
 
-// The guard is a state check, not an address check, so no address may slip past it - swept
-// from the TV at one end to the broadcast/unregistered value at the other. A guard that
-// happened to be written as a validity check would pass the case above and fail here.
 /**
- * @brief The address guards are state checks rather than address checks, so no logical
- *        address slips past them while closed.
- * @pre Runs under every invocation, on a locally constructed CLOSED DriverAidlImpl.
- * @note Evidence: the whole space is swept, from the TV at one end to the
- *       broadcast/unregistered value at the other, and neither add nor remove reaches the
- *       legacy HAL. A guard that happened to be written as a validity check would pass the
- *       preceding case and fail here.
+ * @brief The address guards are state checks rather than address checks, so no logical address
+ *        slips past them while closed.
+ * @pre A locally constructed CLOSED DriverAidlImpl, under every invocation.
+ * @note The sweep spans the TV, an interior address and broadcast/unregistered; neither add nor
+ *       remove reaches the legacy HAL.
  */
 TEST_F(DriverAidlLocalInstanceTest, AddressGuardsRejectEveryLogicalAddressWhileClosed) {
     ASSERT_NE(mock, nullptr);
@@ -8277,23 +6662,11 @@ TEST_F(DriverAidlLocalInstanceTest, AddressGuardsRejectEveryLogicalAddressWhileC
     }
 }
 
-// close() on an instance that was never opened returns silently, and that is the observable
-// legacy behaviour rather than a convenience: DriverImpl::close()'s throw is compiled out
-// under #if 0 (DriverImpl.cpp:130-140), and the AIDL back-end carries the same #if 0
-// verbatim in DriverAidlImpl::close() so the two files read alike. A close that threw here
-// would break LibCCEC::term on any path that had not opened.
-//
-// The double close is asserted too, because idempotence is what callers actually rely on:
-// Bus reaches Driver::close() from two places and LibCCEC from a third.
 /**
  * @brief close() on an instance that was never opened returns silently, and does so twice.
- * @pre Runs under every invocation, on a locally constructed CLOSED DriverAidlImpl.
- * @note Silence is the observable legacy behaviour rather than a convenience: DriverImpl's
- *       throw is compiled out under `#if 0`, and the AIDL back-end carries the same block
- *       verbatim so the two files read alike. A close that threw would break LibCCEC::term
- *       on any path that had not opened. The double close is asserted because idempotence is
- *       what callers rely on - Bus reaches Driver::close() from two places and LibCCEC from
- *       a third, and none tracks whether another already did.
+ * @pre A locally constructed CLOSED DriverAidlImpl, under every invocation.
+ * @note Silence matches the legacy back-end, whose throw is compiled out; idempotence matters
+ *       because Bus and LibCCEC reach Driver::close() from three places.
  */
 TEST_F(DriverAidlLocalInstanceTest, CloseOnANeverOpenedDriverReturnsSilently) {
     ASSERT_NE(mock, nullptr);
@@ -8313,30 +6686,19 @@ TEST_F(DriverAidlLocalInstanceTest, CloseOnANeverOpenedDriverReturnsSilently) {
            "Driver::close() and neither tracks whether another already did";
 }
 
-// F4(d). THE FAILING CLOSE, WHICH IS THE ONE ARM B2 MAKES REACHABLE. close() maps the
-// candidate IHdmiCec::close() onto the legacy HdmiCecClose(), and a failure reaches the
-// caller as IOException - but the instance must already be fully closed by then, because
-// LibCCEC::term() and ~DriverAidlImpl() both swallow that exception and a half-closed object
-// would then be indistinguishable from an open one.
-//
-// BOTH FAILURE SHAPES ARE DRIVEN, because they take different routes through the same
-// condition: `!txn.isOk()` for a transport-level failure, and `!closed` for a transaction that
-// arrived intact and reported refusal. A fix that handled only one of them would pass a
-// single-shape case.
-//
-// WHAT IS ASSERTED, one claim per line of close()'s post-condition:
-//   - the state is CLOSED, and it was set BEFORE the raise (visible after the catch);
-//   - the controller reference is GONE, so nothing holds a session the HAL may have dropped;
-//   - the service proxy is RETAINED, which is what makes a reopen attemptable at all;
-//   - no listener reference survives (null here to begin with - see SessionStateProbe);
-//   - the local logical-address list is UNTOUCHED, matching DriverImpl::close();
-//   - the HAL was called exactly ONCE, and destruction does not call it again.
+/**
+ * @brief A failed close() still leaves the instance fully closed, on both failure shapes.
+ * @pre A SessionStateProbe holding an injected session over a ClosingServiceDouble.
+ * @note Asserted after the IOException: state CLOSED, controller released, service proxy
+ *       retained, no listener, local address list untouched, and exactly one HAL close.
+ */
 TEST_F(DriverAidlLocalInstanceTest, AFailedCloseLeavesTheInstanceClosedWithNoSessionReferences) {
     ASSERT_NE(mock, nullptr);
 
     // The AIDL back-end reaches no legacy entry point, on this path least of all.
     EXPECT_CALL(*mock, HdmiCecClose(_)).Times(0);
 
+    /** @brief One close() failure shape: its label, transaction status and boolean result. */
     struct FailureShape {
         const char *name;
         ::android::binder::Status status;
@@ -8370,9 +6732,8 @@ TEST_F(DriverAidlLocalInstanceTest, AFailedCloseLeavesTheInstanceClosedWithNoSes
             probe.injectOpenSession(service, controller);
             probe.seedLogicalAddress(LogicalAddress(LogicalAddress::PLAYBACK_DEVICE_1));
 
-            // Positive control on the injection itself: close() returns silently on any state
-            // other than OPENED, so a botched injection would produce a green case that never
-            // reached the HAL at all.
+            // Positive control: close() is silent on any state but OPENED, so a botched
+            // injection would yield a green case that never reached the HAL.
             ASSERT_EQ(probe.currentStatus(), probe.openedState())
                 << "the injected session state is not OPENED, so close() would return silently "
                    "and this case would assert nothing";
@@ -8424,24 +6785,13 @@ TEST_F(DriverAidlLocalInstanceTest, AFailedCloseLeavesTheInstanceClosedWithNoSes
     }
 }
 
-// F4(d), B2 residual. A failed close leaves this side clean, but says NOTHING about the HAL's
-// side: IHdmiCec::close() is the high-confidence candidate for HdmiCecClose() pending owner
-// confirmation, and a close that reported failure may well have left the session open on the
-// far side. IHdmiCec::open() is single-instance and refuses a second session with
-// EX_ILLEGAL_STATE, so the next open() on this instance has exactly two outcomes and both are
-// safe: it succeeds, or it raises IOException. This case pins both halves of that claim.
-//
-// WHY THE REOPEN IS NOT DRIVEN END TO END HERE, stated rather than left as a gap: open() calls
-// `ProcessState::self()->startThreadPool()` before it reaches the service, and the pinned
-// libbinder terminates a process whose Binder driver cannot be opened - measured on this host,
-// SIGABRT with "Binder driver '/dev/binder' could not be opened. Terminating". A local
-// instance therefore cannot execute open() past that line at all on a driverless runner, which
-// is why the session suite - which needs a Binder-capable host anyway - owns the live reopen
-// and this case owns the two properties that are checkable without one:
-//   1. the instance is left in a state from which a reopen can be ATTEMPTED, i.e. CLOSED with
-//      the service proxy still held; and
-//   2. EX_ILLEGAL_STATE is a NON-OK status, which is the only thing open() tests before it
-//      raises IOException, so the refusal cannot be mistaken for a successful reopen.
+/**
+ * @brief A failed close() leaves an instance from which a reopen can be attempted, and the
+ *        refusal such a reopen could meet is unambiguously a failure.
+ * @pre A SessionStateProbe whose injected session's close() reports false.
+ * @note The live reopen needs a binder driver and belongs to the session suite; this case asserts
+ *       CLOSED with the service proxy retained, and that EX_ILLEGAL_STATE is a non-ok status.
+ */
 TEST_F(DriverAidlLocalInstanceTest, AFailedCloseLeavesTheInstanceReopenableOrCleanlyFailing) {
     ASSERT_NE(mock, nullptr);
 
@@ -8478,10 +6828,8 @@ TEST_F(DriverAidlLocalInstanceTest, AFailedCloseLeavesTheInstanceReopenableOrCle
     EXPECT_EQ(service->closeCalls, 1u)
         << "a second close() called the HAL again after the first one failed";
 
-    // Property 2: the refusal open() would receive is unambiguously a failure. This is the
-    // status contract open() relies on - its only test is `!txn.isOk()` - so if EX_ILLEGAL_STATE
-    // ever reported ok, a HAL-side refusal would be read as a successful reopen and the
-    // instance would go to OPENED holding a null controller.
+    // Property 2: open()'s only test is `!txn.isOk()`, so EX_ILLEGAL_STATE must never report ok,
+    // or a HAL-side refusal would read as a successful reopen.
     const ::android::binder::Status refusal = ::android::binder::Status::fromExceptionCode(
         ::android::binder::Status::EX_ILLEGAL_STATE, "a session is already open");
 
@@ -8493,24 +6841,11 @@ TEST_F(DriverAidlLocalInstanceTest, AFailedCloseLeavesTheInstanceReopenableOrCle
            "open() logs could not name the B2 condition";
 }
 
-// A fresh instance holds no logical address, and isValidLogicalAddress answers without
-// touching any HAL on either back-end - it is a walk of the local list under the instance
-// lock (DriverAidlImpl::isValidLogicalAddress(), byte-for-byte the legacy implementation).
-// Connection is
-// its only production caller (Connection.cpp:354), one address at a time.
-//
-// The whole address space is swept rather than one value sampled, because "holds nothing" is
-// the claim; a single false answer would be consistent with an implementation that special
-// cased one address.
 /**
- * @brief A fresh instance holds no logical address, and isValidLogicalAddress answers
- *        without touching any HAL.
- * @pre Runs under every invocation, on a locally constructed DriverAidlImpl.
- * @note Evidence: the whole address space is swept rather than one value sampled, because
- *       "holds nothing" is the claim and a single false answer would be consistent with an
- *       implementation that special-cased one address. The query is a walk of the local list
- *       under the instance lock, byte-for-byte the legacy implementation, and Connection is
- *       its only production caller, one address at a time.
+ * @brief A fresh instance holds no logical address, and isValidLogicalAddress answers without
+ *        touching any HAL.
+ * @pre A locally constructed DriverAidlImpl, under every invocation.
+ * @note The whole address space is swept, because "holds nothing" is the claim.
  */
 TEST_F(DriverAidlLocalInstanceTest, FreshInstanceHoldsNoLogicalAddressAndConsultsNoHal) {
     ASSERT_NE(mock, nullptr);
@@ -8527,34 +6862,12 @@ TEST_F(DriverAidlLocalInstanceTest, FreshInstanceHoldsNoLogicalAddressAndConsult
     }
 }
 
-// open() without a cached service proxy raises IOException, and raises it before anything in
-// the process touches libbinder.
-//
-// The ordering is the substance here, not the exception. The proxy is cached only by a
-// successful DriverAidlImpl::isServiceAvailable(), so a local instance never has one; the
-// no-proxy guard at the head of DriverAidlImpl::open() checks for it ahead of that method's
-// ProcessState::self()->startThreadPool() call. That order is what makes this case
-// runnable on a host with no kernel binder support at all: reaching ProcessState first would
-// raise SIGABRT and take the whole binary down rather than raise an exception this case can
-// catch. It is also what keeps every local instance in this fixture CLOSED, and therefore
-// keeps its destructor off the close path.
-//
-// The legacy HAL must not be reached either. An AIDL back-end that fell back to HdmiCecOpen
-// when its own service was missing would be a second, undeclared selection point.
 /**
- * @brief open() without a cached service proxy raises IOException, before anything in the
- *        process touches libbinder, and without falling back to the legacy HAL.
- * @pre Runs under every invocation, on a locally constructed DriverAidlImpl - which never
- *      has a proxy, since only a successful isServiceAvailable() caches one.
- * @note The ordering is the substance rather than the exception. The no-proxy check sits
- *       ahead of the ProcessState threadpool call, which is what makes this case runnable on
- *       a host with no kernel binder support at all: reaching ProcessState first would raise
- *       SIGABRT and take the binary down rather than raise something catchable. It is also
- *       what keeps every local instance in this fixture CLOSED, and so keeps its destructor
- *       off the close path.
- * @note A back-end that fell back to HdmiCecOpen when its own service was missing would be a
- *       second, undeclared selection point, so no legacy entry point may be reached. The
- *       state is asserted not to have moved either, so a failed open cannot half-succeed.
+ * @brief open() without a cached service proxy raises IOException before anything touches
+ *        libbinder, and without falling back to the legacy HAL.
+ * @pre A locally constructed DriverAidlImpl, which never has a proxy.
+ * @note The no-proxy check precedes the ProcessState threadpool call, so this runs without kernel
+ *       binder support. The state is asserted unchanged, so a failed open cannot half-succeed.
  */
 TEST_F(DriverAidlLocalInstanceTest, OpenWithoutAServiceProxyRaisesIoExceptionAndTouchesNoLegacyHal) {
     ASSERT_NE(mock, nullptr);
@@ -8578,33 +6891,12 @@ TEST_F(DriverAidlLocalInstanceTest, OpenWithoutAServiceProxyRaisesIoExceptionAnd
            "state before it had a session";
 }
 
-// getLogicalAddress carries no state guard on either back-end, and answers 0 when it has no
-// service to ask (DriverAidlImpl::getLogicalAddress()).
-//
-// Zero is the contract, not a shortfall, and it covers four distinct conditions - no proxy, a
-// non-ok binder status, a successful call reporting no addresses, and the genuine address 0 -
-// which are distinguished in the log rather than in the return value. That is deliberate:
-// the legacy implementation zero-initialises its local and returns whatever the HAL leaves
-// there (DriverImpl.cpp:290-301), and LibCCEC::getLogicalAddress turns a zero into
-// InvalidStateException (LibCCEC.cpp:164-167), which is the existing signal callers already
-// handle for "no address". Any other sentinel here would suppress that throw and hand a
-// caller an address it does not hold.
-//
-// devType is ignored on both back-ends, so it is swept: a value being honoured here would be
-// a divergence from the legacy back-end and from the AIDL get-all contract alike.
 /**
- * @brief getLogicalAddress carries no state guard and answers 0 when it has no service to
- *        ask, whatever devType it is given.
- * @pre Runs under every invocation, on a locally constructed DriverAidlImpl holding no proxy.
- * @note Zero is the contract rather than a shortfall, and it covers four conditions - no
- *       proxy, a non-ok binder status, a successful call reporting no addresses, and the
- *       genuine address 0 - distinguished in the log rather than in the return value. The
- *       legacy implementation zero-initialises its local and returns whatever the HAL leaves
- *       there, and LibCCEC::getLogicalAddress turns a zero into InvalidStateException, which
- *       is the signal callers already handle; any other sentinel here would suppress that
- *       throw and hand a caller an address it does not hold.
- * @note devType is swept because it is ignored on both back-ends: a value being honoured
- *       here would diverge from the legacy back-end and from the AIDL get-all contract alike.
+ * @brief getLogicalAddress carries no state guard and answers 0 when it has no service to ask,
+ *        whatever devType it is given.
+ * @pre A locally constructed DriverAidlImpl holding no proxy, under every invocation.
+ * @note Zero is the contract: LibCCEC::getLogicalAddress turns it into the InvalidStateException
+ *       callers already handle for "no address".
  */
 TEST_F(DriverAidlLocalInstanceTest, GetLogicalAddressReportsZeroWithoutAServiceAndIgnoresDevType) {
     ASSERT_NE(mock, nullptr);
@@ -8624,226 +6916,527 @@ TEST_F(DriverAidlLocalInstanceTest, GetLogicalAddressReportsZeroWithoutAServiceA
     }
 }
 
-// SC6(f), the AIDL half: BLOCKED ITEM B1. getPhysicalAddress does not read an address on this
-// back-end - it logs the block and leaves the caller's out-parameter untouched
-// (DriverAidlImpl::getPhysicalAddress()).
-//
-// The sentinel is what makes "untouched" an assertion rather than a hope. A case that merely
-// asserted the call did not throw would pass equally against an implementation that wrote a
-// fabricated value, a zero, or uninitialised memory - and writing a plausible-looking
-// physical address would be far worse than writing nothing, because a caller cannot tell a
-// fabricated address from a real one. Seeding a distinctive value and asserting it survives
-// is the only form that rules all of those out.
-//
-// This is the documented interim behaviour and it is not equivalent to the legacy back-end -
-// see the B1 paragraph in the contract block above, which states the change that would close
-// the gap. It is also not a fabricated outcome: it is the same observable result the legacy
-// path already produces when its own call fails, since that implementation ignores the return
-// value and writes nothing. Both plugin call sites already wrap the call and tolerate not
-// obtaining an address.
-//
-// And the block must be *reported*, which is the other half and is asserted here. Writing
-// nothing is only half the contract: the compliance criterion is that this method names the
-// block and the awaited device settings contract, because writing nothing silently would leave
-// an integrator staring at an unchanged variable with no way to learn why the physical address
-// never arrived - the difference between a blocked read and a working read that returned the
-// value already in the variable is invisible from the outside. A case that asserted only the
-// no-throw and the sentinel would pass unchanged against a body reduced to `return;`, which is
-// precisely the implementation this case must be able to fail against. So the report is
-// captured and matched.
-//
-// No log-level guard is needed, unlike the diagnostic-callback case in this file. The block is
-// emitted at LOG_EXP, which is level 3, and CCEC_LOG prints whenever the level is at or below
-// cec_log_level, whose default is LOG_INFO = 5 (Util.cpp:39, :116). So the line is visible at
-// the default level and ScopedCecLogLevel - which takes custody of a shared host path - would
-// be ceremony here.
+namespace {
+
+/** @brief The physical address the AIDL back-end reports: 1.0.0.0, one nibble per byte. */
+const unsigned int kFixedPhysicalAddress = 0x01000000u;
+
+/** @brief The F.F.F.F value both plugins seed before the query, so an unwritten result shows. */
+const unsigned int kPluginUnsetPhysicalAddress = 0x0F0F0F0Fu;
+
+/** @brief Upper bound on a stalled transmit, so a failing case cannot hang the run. */
+const long kStalledTransmitBoundMs = 10000;
+
+/** @brief How long a physical-address query may take while a transmit is stalled. */
+const long kPhysicalAddressAnswerBoundMs = 2000;
+
+static_assert(DriverAidlImpl::FIXED_PHYSICAL_ADDRESS == kFixedPhysicalAddress,
+              "DriverAidlImpl::FIXED_PHYSICAL_ADDRESS must encode 1.0.0.0 as 0x01000000, the "
+              "nibble-per-byte form both plugins decode");
+
 /**
- * @brief The AIDL getPhysicalAddress leaves the caller's out-parameter untouched and reports
- *        the block, naming the awaited device settings contract.
- * @pre Runs under every invocation, on a locally constructed DriverAidlImpl. The out
- *      parameter is seeded with a distinctive value first, which is the only form that
- *      distinguishes an untouched variable from a fabricated address or a zeroed one.
- * @note Both halves are asserted, and the second is why this case can fail against a body
- *       reduced to `return;`. Writing nothing is half the contract; the other half is that
- *       the method names the block, because a silent no-op leaves an integrator staring at an
- *       unchanged variable with no way to learn why the address never arrived. So the report
- *       is captured and matched.
- * @note This is the documented interim behaviour and is not equivalent to the legacy
- *       back-end - the contract block above states the change that would close the gap. It is
- *       not a fabricated outcome either: it is what the legacy path already produces when its
- *       own call fails, since that implementation ignores the return value and writes nothing.
- * @note No log-level guard is needed. The block is emitted at LOG_EXP, which is below the
- *       default level, so the line is visible without taking custody of a shared host path.
+ * @brief Renders a LibCCEC physical address as dotted text, decoding it as both plugins do.
+ *
+ * @param [in] value - The value getPhysicalAddress() wrote.
+ *
+ * @return std::string - The text PhysicalAddress::toString() produces, e.g. "1.0.0.0".
  */
-TEST_F(DriverAidlLocalInstanceTest, GetPhysicalAddressIsBlockedOnB1AndLeavesTheOutParameterUntouched) {
+std::string decodeAsThePluginsDo(unsigned int value) {
+    return PhysicalAddress((uint8_t)((value >> 24) & 0xFF), (uint8_t)((value >> 16) & 0xFF),
+                           (uint8_t)((value >> 8) & 0xFF), (uint8_t)(value & 0xFF)).toString();
+}
+
+/**
+ * @brief An IHdmiCec double that counts every method call, so a case can prove none was made.
+ *
+ * @note close() succeeds so a probe can be closed; every other method keeps the default answer.
+ */
+class CallCountingServiceDouble : public cechal::IHdmiCecDefault {
+public:
+    /** @brief Calls made to any method of this double. */
+    unsigned int calls = 0;
+
+    /**
+     * @brief Counts the call, then answers as IHdmiCecDefault does.
+     *
+     * @param [out] _aidl_return - Left unwritten by the default.
+     * @return ::android::binder::Status - Always UNKNOWN_TRANSACTION, the default's answer.
+     */
+    ::android::binder::Status getState(cechal::State *_aidl_return) override {
+        calls++;
+        return cechal::IHdmiCecDefault::getState(_aidl_return);
+    }
+
+    /**
+     * @brief Counts the call, then answers as IHdmiCecDefault does.
+     *
+     * @param [in]  property     - Forwarded unchanged.
+     * @param [out] _aidl_return - Left unwritten by the default.
+     * @return ::android::binder::Status - Always UNKNOWN_TRANSACTION, the default's answer.
+     */
+    ::android::binder::Status getProperty(cechal::Property property,
+                                         ::std::optional<::com::rdk::hal::PropertyValue> *_aidl_return) override {
+        calls++;
+        return cechal::IHdmiCecDefault::getProperty(property, _aidl_return);
+    }
+
+    /**
+     * @brief Counts the call, then answers as IHdmiCecDefault does.
+     *
+     * @param [out] _aidl_return - Left unwritten by the default.
+     * @return ::android::binder::Status - Always UNKNOWN_TRANSACTION, the default's answer.
+     */
+    ::android::binder::Status getLogicalAddresses(::std::vector<int32_t> *_aidl_return) override {
+        calls++;
+        return cechal::IHdmiCecDefault::getLogicalAddresses(_aidl_return);
+    }
+
+    /**
+     * @brief Counts the call, then answers as IHdmiCecDefault does.
+     *
+     * @param [in]  listener     - Forwarded unchanged.
+     * @param [out] _aidl_return - Left unwritten by the default.
+     * @return ::android::binder::Status - Always UNKNOWN_TRANSACTION, the default's answer.
+     */
+    ::android::binder::Status open(const ::android::sp<cechal::IHdmiCecEventListener> &listener,
+                                  ::android::sp<cechal::IHdmiCecController> *_aidl_return) override {
+        calls++;
+        return cechal::IHdmiCecDefault::open(listener, _aidl_return);
+    }
+
+    /**
+     * @brief Counts the call and reports the session closed, so a probe can be closed.
+     *
+     * @param [out] _aidl_return - Set to true when non-null.
+     * @return ::android::binder::Status - Always ok.
+     */
+    ::android::binder::Status close(const ::android::sp<cechal::IHdmiCecController> & /*controller*/,
+                                   bool *_aidl_return) override {
+        calls++;
+        if (_aidl_return != nullptr) {
+            *_aidl_return = true;
+        }
+        return ::android::binder::Status::ok();
+    }
+
+    /**
+     * @brief Counts the call, then answers as IHdmiCecDefault does.
+     *
+     * @param [in]  listener     - Forwarded unchanged.
+     * @param [out] _aidl_return - Left unwritten by the default.
+     * @return ::android::binder::Status - Always UNKNOWN_TRANSACTION, the default's answer.
+     */
+    ::android::binder::Status registerEventListener(const ::android::sp<cechal::IHdmiCecEventListener> &listener,
+                                                   bool *_aidl_return) override {
+        calls++;
+        return cechal::IHdmiCecDefault::registerEventListener(listener, _aidl_return);
+    }
+
+    /**
+     * @brief Counts the call, then answers as IHdmiCecDefault does.
+     *
+     * @param [in]  listener     - Forwarded unchanged.
+     * @param [out] _aidl_return - Left unwritten by the default.
+     * @return ::android::binder::Status - Always UNKNOWN_TRANSACTION, the default's answer.
+     */
+    ::android::binder::Status unregisterEventListener(const ::android::sp<cechal::IHdmiCecEventListener> &listener,
+                                                     bool *_aidl_return) override {
+        calls++;
+        return cechal::IHdmiCecDefault::unregisterEventListener(listener, _aidl_return);
+    }
+
+    /**
+     * @brief Counts the call, then reports IHdmiCecDefault's interface version.
+     *
+     * @return int32_t - Always 0, the default's version.
+     */
+    int32_t getInterfaceVersion() override {
+        calls++;
+        return cechal::IHdmiCecDefault::getInterfaceVersion();
+    }
+
+    /**
+     * @brief Counts the call, then reports IHdmiCecDefault's interface hash.
+     *
+     * @return std::string - Always empty, the default's hash.
+     */
+    std::string getInterfaceHash() override {
+        calls++;
+        return cechal::IHdmiCecDefault::getInterfaceHash();
+    }
+};
+
+/**
+ * @brief An IHdmiCecController double that counts every method call, so a case can prove none
+ *        was made.
+ */
+class CallCountingControllerDouble : public cechal::IHdmiCecControllerDefault {
+public:
+    /** @brief Calls made to any method of this double. */
+    unsigned int calls = 0;
+
+    /**
+     * @brief Counts the call, then answers as IHdmiCecControllerDefault does.
+     *
+     * @param [in]  addresses    - Forwarded unchanged.
+     * @param [out] _aidl_return - Left unwritten by the default.
+     * @return ::android::binder::Status - Always UNKNOWN_TRANSACTION, the default's answer.
+     */
+    ::android::binder::Status addLogicalAddresses(const ::std::vector<int32_t> &addresses,
+                                                 bool *_aidl_return) override {
+        calls++;
+        return cechal::IHdmiCecControllerDefault::addLogicalAddresses(addresses, _aidl_return);
+    }
+
+    /**
+     * @brief Counts the call, then answers as IHdmiCecControllerDefault does.
+     *
+     * @param [in]  addresses    - Forwarded unchanged.
+     * @param [out] _aidl_return - Left unwritten by the default.
+     * @return ::android::binder::Status - Always UNKNOWN_TRANSACTION, the default's answer.
+     */
+    ::android::binder::Status removeLogicalAddresses(const ::std::vector<int32_t> &addresses,
+                                                    bool *_aidl_return) override {
+        calls++;
+        return cechal::IHdmiCecControllerDefault::removeLogicalAddresses(addresses, _aidl_return);
+    }
+
+    /**
+     * @brief Counts the call, then answers as IHdmiCecControllerDefault does.
+     *
+     * @param [in]  message      - Forwarded unchanged.
+     * @param [out] _aidl_return - Left unwritten by the default.
+     * @return ::android::binder::Status - Always UNKNOWN_TRANSACTION, the default's answer.
+     */
+    ::android::binder::Status sendMessage(const ::std::vector<uint8_t> &message,
+                                         cechal::SendMessageStatus *_aidl_return) override {
+        calls++;
+        return cechal::IHdmiCecControllerDefault::sendMessage(message, _aidl_return);
+    }
+
+    /**
+     * @brief Counts the call, then reports IHdmiCecControllerDefault's interface version.
+     *
+     * @return int32_t - Always 0, the default's version.
+     */
+    int32_t getInterfaceVersion() override {
+        calls++;
+        return cechal::IHdmiCecControllerDefault::getInterfaceVersion();
+    }
+
+    /**
+     * @brief Counts the call, then reports IHdmiCecControllerDefault's interface hash.
+     *
+     * @return std::string - Always empty, the default's hash.
+     */
+    std::string getInterfaceHash() override {
+        calls++;
+        return cechal::IHdmiCecControllerDefault::getInterfaceHash();
+    }
+};
+
+/**
+ * @brief An IHdmiCecController double whose sendMessage() stalls until released, so write()
+ *        holds the instance lock across an unanswered HAL call.
+ *
+ * @note The stall is bounded by kStalledTransmitBoundMs, so a failing case cannot hang the run.
+ */
+class StallingTransmitDouble : public cechal::IHdmiCecControllerDefault {
+public:
+    /** @brief Set once sendMessage() has been entered. */
+    MonotonicLatch entered;
+    /** @brief Set by the case to let sendMessage() return. */
+    MonotonicLatch released;
+
+    /**
+     * @brief Sets @c entered, then waits for @c released for at most kStalledTransmitBoundMs.
+     *
+     * @param [out] _aidl_return - Set to ACK_STATE_0 when non-null.
+     * @return ::android::binder::Status - Always ok, whether released or timed out.
+     */
+    ::android::binder::Status sendMessage(const ::std::vector<uint8_t> & /*message*/,
+                                         cechal::SendMessageStatus *_aidl_return) override {
+        entered.notify();
+        (void)released.wait(kStalledTransmitBoundMs);
+        if (_aidl_return != nullptr) {
+            *_aidl_return = cechal::SendMessageStatus::ACK_STATE_0;
+        }
+        return ::android::binder::Status::ok();
+    }
+};
+
+/**
+ * @brief Everything either stalled-transmit worker can reach, allocated off the test stack.
+ *
+ * A worker abandoned by a bounded disposal may still be inside production write() when the case
+ * returns, so everything it reaches lives here, behind a pointer.
+ */
+struct StalledTransmitState {
+    /** @brief Creates both doubles, a probe holding no session and an unwritten query result. */
+    StalledTransmitState(void)
+        : service(::android::sp<CallCountingServiceDouble>::make())
+        , controller(::android::sp<StallingTransmitDouble>::make())
+        , frame(directedFrame())
+        , physicalAddress(kPluginUnsetPhysicalAddress)
+    {}
+
+    /** @brief The IHdmiCec double the probe's session holds. */
+    ::android::sp<CallCountingServiceDouble> service;
+
+    /** @brief The IHdmiCecController double whose sendMessage() stalls until released. */
+    ::android::sp<StallingTransmitDouble> controller;
+
+    /** @brief The instance under test, whose instance lock the stalled transmit holds. */
+    SessionStateProbe probe;
+
+    /** @brief The frame the transmit worker writes. */
+    const CECFrame frame;
+
+    /** @brief What the query worker's getPhysicalAddress() wrote, seeded with F.F.F.F. */
+    unsigned int physicalAddress;
+
+    /** @brief What the transmit worker's write() raised; empty when it raised nothing. */
+    std::string transmitFailure;
+
+    /** @brief What the query worker's getPhysicalAddress() raised; empty when it raised nothing. */
+    std::string queryFailure;
+
+    /** @brief The worker whose write() stalls inside sendMessage(). */
+    BoundedWorker transmitter;
+
+    /** @brief The worker that queries the physical address during the stall. */
+    BoundedWorker querier;
+
+private:
+    /** @brief Copy construction is disabled: declared private and never defined. */
+    StalledTransmitState(const StalledTransmitState &);
+    /** @brief Copy assignment is disabled: declared private and never defined. */
+    StalledTransmitState & operator = (const StalledTransmitState &);
+};
+
+/**
+ * @brief Owns the stalled-transmit state and releases it without an unbounded wait.
+ *
+ * Releasing the stall lets both workers finish; each is joined if its body returns within
+ * kStalledTransmitBoundMs and detached otherwise. The state is freed only when both were joined,
+ * and retained by design once either was abandoned.
+ */
+class StalledTransmitHarness {
+public:
+    /**
+     * @brief Allocates the shared state on the heap, off the test stack.
+     * @post The state is reachable through operator*() and operator->(), and outlives this
+     *       harness whenever a worker had to be abandoned.
+     */
+    StalledTransmitHarness(void) : state(new StalledTransmitState()), abandoned(false) {}
+
+    /**
+     * @brief Releases the stall and disposes both workers, then frees the state unless one was
+     *        abandoned.
+     */
+    ~StalledTransmitHarness(void) {
+        (void)releaseAndDisposeWorkers();
+
+        if (abandoned) {
+            /* Retained by design: a detached worker may still use it inside production code. */
+            return;
+        }
+
+        delete state;
+    }
+
+    /**
+     * @brief The shared state, for the case body to read and to hand to its workers.
+     *
+     * @return StalledTransmitState & - The heap-resident state this harness owns.
+     */
+    StalledTransmitState & operator *  (void) const { return *state; }
+
+    /**
+     * @brief The shared state, for the case body to read and to hand to its workers.
+     *
+     * @return StalledTransmitState * - The heap-resident state this harness owns; never null.
+     */
+    StalledTransmitState * operator -> (void) const { return state; }
+
+    /**
+     * @brief Releases the stalled transmit, then disposes both workers boundedly; idempotent.
+     *
+     * @return bool - true when both workers were joined; false once either had to be detached,
+     *                which also makes the destructor retain the state.
+     */
+    bool releaseAndDisposeWorkers(void) {
+        state->controller->released.notify();
+
+        if (!state->querier.dispose(kStalledTransmitBoundMs)) {
+            abandoned = true;
+        }
+
+        if (!state->transmitter.dispose(kStalledTransmitBoundMs)) {
+            abandoned = true;
+        }
+
+        return !abandoned;
+    }
+
+private:
+    /** @brief The heap-resident state; never null. */
+    StalledTransmitState *state;
+
+    /** @brief Set, and never cleared, once a bounded disposal had to detach a worker. */
+    bool abandoned;
+
+    /** @brief Copy construction is disabled: declared private and never defined. */
+    StalledTransmitHarness(const StalledTransmitHarness &);
+    /** @brief Copy assignment is disabled: declared private and never defined. */
+    StalledTransmitHarness & operator = (const StalledTransmitHarness &);
+};
+
+} // namespace
+
+/**
+ * @brief getPhysicalAddress on a never-opened AIDL back-end reports 1.0.0.0, decoded as the
+ *        plugins decode it, on every call.
+ * @pre Runs under every invocation, on a locally constructed DriverAidlImpl holding no proxy.
+ * @note The variable is seeded with the plugins' F.F.F.F value, so an unwritten result fails.
+ */
+TEST_F(DriverAidlLocalInstanceTest, GetPhysicalAddressReportsTheFixedAddressOnANeverOpenedDriver) {
     ASSERT_NE(mock, nullptr);
 
-    // The legacy CEC HAL call must not be substituted on this back-end. That substitution is
-    // forbidden outright, and it is independently unsafe: HdmiCecOpen performs logical-address
-    // discovery for source devices, which is CEC polling on the wire, so it would put a second
-    // controller on the bus while the AIDL HAL is the active one.
     EXPECT_CALL(*mock, HdmiCecGetPhysicalAddress(_, _)).Times(0);
     EXPECT_CALL(*mock, HdmiCecOpen(_)).Times(0);
 
     DriverAidlImpl aidlDriver;
 
-    const unsigned int sentinel = 0xDEADBEEFu;
-    unsigned int physicalAddress = sentinel;
+    for (int call = 1; call <= 3; call++) {
+        unsigned int physicalAddress = kPluginUnsetPhysicalAddress;
 
-    /*
-     * The two fragments of the report that carry its meaning, transcribed from the producer -
-     * DriverAidlImpl::getPhysicalAddress(), which emits the block as an inline literal rather
-     * than through a named constant, so there is nothing to import and transcription is the
-     * only option available.
-     *
-     * Two distinctive fragments rather than one token or one whole line. Each is one thing the
-     * report has to say and neither can be satisfied by accident: the marker is the searchable
-     * identifier an operator or a release note greps for, and the contract phrase is what tells
-     * a reader which input is missing and therefore who unblocks it. A shorter match - "B1"
-     * alone, say - would be satisfied by unrelated text in the same capture, and matching the
-     * whole line instead would fail on a reflow that changed nothing an operator relies on.
-     */
-    const char *const kBlockedItemMarker = "BLOCKED ITEM B1";
-    const char *const kAwaitedContractPhrase =
-        "the device settings HAL contract for the EDID byte read was not supplied";
-
-    std::string captured;
-    bool raised = false;
-    std::string raisedWhat;
-    {
-        StdoutCapture capture;
-        ASSERT_TRUE(capture.isValid())
-            << "stdout could not be redirected, so whether the block was reported cannot be "
-               "established, and this case would degenerate into 'the call wrote nothing' - "
-               "which a body reduced to a bare return would also satisfy";
-
-        /*
-         * The throw verdict is taken by hand here rather than with EXPECT_NO_THROW, and only
-         * because stdout is redirected for the duration of the call: a failing macro inside
-         * this scope would write its own diagnosis into the capture file instead of the run's
-         * log, so the reason the case failed would be the one thing missing from the output.
-         * Recording the outcome and asserting on it after the capture closes keeps every
-         * failure message on the real stdout, and asserts exactly what EXPECT_NO_THROW did.
-         */
-        try {
-            aidlDriver.getPhysicalAddress(&physicalAddress);
-        }
-        catch (const std::exception &e) {
-            raised = true;
-            raisedWhat = e.what();
-        }
-        catch (...) {
-            raised = true;
-            raisedWhat = "an exception that does not derive from std::exception";
-        }
-
-        captured = capture.read();
+        EXPECT_NO_THROW({ aidlDriver.getPhysicalAddress(&physicalAddress); })
+            << "call " << call << " raised; a physical-address query must always answer";
+        EXPECT_EQ(physicalAddress, kFixedPhysicalAddress)
+            << "call " << call << " did not report the fixed 1.0.0.0 encoding 0x01000000";
+        EXPECT_EQ(decodeAsThePluginsDo(physicalAddress), "1.0.0.0")
+            << "call " << call << " wrote a value the plugins would not decode as 1.0.0.0";
     }
-
-    EXPECT_FALSE(raised)
-        << "getPhysicalAddress raised on the AIDL back-end. The blocked read must degrade to a "
-           "log and a return, because both plugin call sites tolerate not obtaining an address "
-           "but neither expects a new exception. What was raised: [" << raisedWhat << "]";
-
-    EXPECT_EQ(physicalAddress, sentinel)
-        << "the caller's out-parameter was modified. Pending B1 this method must write NOTHING: a "
-           "fabricated or zeroed physical address is indistinguishable from a real one to every "
-           "caller, which is worse than the caller keeping the value it initialized";
-
-    EXPECT_NE(captured.find(kBlockedItemMarker), std::string::npos)
-        << "the blocked read reported nothing that names the block. Without the \""
-        << kBlockedItemMarker
-        << "\" marker in the log, an integrator sees an unchanged variable and no reason for it, "
-           "and the blocked read is indistinguishable from a working one that returned the value "
-           "already there. Either the report was removed, its wording no longer carries the "
-           "marker, or the effective CEC log level has been lowered below LOG_EXP - in which case "
-           "every consumer of this diagnostic, this case included, is reading an empty log. "
-           "Captured output was: [" << captured << "]";
-
-    EXPECT_NE(captured.find(kAwaitedContractPhrase), std::string::npos)
-        << "the block was reported without naming the awaited device settings HAL contract, so the "
-           "report says the read is unavailable but not which input would make it available - "
-           "which is the one thing it exists to tell whoever can unblock it. Captured output was: ["
-        << captured << "]";
 }
 
-// The drift guard for the modelled Sink call paths, and the one case in this file that
-// asserts about a file rather than about a driver.
-//
-// DriverAidlSessionTest.AddLogicalAddressFailuresReachBothRealSinkCallPathsAsExpected measures
-// authorized difference 3 through the two Sink call paths by modelling their exception
-// handling: a try with an IOException arm and a generic arm for the first, an uncaught
-// propagation for the second. That model is only evidence while it still describes the plugin,
-// and by itself it would survive the plugin being reformatted, one of its catch arms being
-// removed, the enable-time call acquiring a try block, or the Sink ceasing to call the
-// middleware at all - in each of which the modelled case would keep passing while the claim it
-// makes about the caller had become false.
-//
-// So the structure is read from the plugin source here and checked against the model. What this
-// case establishes: that the plugin still contains exactly two calls to
-// LibCCEC::getInstance().addLogicalAddress(...), that the first of them still sits inside a try
-// whose handler list includes an IOException arm and a generic catch(...) arm, and that the
-// enable-time one still sits inside no try block. Those are precisely the three structural
-// facts the modelled case depends on, and no more: this case asserts nothing about what the
-// handlers do, which is the plugin's business and is out of scope.
-//
-// What it deliberately does not do. It does not compile or link the plugin - that component's
-// own test binaries link the test framework's CEC mock in place of this middleware, so the
-// plugin cannot be driven from this binary, and building it here would pull in Thunder. It
-// therefore proves the call shape has not drifted, not that the plugin behaves as modelled at
-// run time; that half remains the plugin component's own suite and the middleware-level L3
-// step. Nor does it read the plugin's line numbers: the modelled case cites them for a human
-// reader, and a citation drifting is a documentation matter, whereas the structure drifting
-// would silently invalidate an assertion.
-//
-// Why it is in this fixture. This is one of the any-back-end fixtures, so it executes on every
-// invocation including the legacy-only ones - which is the whole point, because a host with no
-// binder driver never runs the session suite at all, and a drift guard that only ran where
-// binder exists would be absent from exactly the runs that are cheapest to perform.
-//
-// The source is a required acceptance input, not an optional diagnostic, so absence fails. A
-// case that printed a paragraph and returned when the source was nowhere to be found would be
-// recorded by GoogleTest as a pass - so an acceptance run could go green while the only check
-// that ties the modelled Sink call paths to the real plugin never executed at all. That is the
-// shape of swallowed evidence this file exists to avoid.
-//
-// How the source is located, and what each of the three outcomes means:
-//   - CEC_SINK_CALLER_SOURCE set and readable -> that file is used, and the path it was read
-//     from is reported so the log records which revision the guard actually measured.
-//   - CEC_SINK_CALLER_SOURCE set and not readable -> hard failure, wiring fault. The
-//     environment claims to have provided the source and has not.
-//   - not found at all, by the variable or by any candidate path -> hard failure, missing
-//     required input. Every path tried is named, along with the two ways to supply it.
-// The two failures keep distinct wording on purpose: "you told me where it is and it is not
-// there" and "nobody told me and it is not beside me either" call for different fixes.
-//
-// Provenance of what is read. Both CI workflows check the Sink component out at the reviewed
-// immutable commit 2ad7e1a4712908a4d0fb838caebcbfcaabba55d8 and export
-// CEC_SINK_CALLER_SOURCE to the absolute path inside that checkout - a required step, not a
-// tolerated one, so a network or permission fault fails the job instead of quietly disabling
-// this guard. What the guard reads is therefore a reviewed revision rather than whatever a
-// branch happens to hold, and the structural facts asserted below were read from that same
-// revision. A drift is consequently noticed at the moment somebody deliberately bumps the pin,
-// which is when a human is present to decide whether the model must be re-derived - rather
-// than silently, months later, on a branch nobody was watching.
 /**
- * @brief The Sink call paths modelled by the difference-3 case still match the real plugin
- *        source, so the model cannot go stale unnoticed.
- * @pre Runs under every invocation. The Sink source must be reachable: through
- *      CEC_SINK_CALLER_SOURCE, or beside the runner. Absence is a hard failure.
- * @note Three outcomes, with distinct wording on purpose. The variable set and readable uses
- *       that file and reports which path was measured; set and unreadable is a wiring fault;
- *       not found at all is a missing required input, and every path tried is named. "You
- *       told me where it is and it is not there" and "nobody told me and it is not beside me
- *       either" call for different fixes.
- * @warning Absence must fail rather than report. A version that printed a paragraph and
- *          returned would be recorded as a pass, so an acceptance run could go green while
- *          the only check tying the model to the real plugin never executed.
- * @note Both CI workflows check the Sink component out at a reviewed immutable commit and
- *       export the variable to an absolute path inside it, as a required step, so what is
- *       read is a reviewed revision rather than whatever a branch holds. A drift is therefore
- *       noticed when somebody deliberately bumps the pin and a human is present to decide
- *       whether the model must be re-derived.
+ * @brief getPhysicalAddress writes nothing through a null out-parameter and keeps answering.
+ * @pre Runs under every invocation, on a locally constructed DriverAidlImpl.
+ */
+TEST_F(DriverAidlLocalInstanceTest, GetPhysicalAddressToleratesANullOutParameter) {
+    DriverAidlImpl aidlDriver;
+
+    EXPECT_NO_THROW({ aidlDriver.getPhysicalAddress(nullptr); })
+        << "a null out-parameter raised instead of being logged and ignored";
+
+    unsigned int physicalAddress = kPluginUnsetPhysicalAddress;
+    EXPECT_NO_THROW({ aidlDriver.getPhysicalAddress(&physicalAddress); });
+    EXPECT_EQ(physicalAddress, kFixedPhysicalAddress)
+        << "the query stopped answering 1.0.0.0 after a null out-parameter";
+}
+
+/**
+ * @brief getPhysicalAddress reports 1.0.0.0 while OPENED and after close(), and calls no
+ *        method on the service or the controller in either state.
+ * @pre Runs under every invocation, on a SessionStateProbe holding call-counting doubles.
+ * @note close() itself calls the service once; the assertion is on the delta across the query.
+ */
+TEST_F(DriverAidlLocalInstanceTest, GetPhysicalAddressIsFixedInEveryStateAndCallsNoAidlMethod) {
+    ASSERT_NE(mock, nullptr);
+
+    EXPECT_CALL(*mock, HdmiCecGetPhysicalAddress(_, _)).Times(0);
+
+    const ::android::sp<CallCountingServiceDouble> service = ::android::sp<CallCountingServiceDouble>::make();
+    const ::android::sp<CallCountingControllerDouble> controller = ::android::sp<CallCountingControllerDouble>::make();
+
+    SessionStateProbe probe;
+    probe.injectOpenSession(service, controller);
+    ASSERT_EQ(probe.currentStatus(), probe.openedState());
+
+    unsigned int physicalAddress = kPluginUnsetPhysicalAddress;
+    EXPECT_NO_THROW({ probe.getPhysicalAddress(&physicalAddress); });
+    EXPECT_EQ(physicalAddress, kFixedPhysicalAddress) << "the OPENED driver did not report 1.0.0.0";
+    EXPECT_EQ(service->calls, 0u) << "the OPENED query called the IHdmiCec service";
+    EXPECT_EQ(controller->calls, 0u) << "the OPENED query called the IHdmiCecController";
+
+    ASSERT_NO_THROW({ probe.close(); });
+    ASSERT_EQ(probe.currentStatus(), probe.closedState());
+    const unsigned int serviceCallsAfterClose = service->calls;
+    const unsigned int controllerCallsAfterClose = controller->calls;
+
+    physicalAddress = kPluginUnsetPhysicalAddress;
+    EXPECT_NO_THROW({ probe.getPhysicalAddress(&physicalAddress); });
+    EXPECT_EQ(physicalAddress, kFixedPhysicalAddress) << "the CLOSED driver did not report 1.0.0.0";
+    EXPECT_EQ(service->calls, serviceCallsAfterClose) << "the CLOSED query called the IHdmiCec service";
+    EXPECT_EQ(controller->calls, controllerCallsAfterClose) << "the CLOSED query called the IHdmiCecController";
+}
+
+/**
+ * @brief getPhysicalAddress answers while another thread's transmit is stalled inside the HAL
+ *        holding the instance lock, so the query never waits on an AIDL call.
+ * @pre Runs under every invocation, on a SessionStateProbe whose controller stalls sendMessage().
+ */
+TEST_F(DriverAidlLocalInstanceTest, GetPhysicalAddressAnswersWhileATransmitIsStalledInTheHal) {
+    // The doubles, probe, frame, results and both workers live in the harness, freed once both
+    // workers join and retained if either is abandoned.
+    StalledTransmitHarness harness;
+    StalledTransmitState  *shared = &*harness;
+
+    shared->probe.injectOpenSession(shared->service, shared->controller);
+
+    shared->transmitter.start([shared]() {
+        try {
+            shared->probe.write(shared->frame);
+        }
+        catch (const std::exception &e) {
+            shared->transmitFailure = e.what();
+        }
+        catch (...) {
+            shared->transmitFailure = "write() raised an exception that is not a std::exception";
+        }
+    });
+    ASSERT_TRUE(shared->controller->entered.wait(kStalledTransmitBoundMs))
+        << "the transmit never reached sendMessage(), so no HAL call is holding the lock";
+
+    shared->querier.start([shared]() {
+        try {
+            shared->probe.getPhysicalAddress(&shared->physicalAddress);
+        }
+        catch (const std::exception &e) {
+            shared->queryFailure = e.what();
+        }
+        catch (...) {
+            shared->queryFailure =
+                "getPhysicalAddress() raised an exception that is not a std::exception";
+        }
+    });
+    const bool answeredDuringStall = shared->querier.finishedWithin(kPhysicalAddressAnswerBoundMs);
+
+    ASSERT_TRUE(harness.releaseAndDisposeWorkers())
+        << "a worker did not finish within " << kStalledTransmitBoundMs
+        << " ms of the stall being released, so it was abandoned rather than joined and its "
+           "state is retained by design. Nothing below can be interpreted";
+
+    EXPECT_TRUE(answeredDuringStall)
+        << "getPhysicalAddress waited for a stalled IHdmiCecController::sendMessage, so the "
+           "physical address depends on an AIDL call completing";
+    EXPECT_EQ(shared->physicalAddress, kFixedPhysicalAddress);
+    EXPECT_TRUE(shared->transmitFailure.empty())
+        << "the stalled transmit raised once released: [" << shared->transmitFailure << "]";
+    EXPECT_TRUE(shared->queryFailure.empty())
+        << "the physical-address query raised during the stall: [" << shared->queryFailure << "]";
+}
+
+/**
+ * @brief The Sink call paths that the addLogicalAddress failure-mapping case models still match
+ *        the real plugin source, so the model cannot go stale unnoticed.
+ * @pre The Sink source is reachable through CEC_SINK_CALLER_SOURCE or beside the runner, under
+ *      every invocation.
+ * @note Asserts exactly two LibCCEC addLogicalAddress calls: the first inside a try with an
+ *       IOException arm and a catch(...) arm, the enable-time one inside no try block.
+ * @warning A missing or unreadable source fails the case rather than passing silently.
+ * @see DriverAidlSessionTest::AddLogicalAddressFailuresReachBothRealSinkCallPathsAsExpected
  */
 TEST_F(DriverAidlLocalInstanceTest, TheModelledSinkCallPathsStillMatchTheRealSinkSource) {
     const SinkCallerSource source = locateAndReadSinkCallerSource();
@@ -8860,10 +7453,8 @@ TEST_F(DriverAidlLocalInstanceTest, TheModelledSinkCallPathsStillMatchTheRealSin
     }
 
     if (!source.found) {
-        // missing required input. Distinct from the wiring fault above: nothing pointed at the
-        // source and it is not beside this component either. It fails rather than reports,
-        // because returning here would be recorded as a pass and the only check that ties the
-        // modelled Sink call paths to the real plugin would have been skipped invisibly.
+        // Missing required input, distinct from the wiring fault above. Failing rather than
+        // returning keeps a skipped guard from being recorded as a pass.
         FAIL() << "the real Sink caller source could not be found, so the drift guard for the "
                   "modelled Sink call paths cannot run. IT IS A REQUIRED ACCEPTANCE INPUT, NOT "
                   "AN OPTIONAL DIAGNOSTIC: without it, "
@@ -8908,9 +7499,8 @@ TEST_F(DriverAidlLocalInstanceTest, TheModelledSinkCallPathsStillMatchTheRealSin
                "read: [" << sites[i].precedingText << "]";
     }
 
-    // Path 1 - the allocation-loop call. Inside a try, and that try's handler list must still
-    // contain both arms the model depends on: the distinct IOException arm a transport failure
-    // lands in, and the generic arm a refusal falls through to.
+    // Path 1, the allocation-loop call: inside a try whose handlers include the IOException arm
+    // and the generic arm the model depends on.
     ASSERT_TRUE(sites[0].insideAnyTry)
         << "the first addLogicalAddress call, at [" << source.path << ":" << sites[0].line
         << "], is no longer inside a try block. The modelled case asserts that a refusal reaches "
@@ -8973,57 +7563,14 @@ TEST_F(DriverAidlLocalInstanceTest, TheModelledSinkCallPathsStillMatchTheRealSin
               << std::endl;
 }
 
-// The log-level guard is itself exercised here, on an invocation that actually runs.
-//
-// Why this case exists and why it is in *this* fixture. `ScopedCecLogLevel` mutates two
-// pieces of process-global, host-global state: the file production hardcodes at
-// /tmp/cec_log_enabled, which lives in a world-writable directory and is shared with every
-// other process on the host, and the file-static `cec_log_level` that file feeds. Its only
-// other caller is a DriverAidlSessionTest case, and that whole fixture requires the AIDL
-// back-end to be the resolved one - so on a host with no binder driver the guard's custody
-// protocol would be compiled and never executed, which is exactly the shape of missing
-// evidence this suite exists to refuse. DriverAidlLocalInstanceTest runs under every
-// invocation, needs no service and no back-end, so the guard is exercised on every host.
-//
-// What is asserted, and why each assertion is not implied by the others:
-//   - the guard raises: the effective level after construction is DEBUG, observed by
-//     emitting at each level rather than read from the file, because the file is an input to
-//     production's reader and not the state under test;
-//   - the raise is a move, not a coincidence: the level observed on entry is recorded and
-//     required to differ from DEBUG only insofar as it must come back to it later - the
-//     entry level is whatever the host had, and this case asserts return-to-it rather than
-//     any particular value, because a host that legitimately runs at DEBUG must still pass;
-//   - restoration is verified rather than attempted: restoreAndVerify() is required to
-//     report success, and it is the call that checks publication, then the file's bytes or
-//     its absence, then the effective level, all while it still holds the custody lock;
-//   - the level really is back afterwards, observed independently of the guard's own check,
-//     so a restoreAndVerify() that returned true without doing anything would still fail
-//     here;
-//   - the second call is idempotent, because the destructor will make one and a
-//     double-restore that rewrote the host's file would be a defect;
-//   - nothing is left behind at the shared path: it is absent, or it is a regular file, and
-//     in neither case is it the guard's temporary.
-//
-// A refusal is a failure here, deliberately. If another run_L1Tests holds the custody lock,
-// or the path is a symlink, or it is owned by another user, the guard refuses and reports
-// why - and this case fails with that reason rather than passing on the grounds that the
-// guard was careful. The alternative reading, that a refusal is an environment condition to
-// tolerate, would make the guard's whole protocol unfalsifiable from the suite.
 /**
- * @brief The log-level guard raises the level, restores it verifiably, is idempotent, and
- *        leaves nothing behind at the shared path.
- * @pre Runs under every invocation. The effective level must be observable, and custody of
- *      the shared configuration path must be obtainable.
- * @note Evidence, in order: the level observed on entry is required only to come back, not
- *       to be any particular value, so a host legitimately running at DEBUG still passes;
- *       restoration is required to report success while the custody lock is still held;
- *       the level is then observed independently, so a restore that returned true without
- *       doing anything still fails; a second call is asserted idempotent, because the
- *       destructor will make one; and the shared path is left absent or a regular file that
- *       is not the guard's temporary.
- * @warning A refusal is a failure here, deliberately. Reading a refusal as an environment
- *          condition to tolerate would make the guard's whole protocol unfalsifiable from
- *          the suite.
+ * @brief The log-level guard raises the level, restores it verifiably, is idempotent, and leaves
+ *        nothing behind at the shared path.
+ * @pre The effective level is observable and custody of the shared configuration path can be
+ *      obtained, under every invocation.
+ * @note Lives in this fixture because it runs on every host, so the guard's custody protocol
+ *       executes even where the session suite cannot.
+ * @warning A refusal fails the case; tolerating it would make the guard's protocol unfalsifiable.
  */
 TEST_F(DriverAidlLocalInstanceTest, TheLogLevelGuardRaisesTheLevelAndRestoresItVerifiably) {
     const int levelBefore = ScopedCecLogLevel::observeEffectiveLevel();
@@ -9097,140 +7644,37 @@ TEST_F(DriverAidlLocalInstanceTest, TheLogLevelGuardRaisesTheLevelAndRestoresItV
 
 
 /**
- * @brief The legacy arms of the two authorized differences, and SC6(f)'s legacy half.
- *
- * Requires invocation a - CEC_TEST_AIDL_MODE=absent or unset - because these cases drive the
- * process-global driver and it must be the legacy one. SetUp asserts that, with a message
- * naming the mode, so a mis-wired filter fails on a diagnostic rather than on a mock
- * expectation that was never going to be met.
- *
- * Why these are here at all, when the AIDL fixtures below assert the other side. Each of the
- * two authorized observable differences between the back-ends is a pair of behaviours, and a
- * declared difference is only established by asserting both halves against each other. The
- * legacy halves live here, on invocation A; the AIDL halves live in the two fixtures below,
- * on invocation B. Splitting them is not a preference - a single process can only ever hold
- * one back-end - and the pairing is what turns "the AIDL back-end raises" into "the two
- * back-ends differ, in exactly this way, and nowhere else".
- *
- * These cases drive the shared driver rather than a local DriverImpl, and deliberately: the
- * legacy arms need an open driver, and the shared one is the only driver in this process
- * whose HAL is the mock the fixture programs.
- *
- * One case here is not an authorized-difference arm: the receive-path case. The receive path is
- * not a declared difference - both back-ends must deliver an inbound frame identically - so its
- * legacy half is a baseline rather than one side of a pair, and it is measured here because this
- * is the only invocation that executes on a host without a binder driver. It also exercises the
- * same observation machinery the AIDL receive cases use, so a wiring fault in that machinery
- * fails here, on any host, instead of masquerading as an AIDL back-end failure on the
- * binder-capable runner.
- *
- * Self-sufficiency. SetUp establishes the open precondition for itself instead of inheriting
- * whatever the previously executed suite left behind, and TearDown restores it. Each case
- * programs its own mock expectations and TearDown clears them. Nothing is carried between
- * cases and the driver is left open, which is the state the global environment set up.
+ * @brief The receive handoff fills the queue's 32 legacy slots and refuses the next frame, and a
+ *        close() against the full queue drops its sentinel as the legacy queue does.
+ * @pre Runs under every invocation, through ReceiveQueueProbe forced to OPENED.
+ * @note Single-threaded, so it measures the capacity only; the concurrent cases below measure
+ *       close()'s producer-lock acquisition.
  */
-// The interleaving itself: close() is a producer on the incoming queue, so the
-// receive path must leave it a slot and must not report a frame accepted that the queue
-// silently dropped.
-//
-// The bug this case is the regression test for. offerReceivedFrame() observed the occupancy
-// under queueProducerMutex and offered on the next line; close() offered its NULL sentinel
-// while holding only the instance lock. So: the receive path saw INCOMING_QUEUE_CAPACITY - 1
-// entries and decided there was room, close() landed the sentinel in the last slot, and
-// EventQueue::offer() - which returns void and whose at-capacity branch is empty - discarded
-// the received frame. offerReceivedFrame() still returned true, so
-// EventListener::onMessageReceived() cleared its only pointer instead of deleting it: one
-// leaked frame per event, unbounded on a path a remote HAL drives.
-//
-// What is asserted, in the order the interleaving ran. The queue is filled to
-// INCOMING_QUEUE_CAPACITY - 1 through the production handoff itself; the frame that would take
-// the last slot is refused, so the caller keeps and releases it; close() then lands its
-// sentinel in the slot that refusal preserved, and the occupancy proves it went in rather than
-// being swallowed; and a frame arriving after the close is reported rejected too. Finally the
-// queue's content is counted: exactly the frames the handoff claimed, plus exactly one
-// sentinel.
-//
-// Without the reservation this case fails, which is what makes it a regression test rather than
-// a description - measured, not assumed: the refusal at the limit reports true and the occupancy
-// goes to INCOMING_QUEUE_CAPACITY. Note that the occupancy check after close() is not sufficient
-// on its own, because in that state it also reads as capacity - out of one frame too many and no
-// sentinel; the drain at the end is what separates those two, by counting frames and sentinels
-// apart.
-//
-// Ownership follows the handoff's report throughout, so that against broken code this case
-// reports failures instead of double-freeing and aborting before its later assertions run. A
-// frame is deleted here only where the handoff said the caller still owns it.
-//
-// The other half of the fix - that close()'s offer is serialized on queueProducerMutex - is not
-// what this case or the one after it measures, and saying so is the point rather than a caveat.
-// Both are serial, so delete `{AutoLock lock_(queueProducerMutex);` from close() and both still
-// pass: a lock that is never contended is a lock whose acquisition no single-threaded case can
-// see. That half is measured by the three concurrent cases that follow this pair -
-// CloseSentinelOfferBlocksOnTheProducerLockAConcurrentTestHolds and
-// CloseSentinelOverlappingAReceiveHandoffLeavesEveryFrameWithExactlyOneOwner, which hold the
-// lock from the test thread and require the production producers not to complete while it is
-// held, and ManyRealOverlapsKeepTheHandoffReportAndTheQueueInAgreement, which holds no lock and
-// instead catches the unserialized sentinel as a violated ownership invariant over many real
-// races. The five together cover both halves; no subset is sufficient alone.
-/**
- * @brief The receive handoff reserves the queue's last slot for close()'s sentinel and
- *        refuses the frame that would take it.
- * @pre Runs under every invocation, through ReceiveQueueProbe, whose state is forced to
- *      OPENED so the handoff is reachable without a service. Needs a capacity of at least
- *      two.
- * @note Single-threaded, and that is stated rather than left implicit: it measures the
- *       accounting half only. Both producers being serial here means the producer-lock
- *       acquisition could be deleted and this case would still pass - a lock that is never
- *       contended is one no single-threaded case can see. The three concurrent cases below
- *       measure that half.
- * @note Evidence: the occupancy check after close() is not sufficient alone, because a
- *       broken implementation also reads as capacity there - one frame too many and no
- *       sentinel. The counting drain at the end separates those two. Ownership follows the
- *       handoff's report throughout, so against broken code this reports failures rather
- *       than double-freeing and aborting before its later assertions run.
- */
-TEST_F(DriverAidlLocalInstanceTest, ReceiveQueueReservesTheLastSlotForCloseSentinelAndRefusesTheFrameThatWouldTakeIt) {
+TEST_F(DriverAidlLocalInstanceTest, ReceiveQueueHoldsTheLegacyThirtyTwoEntriesAndDropsTheCloseSentinelWhenFull) {
     const size_t capacity = DriverAidlImpl::INCOMING_QUEUE_CAPACITY;
-    ASSERT_GE(capacity, 2u)
-        << "the capacity leaves no room for both a received frame and close()'s sentinel, so "
-           "this case cannot mean what it says";
 
-    // LEGACY PARITY, PINNED TO A LITERAL AND NOT TO THE PRODUCTION CONSTANT. Everything else in
-    // this case derives from `capacity`, which is what makes it a test of the reserve rather than
-    // of the depth: it would pass just as happily against a 32-entry queue that refused at 31,
-    // which is precisely the difference this back-end is required not to have. So the depth is
-    // asserted here against the number the legacy back-end actually gets - 32, the default
-    // `EventQueue(size_t cap = 32)` gives DriverImpl's queue, all of which its receive callback
-    // may fill. A change to either side of the arithmetic fails here.
-    //
-    // The same equality is a static_assert in `ccec/src/DriverAidlImpl.hpp`, so the production
-    // header cannot be edited into the difference at all. This assertion is not redundant with
-    // it: the static_assert proves the arithmetic, and this proves that the code path actually
-    // honours the arithmetic - the loop below accepts 32 frames and the 33rd offer is refused.
-    ASSERT_EQ(capacity - 1, 32u)
-        << "the depth available to received frames is " << (capacity - 1) << ", not the 32 the "
-           "legacy back-end gets from EventQueue's default capacity. close()'s reserved slot must "
-           "come out of an extra queue entry, never out of the depth a caller sees";
+    // Pinned to the legacy queue's literal 32 rather than derived from `capacity`, so a queue
+    // that gained or lost a slot against DriverImpl's still fails.
+    ASSERT_EQ(capacity, 32u)
+        << "the incoming queue holds " << capacity << " entries, not the 32 the legacy back-end "
+           "gets from EventQueue's default capacity. Received frames and close()'s sentinel must "
+           "share the same 32 slots on both back-ends";
 
     ReceiveQueueProbe probe;
     probe.markOpened();
 
-    // 1. Fill to the receive limit through the production handoff. Every one of these must be
-    //    accepted: a refusal before the limit would mean the reserved slot cost more than one
-    //    entry of depth.
-    for (size_t i = 0; i < capacity - 1; i++) {
+    // 1. Fill every slot through the production handoff; every offer must be accepted, the one
+    //    that takes the 32nd slot included.
+    for (size_t i = 0; i < capacity; i++) {
         CECFrame *frame = new CECFrame(directedFrame());
 
-        // Ownership follows the reported return value, exactly as onMessageReceived() does: the
-        // frame is released here if and only if the handoff said the queue did not take it. That
-        // discipline is what stops this case from becoming a double free of its own against
-        // broken code - on which it must report a failure, not corrupt the heap and abort before
-        // the remaining assertions run.
+        // Ownership follows the reported return value, as in onMessageReceived(), so broken
+        // code yields a reported failure rather than a double free.
         const bool taken = probe.offer(frame);
 
         EXPECT_TRUE(taken)
-            << "the handoff refused frame " << i << " of " << (capacity - 1) << ", below the "
-               "receive limit. The reserved slot must cost exactly one entry of queue depth";
+            << "the handoff refused frame " << i << " of " << capacity << " before the queue was "
+               "full, so received frames get less depth than the legacy queue gives them";
 
         if (!taken) {
             delete frame;
@@ -9241,51 +7685,43 @@ TEST_F(DriverAidlLocalInstanceTest, ReceiveQueueReservesTheLastSlotForCloseSenti
             << " offers, so what the handoff reported and what the queue did have diverged";
     }
 
-    ASSERT_EQ(probe.occupancy(), capacity - 1)
-        << "the queue did not reach the receive limit, so the case that follows would not be "
-           "testing a full queue at all";
+    ASSERT_EQ(probe.occupancy(), capacity)
+        << "the queue did not fill, so the case that follows would not be testing a full queue "
+           "at all";
 
-    // 2. The frame that would take the sentinel's slot is refused, and the caller therefore
-    //    still owns it - which is the whole of the ownership contract. Without the
-    //    reservation this would return true and the queue would go to capacity.
-    CECFrame *displacing = new CECFrame(directedFrame());
-    const bool displacingTaken = probe.offer(displacing);
+    // 2. The next frame is refused and stays the caller's; EventQueue::offer() would have dropped
+    //    it without a word.
+    CECFrame *overflow = new CECFrame(directedFrame());
+    const bool overflowTaken = probe.offer(overflow);
 
-    EXPECT_FALSE(displacingTaken)
-        << "the handoff took a frame into the slot reserved for close()'s sentinel. That is the "
-           "producer-overlap interleaving: the sentinel would then be the entry "
-           "EventQueue::offer() discards, "
-           "and a blocked Bus reader would never wake";
+    EXPECT_FALSE(overflowTaken)
+        << "the handoff reported a frame accepted onto a full queue. EventQueue::offer() drops it "
+           "there, so the caller would forget a frame nothing holds - one leaked frame per event";
 
-    EXPECT_EQ(probe.occupancy(), capacity - 1)
+    EXPECT_EQ(probe.occupancy(), capacity)
         << "the refused frame was queued anyway, so the return value and the queue disagree "
            "about who owns it - the caller will release a frame the queue still holds";
 
-    // The caller releases it only because the handoff said the caller still owns it, which is
-    // precisely what onMessageReceived() does on a false return. Deleting it unconditionally
-    // would make this case double-free against code that reported acceptance, which is the one
-    // outcome worse than the leak being tested.
-    if (!displacingTaken) {
-        delete displacing;
+    // Released only because the handoff reported the caller still owns it, as
+    // onMessageReceived() does on a false return.
+    if (!overflowTaken) {
+        delete overflow;
     }
 
-    // 3. close() lands its sentinel in the slot that refusal preserved. IOException is expected
-    //    and is not the point: a local instance holds no service proxy, so the close transaction
-    //    reports DEAD_OBJECT - and the sentinel is offered before that, which is exactly why a
-    //    blocked reader unwinds even when the HAL close fails.
+    // 3. close() offers its sentinel to the full queue, which drops it as DriverImpl's does. Its
+    //    IOException (no service proxy, so DEAD_OBJECT) is expected; the offer precedes it.
     EXPECT_THROW({ probe.close(); }, IOException)
         << "close() on an instance holding no service proxy must still report the failed "
            "transaction. If it returned cleanly, the sentinel assertion below would be proving "
            "something about a different code path";
 
     EXPECT_EQ(probe.occupancy(), capacity)
-        << "close()'s NULL sentinel was SWALLOWED by the full queue. EventQueue::offer() drops "
-           "silently at capacity, so the Bus reader would stay blocked in poll() with nothing "
-           "left to wake it - which is the failure the reserved slot exists to prevent";
+        << "the full queue holds " << probe.occupancy() << " entries after close(). The legacy "
+           "queue has no room for the sentinel at this point and drops it, so an entry beyond "
+           "the 32 means this queue is larger than DriverImpl's";
 
-    // 4. A frame arriving after the close is reported rejected rather than accepted and dropped.
-    //    The state guard in getIncomingQueue() raises before anything is offered, and that
-    //    exception is what drives the caller's release - the same mechanism as the legacy path.
+    // 4. A frame arriving after close() is rejected by getIncomingQueue()'s state guard before
+    //    anything is offered, and the caller releases it, as on the legacy path.
     CECFrame *afterClose = new CECFrame(directedFrame());
     bool afterCloseTaken = false;
 
@@ -9301,72 +7737,35 @@ TEST_F(DriverAidlLocalInstanceTest, ReceiveQueueReservesTheLastSlotForCloseSenti
         delete afterClose;
     }
 
-    // 5. What the queue actually holds is exactly what was accepted, plus exactly one sentinel.
-    //    Counting both is what distinguishes "the sentinel went in" from "an extra frame did".
+    // 5. What the queue actually holds is exactly what was accepted and no sentinel. Counting
+    //    both is what distinguishes "the sentinel went in" from "an extra frame did".
     size_t frames = 0;
     size_t sentinels = 0;
 
     probe.drainCounting(frames, sentinels);
 
-    EXPECT_EQ(frames, capacity - 1)
-        << "the queue held " << frames << " frames where the handoff accepted " << (capacity - 1);
+    EXPECT_EQ(frames, capacity)
+        << "the queue held " << frames << " frames where the handoff accepted " << capacity;
 
-    EXPECT_EQ(sentinels, 1u)
-        << "the queue held " << sentinels << " NULL sentinels; close() posts exactly one and it "
-           "must not be droppable";
+    EXPECT_EQ(sentinels, 0u)
+        << "the queue held " << sentinels << " NULL sentinels although close() offered its one "
+           "to a full queue, where the legacy queue drops it";
 }
 
-// The ownership ledger: across a queue driven past its receive limit, exactly one
-// owner releases each frame - never none, which is the leak, and never two, which is worse.
-//
-// Why a ledger rather than an allocation count. The defect is not that a frame is
-// dropped - a full queue must drop something - but that the handoff's return value stopped
-// agreeing with what the queue did, leaving no owner at all. So this case records, for every
-// frame it allocates, which side the production code said owns it, then drains the queue and
-// checks that the two sets partition the allocations: each frame appears once, in exactly one
-// of them. A frame in neither was accepted and dropped, and is leaked in production; a frame in
-// both would be released twice.
-//
-// What this case pins, and what it does not claim to reproduce. The "owners == 0" arm is the
-// production leak: the handoff reports acceptance and the queue never took the frame. Reaching it
-// requires the offer to be dropped, which needs close()'s sentinel to land unserialized in the
-// window between the check and the offer - a genuine interleaving, not something one
-// thread can stage. That interleaving is staged, by
-// CloseSentinelOverlappingAReceiveHandoffLeavesEveryFrameWithExactlyOneOwner below, which parks
-// both producers on the lock and releases them together; this case is the single-threaded half
-// and does not duplicate it. What a single thread does establish is the accounting that makes
-// the drop impossible in the first place: the queue must take exactly
-// INCOMING_QUEUE_CAPACITY - 1 received frames and no more, so the sentinel's slot is never the
-// one at stake. The ownership partition is asserted alongside it because a change that fixed the
-// count and broke the handoff's report would otherwise pass.
-//
-// The membership test is a nested scan rather than a set, deliberately: the ledger is a few tens
-// of entries with a fixed bound, so the cost is irrelevant, and the alternative would add an
-// include to a translation unit whose include block is documented entry by entry.
 /**
- * @brief Across a queue driven past its receive limit, every frame has exactly one owner -
- *        the queue or the caller, never both and never neither.
+ * @brief Across a queue driven past its capacity, every frame has exactly one owner - the queue
+ *        or the caller, never both and never neither.
  * @pre Runs under every invocation, through ReceiveQueueProbe forced to OPENED.
- * @note A ledger rather than an allocation count, because the defect is not that a frame is
- *       never allocated but that nothing ends up responsible for it. Each frame is recorded
- *       with the side production said owns it; the drain then has to partition the
- *       allocations. A frame in neither was accepted and dropped, and leaks in production; a
- *       frame in both would be released twice.
- * @note What it does not claim to reproduce: the zero-owner arm needs close()'s sentinel to
- *       land unserialized inside the check-to-offer window, which is a genuine interleaving
- *       no single thread can stage. The overlap case below stages it. What one thread does
- *       establish is the accounting that makes the drop impossible in the first place, and
- *       the partition is asserted alongside so a change that fixed the count and broke the
- *       report cannot pass.
+ * @note Single-threaded: it pins the accounting (capacity frames accepted) and the ownership
+ *       partition; the overlap case stages the concurrent zero-owner arm.
  */
 TEST_F(DriverAidlLocalInstanceTest, EveryFrameOfferedToAFullReceiveQueueHasExactlyOneOwner) {
     const size_t capacity = DriverAidlImpl::INCOMING_QUEUE_CAPACITY;
-    ASSERT_GE(capacity, 2u)
-        << "the capacity leaves no room for both a received frame and close()'s sentinel";
+    ASSERT_GT(capacity, 0u)
+        << "a queue with no capacity accepts nothing, so the partition below would be vacuous";
 
-    // Comfortably past the limit, so the refusal arm is exercised repeatedly rather than once:
-    // a stalled Bus reader keeps the queue full for as long as the HAL keeps delivering, and it
-    // was every further event that leaked a frame.
+    // Comfortably past the capacity, so the refusal arm runs repeatedly, as it does while a
+    // stalled Bus reader keeps the queue full.
     const size_t offeredCount = capacity + 8;
 
     ReceiveQueueProbe probe;
@@ -9388,15 +7787,15 @@ TEST_F(DriverAidlLocalInstanceTest, EveryFrameOfferedToAFullReceiveQueueHasExact
         }
     }
 
-    EXPECT_EQ(ownedByQueue.size(), capacity - 1)
-        << "the handoff claimed " << ownedByQueue.size() << " frames where the queue can hold "
-           << (capacity - 1) << " received ones with the last slot reserved for the sentinel";
+    EXPECT_EQ(ownedByQueue.size(), capacity)
+        << "the handoff claimed " << ownedByQueue.size() << " frames where the queue holds "
+           << capacity << ", every slot available to received frames";
 
-    EXPECT_EQ(ownedByCaller.size(), offeredCount - (capacity - 1))
+    EXPECT_EQ(ownedByCaller.size(), offeredCount - capacity)
         << "the handoff returned false " << ownedByCaller.size() << " times for "
-           << (offeredCount - (capacity - 1)) << " offers made past the receive limit";
+           << (offeredCount - capacity) << " offers made onto a full queue";
 
-    EXPECT_EQ(probe.occupancy(), capacity - 1)
+    EXPECT_EQ(probe.occupancy(), capacity)
         << "the queue's occupancy does not match what the handoff claimed to have taken";
 
     // What the queue really holds. Taken out here rather than left for the probe's destructor,
@@ -9438,103 +7837,36 @@ TEST_F(DriverAidlLocalInstanceTest, EveryFrameOfferedToAFullReceiveQueueHasExact
                "the caller would release it";
     }
 
-    // Released exactly once each, now that the partition above has established that no entry is
-    // owned twice and none is orphaned. Every allocation is released whatever the assertions
-    // above reported, so a failing run does not leak on top of failing.
+    // Every allocation is released exactly once, whatever the assertions above reported, so a
+    // failing run does not also leak.
     for (size_t i = 0; i < allocated.size(); i++) {
         delete allocated[i];
     }
 }
 
-// The missing acquisition itself: close() must take queueProducerMutex before it
-// offers its NULL sentinel, and this is the case that fails if it stops.
-//
-// Why the two cases above are not enough, stated plainly because it is the reason this one
-// exists. Both are serial: they fill the queue, offer once more and only then call close(). A
-// lock that is never contended is a lock whose acquisition is invisible, so delete
-// `{AutoLock lock_(queueProducerMutex);` from close() and both still pass - they measure the
-// reserved slot, which is the other half of the fix. Nothing above measures the serialization.
-//
-// How this one measures it. The test thread takes queueProducerMutex itself, through the
-// probe's producerLock() accessor, and then drives the real production close() from a second
-// thread. close() takes the instance lock, moves the state to CLOSING and then reaches for the
-// producer lock - which this thread is holding - so it cannot get as far as its offer. Two
-// independent observations follow, and both are direct:
-//
-//   1. the worker does not complete within PRODUCER_LOCK_OBSERVATION_MS. With the acquisition
-//      in place that is impossible to violate; without it close() runs to completion in
-//      microseconds and the observation fails;
-//   2. the queue's occupancy does not move while the lock is held. That is the same fact read
-//      from the other side - the sentinel itself has not landed - and it fails for the same
-//      reason, so a regression is reported twice rather than once.
-//
-// Then the lock is released and the worker is required to finish, which is what proves the
-// first observation was "blocked" rather than "never started" or "deadlocked": a case that
-// asserted only non-completion would pass against a close() that hung forever.
-//
-// It calls production code and not a copy of it, which is the property the whole case turns
-// on. A test that re-stated close()'s `{AutoLock lock_(queueProducerMutex); rQueue.offer(0); }`
-// would keep passing after production stopped taking the lock, and would therefore pin
-// nothing at all.
-//
-// The failure direction is deterministic, not a race, and the asymmetry is worth naming: no
-// scheduling order can let close() complete while another thread holds the lock it must take,
-// so a passing run cannot flake; and the work close() has left to do once unblocked is two
-// size reads and a deque push, so 400 ms of margin cannot hide a missing acquisition. Measured
-// both ways before this was committed - with the acquisition deleted from close() this case
-// fails on observation 1, with it restored it passes.
-//
-// No sleep is used anywhere here. Every wait is a bounded MonotonicLatch wait that returns the
-// moment the worker signals, so the only elapsed time in a passing run is the one deliberate
-// negative observation - and the bound is on std::chrono::steady_clock, which a wall-clock step
-// cannot move.
-//
-// What this case proves, and what it does not. It is the timing complement rather than the
-// proof, and the distinction matters because a reader who took it for the proof would trust it
-// too far. closeEntered is signalled by the worker before it calls close(), so the latch
-// establishes that the worker started - not that it reached the producer-lock acquisition. A
-// worker descheduled immediately after signalling would satisfy the non-completion observation
-// for a reason that has nothing to do with the lock, and every later assertion here would still
-// hold once the test released it. That is a scheduling counterexample and it cannot be closed
-// from this side of the latch. The case is kept because in practice it detects the missing
-// acquisition immediately and reports it in one specific, readable observation; the case that
-// carries the weight is the stress case below, which does not reason about time at all and
-// instead fails on a violated invariant across many real overlaps.
 /**
  * @brief close()'s sentinel offer does not complete while another thread holds
  *        queueProducerMutex, and completes once it is released.
  * @pre Runs under every invocation. The harness holds the probe, latches and flags off this
- *      stack, because a worker that has to be abandoned outlives the case body.
- * @note The timing complement rather than the proof, and the distinction matters because a
- *       reader who took it for the proof would trust it too far. The latch establishes that
- *       the worker started, not that it reached the lock acquisition, so a worker descheduled
- *       immediately after signalling would satisfy the non-completion observation for a
- *       reason unrelated to the lock. That scheduling counterexample cannot be closed from
- *       this side of the latch. It is kept because it detects a missing acquisition
- *       immediately and reports it as one specific readable observation; the stress case
- *       below carries the weight.
- * @note No sleep anywhere: every wait is a bounded MonotonicLatch wait that returns the
- *       moment the worker signals, on a steady clock a wall-clock step cannot move.
+ *      stack, because an abandoned worker outlives the case body.
+ * @note A timing check, not a proof: the latch shows the worker started, not that it reached
+ *       the lock. ManyRealOverlapsKeepTheHandoffReportAndTheQueueInAgreement carries the weight.
  */
 TEST_F(DriverAidlLocalInstanceTest, CloseSentinelOfferBlocksOnTheProducerLockAConcurrentTestHolds) {
-    // The probe, the latches and the flags the worker writes live in the harness, off this
-    // stack, because a worker that has to be abandoned outlives this case body - see
-    // QueueHandoffOverlapHarness. `shared` is a pointer captured by value into the worker, never a
-    // reference to a local here.
+    // The probe, latches and worker-written flags live in the harness, off this stack; `shared`
+    // is captured by value into the worker, never as a reference to a local.
     QueueHandoffOverlapHarness harness;
     QueueHandoffOverlapState  *shared = &*harness;
 
     shared->probe.markOpened();
 
-    // One resident frame, nowhere near the limit: this case is about the lock and not about
-    // capacity, and a non-empty queue gives the occupancy observation below a value that a
-    // sentinel arriving early would visibly change.
+    // One resident frame, far from the limit: this case is about the lock, and a non-empty
+    // queue makes an early sentinel visible in the occupancy.
     CECFrame *resident = new CECFrame(directedFrame());
     const bool residentTaken = shared->probe.offer(resident);
 
-    // Ownership follows the reported return value, and it is acted on before the assertion
-    // that can return from this case, so a refusal here reports a failure instead of leaking
-    // the frame the handoff handed back.
+    // Ownership is settled before the assertion that can return, so a refusal reports a
+    // failure instead of leaking the frame.
     if (!residentTaken) {
         delete resident;
     }
@@ -9553,9 +7885,8 @@ TEST_F(DriverAidlLocalInstanceTest, CloseSentinelOfferBlocksOnTheProducerLockACo
     {
         CCEC_OSAL::AutoLock heldByTest(shared->probe.producerLock());
 
-        // shared->closeEntered is signalled by the worker immediately before it calls close(),
-        // so that "did not complete" below cannot be satisfied by a thread that never ran; the
-        // worker's own finished latch is signalled once close() has returned or raised.
+        // closeEntered fires just before close(), so "did not complete" cannot be met by a
+        // thread that never ran; the finished latch fires once close() returns or raises.
         closer = &harness.start([shared]() {
             shared->closeEntered.notify();
 
@@ -9564,11 +7895,8 @@ TEST_F(DriverAidlLocalInstanceTest, CloseSentinelOfferBlocksOnTheProducerLockACo
                 shared->closeReturnedCleanly = true;
             }
             catch (IOException &) {
-                // expected, and not what this case is about: a local instance holds no service
-                // proxy, so the close transaction reports DEAD_OBJECT. The sentinel is offered
-                // before that transaction, which is why a blocked Bus reader unwinds even when
-                // the HAL close fails - and why this case can read the sentinel's arrival from
-                // a close() that raises.
+                // Expected: no service proxy, so the close transaction reports DEAD_OBJECT;
+                // the sentinel is offered before it, which is what this case reads.
                 shared->closeRaisedIoException = true;
             }
             catch (...) {
@@ -9597,9 +7925,8 @@ TEST_F(DriverAidlLocalInstanceTest, CloseSentinelOfferBlocksOnTheProducerLockACo
                "offered without the lock - the close-side acquisition is missing";
     }
 
-    // The lock is released. close() must now finish: this is what separates "blocked on the "
-    // "lock" from "stuck", and a regression that deadlocked the producer fails here instead of
-    // hanging the run.
+    // Lock released: close() must now finish, which separates "blocked on the lock" from
+    // "stuck" and turns a deadlock into a failure rather than a hung run.
     ASSERT_TRUE(closer->finishedWithin(PRODUCER_COMPLETION_TIMEOUT_MS))
         << "close() did not complete within " << PRODUCER_COMPLETION_TIMEOUT_MS
         << " ms of queueProducerMutex being released, so it is not merely waiting for that "
@@ -9640,71 +7967,24 @@ TEST_F(DriverAidlLocalInstanceTest, CloseSentinelOfferBlocksOnTheProducerLockACo
 
     EXPECT_EQ(sentinels, 1u)
         << "the queue yielded " << sentinels << " NULL sentinels; close() posts exactly one, "
-           "and the reserved slot exists so that it can never be the entry "
-           "EventQueue::offer() swallows";
+           "and with a single frame queued there is room for it to land";
 }
 
-// The overlap the reservation and the producer lock exist for: a receive handoff and close()'s
-// sentinel contending for the incoming queue at the same moment, with the ownership of every frame
-// still accounted for exactly once afterwards.
-//
-// What makes this the real interleaving and not a staged one. Both producers are parked on
-// queueProducerMutex - genuinely blocked inside production code, one inside
-// offerReceivedFrame() and one inside close() - before the test releases the lock and lets
-// them race. Which of the two then wins is the scheduler's choice and is deliberately not
-// controlled: both orders are legitimate, both are asserted, and the assertions are written
-// against whichever one actually happened.
-//
-// The occupancy is capacity - 2 when the race starts, which is the arrangement that makes the
-// two orders differ observably:
-//
-//   receive first  the handoff sees capacity - 2, which is below its capacity - 1 refusal
-//                  point, so it accepts and the queue reaches capacity - 1. close()'s sentinel
-//                  then takes the last slot and the queue reaches capacity.
-//   close first    the sentinel takes the queue to capacity - 1. The handoff then sees
-//                  capacity - 1, refuses, and the caller keeps the frame.
-//
-// In both, and this is the invariant: the sentinel is never the entry EventQueue::offer()
-// discards, and the handoff's return value agrees with what the queue really holds. Neither
-// holds without both acquisitions - the sentinel can land inside the handoff's check-to-offer
-// window, the frame is dropped, and true is returned all the same.
-//
-// It pins both acquisitions, not only close()'s. Each producer is required not to complete
-// while the test holds the lock, so deleting the acquisition from either side fails this case
-// on the corresponding observation. The receive side's non-completion is also what proves the
-// sequencing this case needs: while it is parked the state is still OPENED, so it has already
-// passed getIncomingQueue()'s guard and the close that follows cannot turn its offer into a
-// state-guard rejection instead of a real contention.
-//
-// The ledger is the point of the assertions. Every frame allocated here is either owned by the
-// queue - drained out of it by identity - or owned by the caller, because the handoff returned
-// false. Never both, which would be a double free, and never neither, which is the ownership leak:
-// the handoff reporting acceptance for a frame the queue never took, leaving nothing in the
-// process that will ever release it.
 /**
- * @brief A receive handoff and close()'s sentinel contending for the queue at the same
- *        moment leave every frame with exactly one owner, in either arrival order.
- * @pre Runs under every invocation, through the harness. Needs room for a filled queue, one
- *      contending frame and the sentinel.
- * @note It pins both acquisitions, not only close()'s: each producer is required not to
- *       complete while the test holds the lock, so deleting the acquisition from either side
- *       fails the corresponding observation. The receive side's non-completion is also what
- *       proves the sequencing - while parked its state is still OPENED, so it has already
- *       passed the incoming-queue guard and the close that follows is real contention rather
- *       than a state-guard rejection.
- * @note The ledger is the point of the assertions: every frame is owned by the queue, drained
- *       out of it by identity, or by the caller because the handoff returned false. Never
- *       both, which would be a double free, and never neither, which is the ownership leak.
+ * @brief A receive handoff and close()'s sentinel contending for the queue's last free slot
+ *        leave every frame with exactly one owner, in either arrival order.
+ * @pre Runs under every invocation, through the harness, with the queue one entry short of full.
+ * @note Each producer signals entry and is observed not to complete while the test holds
+ *       queueProducerMutex; deleting either side's acquisition fails that observation.
  */
 TEST_F(DriverAidlLocalInstanceTest, CloseSentinelOverlappingAReceiveHandoffLeavesEveryFrameWithExactlyOneOwner) {
     const size_t capacity = DriverAidlImpl::INCOMING_QUEUE_CAPACITY;
-    ASSERT_GE(capacity, 3u)
-        << "this case needs room for a filled queue, one contending frame and close()'s "
-           "sentinel, so a capacity below three cannot express it";
+    ASSERT_GE(capacity, 2u)
+        << "this case needs a filled queue with one free slot for the two producers to contend "
+           "for, so a capacity below two cannot express it";
 
-    // The probe, the latches, the flags the workers write and the frame ledger all live in the
-    // harness, off this stack: a worker that has to be abandoned outlives this case body, and
-    // the harness releases every allocation on every exit path - see QueueHandoffOverlapHarness.
+    // The probe, latches, worker flags and frame ledger live in the harness, freed once every
+    // worker joins and retained if one is abandoned.
     QueueHandoffOverlapHarness harness;
     QueueHandoffOverlapState  *shared = &*harness;
 
@@ -9712,9 +7992,9 @@ TEST_F(DriverAidlLocalInstanceTest, CloseSentinelOverlappingAReceiveHandoffLeave
 
     std::vector<CECFrame *> ownedByCaller;
 
-    // Fill to capacity - 2 through the production handoff, leaving exactly two slots: one the
-    // contending frame may take and one reserved for the sentinel.
-    for (size_t i = 0; i < capacity - 2; i++) {
+    // Fill to capacity - 1 through the production handoff, leaving exactly one slot for the
+    // contending frame and the sentinel to race for.
+    for (size_t i = 0; i < capacity - 1; i++) {
         CECFrame *frame = new CECFrame(directedFrame());
         shared->allocated.push_back(frame);
 
@@ -9723,8 +8003,8 @@ TEST_F(DriverAidlLocalInstanceTest, CloseSentinelOverlappingAReceiveHandoffLeave
         }
     }
 
-    ASSERT_EQ(shared->probe.occupancy(), capacity - 2)
-        << "the queue did not reach " << (capacity - 2) << " entries, so the two orders this "
+    ASSERT_EQ(shared->probe.occupancy(), capacity - 1)
+        << "the queue did not reach " << (capacity - 1) << " entries, so the two orders this "
            "case distinguishes would not differ";
 
     ASSERT_TRUE(ownedByCaller.empty())
@@ -9749,9 +8029,8 @@ TEST_F(DriverAidlLocalInstanceTest, CloseSentinelOverlappingAReceiveHandoffLeave
                 shared->contendingAccepted = shared->probe.offer(shared->contending);
             }
             catch (InvalidStateException &) {
-                // Only reachable if the driver stopped being OPENED before this thread read
-                // the state. The sequencing below is arranged so that cannot happen, and the
-                // assertion after the join says so rather than tolerating it.
+                // Reachable if the driver left OPENED before this thread read the state; the
+                // assertion after the join reports it.
                 shared->contendingRefusedByStateGuard = true;
             }
             catch (...) {
@@ -9762,9 +8041,8 @@ TEST_F(DriverAidlLocalInstanceTest, CloseSentinelOverlappingAReceiveHandoffLeave
         ASSERT_TRUE(shared->receiveEntered.wait(PRODUCER_COMPLETION_TIMEOUT_MS))
             << "the receive worker never reached the handoff; this is a harness failure";
 
-        // The receive side's acquisition, and the sequencing proof in one observation: it has
-        // passed the state guard - the driver is still OPENED, nothing has closed yet - and is
-        // therefore parked on queueProducerMutex with nothing else left to do.
+        // The receive side's acquisition: having signalled entry, the handoff must not complete
+        // while this test holds queueProducerMutex.
         ASSERT_FALSE(receiver->finishedWithin(PRODUCER_LOCK_OBSERVATION_MS))
             << "the receive handoff COMPLETED while this test held queueProducerMutex, so "
                "offerReceivedFrame() did not take that lock around its occupancy check and its "
@@ -9784,9 +8062,8 @@ TEST_F(DriverAidlLocalInstanceTest, CloseSentinelOverlappingAReceiveHandoffLeave
                 shared->closeRaisedIoException = true;
             }
             catch (...) {
-                // Any other exception is reported through the queue-content assertions below
-                // rather than swallowed silently: a close that did not reach its offer leaves
-                // no sentinel, and the sentinel count is asserted.
+                // Reported through the queue-content assertions: a close that never offered
+                // leaves no sentinel, and the sentinel count is asserted.
                 shared->closeRaisedSomethingElse = true;
             }
         });
@@ -9794,15 +8071,14 @@ TEST_F(DriverAidlLocalInstanceTest, CloseSentinelOverlappingAReceiveHandoffLeave
         ASSERT_TRUE(shared->closeEntered.wait(PRODUCER_COMPLETION_TIMEOUT_MS))
             << "the close worker never reached close(); this is a harness failure";
 
-        // The close side's acquisition - the same observation the previous case makes on its
-        // own, repeated here because this case must have both producers parked before it lets
-        // them race.
+        // The close side's acquisition, observed the same way: having signalled entry, close()
+        // must not complete while this test holds queueProducerMutex.
         ASSERT_FALSE(closer->finishedWithin(PRODUCER_LOCK_OBSERVATION_MS))
             << "close() ran to completion while this test held queueProducerMutex, so its "
                "sentinel offer is not serialized against the receive path. That is finding "
                "the missing close-side acquisition";
 
-        EXPECT_EQ(shared->probe.occupancy(), capacity - 2)
+        EXPECT_EQ(shared->probe.occupancy(), capacity - 1)
             << "the occupancy moved while this test held the producer lock, so one of the two "
                "parked producers reached the queue without taking it";
     }
@@ -9837,12 +8113,12 @@ TEST_F(DriverAidlLocalInstanceTest, CloseSentinelOverlappingAReceiveHandoffLeave
         ownedByCaller.push_back(shared->contending);
     }
     else if (!shared->contendingAccepted) {
-        // The legitimate close-first order: the sentinel took the queue to capacity - 1 and the
-        // handoff then refused, so the caller still owns this frame and must release it.
+        // The legitimate close-first order: the sentinel took the last slot and the handoff then
+        // refused, so the caller still owns this frame and must release it.
         ownedByCaller.push_back(shared->contending);
     }
 
-    const size_t expectedFrames = (capacity - 2) + (shared->contendingAccepted ? 1u : 0u);
+    const size_t expectedFrames = (capacity - 1) + (shared->contendingAccepted ? 1u : 0u);
 
     // What the queue actually holds, by identity rather than by count alone.
     std::vector<CECFrame *> takenFromQueue;
@@ -9850,18 +8126,19 @@ TEST_F(DriverAidlLocalInstanceTest, CloseSentinelOverlappingAReceiveHandoffLeave
 
     shared->probe.drainInto(takenFromQueue, sentinels);
 
-    // The invariant that holds in both orders: the sentinel is never swallowed. A sentinel
-    // offered onto a queue the receive path has filled to capacity is discarded silently, and
-    // the Bus reader then stays blocked in poll() with nothing left to wake it.
-    EXPECT_EQ(sentinels, 1u)
+    // The invariant in both orders: the last slot goes to exactly one producer. Receive first,
+    // the full queue drops the sentinel as the legacy queue does; close first, the frame is refused.
+    EXPECT_EQ(sentinels, shared->contendingAccepted ? 0u : 1u)
         << "the queue yielded " << sentinels << " NULL sentinels after a close that overlapped "
-           "a receive handoff. close() posts exactly one, and the slot the receive path "
-           "reserves is what guarantees it is never the entry EventQueue::offer() drops";
+           "a receive handoff which was "
+        << (shared->contendingAccepted ? "accepted" : "refused") << ". One slot was free, so "
+           "exactly one of the two producers can have landed: the sentinel only when the frame "
+           "was refused";
 
     EXPECT_EQ(takenFromQueue.size(), expectedFrames)
         << "the queue yielded " << takenFromQueue.size() << " frames where the handoff's "
            "reports account for " << expectedFrames << " ("
-        << (capacity - 2) << " filled, plus the shared->contending frame "
+        << (capacity - 1) << " filled, plus the shared->contending frame "
         << (shared->contendingAccepted ? "which was accepted" : "which was refused")
         << "). A shortfall is the ownership leak itself: acceptance reported for a frame "
            "EventQueue::offer() had discarded";
@@ -9908,155 +8185,41 @@ TEST_F(DriverAidlLocalInstanceTest, CloseSentinelOverlappingAReceiveHandoffLeave
                "the queue and the caller would release it";
     }
 
-    // Nothing is released here. Every frame this case allocated is registered in the harness's
-    // ledger and released by its destructor, after the queue has been drained and after every
-    // worker has been disposed - which is the only order in which "exactly once" holds on every
-    // exit path, including an early return from a failed assertion above.
+    // Nothing is released here: the harness ledger releases every frame once every worker joined
+    // and the queue is drained, and retains them if one was abandoned.
 }
 
-// The invariant rather than the timing: across many independent real overlaps of
-// production close()'s sentinel offer against a production receive handoff, the handoff's
-// report and the queue's contents never disagree, exactly one sentinel is ever queued, and
-// every frame allocated has exactly one owner.
-//
-// Why this case exists when two concurrent cases already do, and it is a difference of kind
-// rather than of degree. Those two prove the missing acquisition by timing: they hold
-// queueProducerMutex and require the production producer not to complete while they hold it.
-// That works, and it is how the defect was first caught, but the proof has a hole a scheduler
-// can walk through. Each of them signals its "entered" latch before it calls into production,
-// so the latch establishes that the worker started - not that it reached the lock acquisition
-// or the check-and-offer region. A worker descheduled immediately after signalling satisfies
-// the bounded non-completion observation for a reason that has nothing to do with the lock,
-// and once the test releases the lock the worker completes and every queue-content assertion
-// still holds. The counterexample is unlikely, not impossible, and a regression test whose
-// proof depends on the scheduler not doing something is a regression test with a hole in it.
-//
-// So this case proves the property instead of the timing, and asserts exactly what the
-// ownership contract is about. The illegal state the missing lock produces is "the handoff
-// reported an outcome the queue did not honour" - acceptance reported for a frame
-// EventQueue::offer() had silently discarded, leaving no owner at all; and, symmetrically,
-// refusal reported for a
-// frame the queue did take, which would have the caller free a frame the queue still holds.
-// Both are violations of one invariant:
-//
-//   Reported-accepted if and only if the frame is in the queue
-//
-// which the fix makes unconditional and the defect makes violable. Two more are asserted
-// alongside it because they are the same fix seen from other angles: exactly one sentinel is
-// queued, and the frames the queue yields and the frames the handoff handed back partition the
-// allocations - every frame with exactly one owner, never two and never none.
-//
-// How a real overlap is staged without leaning on the thing under test. Each iteration fills
-// the queue to capacity - 2 through the production handoff, so that both orders are expressible
-// and neither is a no-op, then releases two workers from a rendezvous of this file's own: the
-// second producer to arrive releases the pair (awaitOverlapRendezvous), so the pair leaves the
-// gate within tens of nanoseconds of each other. Deliberately not the production lock, which
-// the two timing cases use and which releases nothing when close() stops taking it - the very
-// mutation this case must catch. Deliberately not the test thread either, which would have to
-// be scheduled between two arrivals on a host whose runnable threads are the producers.
-//
-// And the alignment is swept rather than sampled once. burnOffset() is applied after the
-// release, alternating which producer carries it and varying its size between iterations, so
-// the 256 attempts walk the relative arrival across the window instead of retrying one fixed
-// schedule 256 times.
-//
-// WHAT A PASSING SWEEP GUARANTEES AND WHAT IT DOES NOT, AND WHY THIS CASE NO LONGER ASSERTS
-// ANYTHING ABOUT THE SCHEDULER. The sweep guarantees that in every overlap that occurred, the
-// invariant held. It cannot guarantee that any particular interleaving occurred - no test can,
-// without controlling the scheduler - so a run in which the two producers never actually
-// contended would satisfy the invariants vacuously, and something has to make that visible.
-//
-// An earlier revision made it visible by ASSERTING the census: both outcome orders had to have
-// been observed at least once across the 256 attempts. With two CPUs available every run
-// produces tens of each, so the assertion looked settled. It is not. Pinned to ONE CPU
-// (`taskset -c 0`) the sweep produces 256 close-first-refused-by-the-state-guard outcomes and
-// nothing else - measured, repeatedly: the close worker runs to completion before the receive
-// worker is scheduled at all - and the case then reports a RED suite on a tree with no product
-// regression whatsoever. A single-CPU runner, a busy shared CI executor and a container with a
-// one-CPU quota are all valid environments, so an assertion on the census makes the verdict a
-// property of the machine rather than of the code. THAT IS THE HOLE THIS REVISION CLOSES, and
-// it is the whole reason the orderings below are CONSTRUCTED and not sampled.
-//
-// So the non-vacuity requirement is discharged where it can be discharged deterministically.
-// PART 1 builds each intended ordering directly and single-threaded, through the seams
-// ReceiveQueueProbe already exposes - postCloseSentinel() for a sentinel that is already queued
-// while the instance is still OPENED, and the real production close() for one that also takes
-// the instance out of OPENED - and asserts the SAME three invariants on each. Every arm
-// therefore runs on every scheduler and on any number of CPUs, and it is the arms rather than
-// the census that establish that the accepted-and-present and refused-and-absent arms of the
-// invariant were exercised at all. PART 2 then keeps the contended sweep exactly as it was,
-// invariants included, because a real overlap is evidence no constructed ordering can supply:
-// it is the only thing in this file that puts the two production producers on the same queue at
-// the same instant. Its census is PRINTED and no longer ASSERTED - it is a report of what this
-// machine happened to sample, which is all it ever was.
-//
-// A LATER READER WILL BE TEMPTED TO SIMPLIFY PART 1 BACK OUT, on the grounds that the sweep
-// reaches the same three outcomes anyway. It does not reach them reliably: which of the three it
-// produces is the scheduler's choice, and on one CPU it produces exactly one of them, 256 times.
-// Deleting Part 1 and restoring an assertion on the census restores the false failure.
-//
-// Measured both ways before it was committed. With `{AutoLock lock_(queueProducerMutex);`
-// deleted from DriverAidlImpl::close() this case fails on the invariant - the handoff reporting
-// a refusal for a frame the drained queue is holding, and the same frame counted with two
-// owners - not on a timeout. With the acquisition restored it passes, repeatedly.
-//
-// Every allocation is accounted for on every path, including a failing one: each frame is
-// registered in the harness's ledger the moment it is allocated, and the harness releases it
-// exactly once after its workers are disposed and its queue drained. Nothing here deletes a
-// frame itself, and nothing leaks if an assertion stops the loop early.
 /**
- * @brief Every intended ordering of close()'s sentinel against the receive handoff is
- *        constructed and asserted, and a contended sweep then holds the same invariants over
- *        whatever real overlaps this machine produces.
- * @pre Runs under every invocation, through the harness. This is the case that carries the
- *      weight, because it reasons about no timing at all and fails on a violated invariant.
- * @note Part 1 CONSTRUCTS the three orderings - receive-first accepted, close-first refused by
- *       the reserved slot, close-first refused by the state guard - single-threaded and through
- *       the probe's own seams, so each is exercised on every scheduler and on any number of
- *       CPUs. The non-vacuity requirement is asserted on these arms, and on nothing else.
- * @note Part 2 sweeps real overlaps. The alignment is varied rather than sampled once: a burn
- *       offset is applied after the release, alternating which producer carries it and varying
- *       its size, so the attempts walk the relative arrival across the window instead of
- *       retrying one fixed schedule. Its invariants are asserted; its census is printed and
- *       deliberately NOT asserted, because which interleaving a machine produces is the
- *       scheduler's choice - pinned to one CPU this sweep produces one outcome 256 times, and
- *       an assertion on the census turned that into a red suite on a tree with no regression.
- * @note Every allocation is accounted for on every path including a failing one: each frame
- *       is registered in the harness ledger as it is allocated and released exactly once
- *       after the workers are disposed and the queue drained, so nothing leaks if an
- *       assertion stops the loop early.
+ * @brief Every ordering of close()'s sentinel against the receive handoff keeps the handoff's
+ *        report and the queue's contents in agreement, constructed and under real contention.
+ * @pre Runs under every invocation, through the harness.
+ * @note Part 1 constructs the three orderings single-threaded and carries the non-vacuity
+ *       assertions; Part 2's sweep asserts the same invariants and only prints its census,
+ *       which depends on the host's CPU count.
  */
 TEST_F(DriverAidlLocalInstanceTest, ManyRealOverlapsKeepTheHandoffReportAndTheQueueInAgreement) {
     const size_t capacity = DriverAidlImpl::INCOMING_QUEUE_CAPACITY;
-    ASSERT_GE(capacity, 3u)
-        << "this case needs room for a filled queue, one contending frame and close()'s "
-           "sentinel, so a capacity below three cannot express it";
+    ASSERT_GE(capacity, 2u)
+        << "this case needs a filled queue with one free slot for the two producers to contend "
+           "for, so a capacity below two cannot express it";
 
-    /* -------------------------------------------------------------------------------------
-     * PART 1 - THE THREE ORDERINGS, CONSTRUCTED RATHER THAN SAMPLED.
-     *
-     * Each arm below produces one of the three outcomes by construction, single-threaded, and
-     * asserts the same three invariants Part 2 asserts on its sampled overlaps. No thread, no
-     * rendezvous and no latch is involved, so no arm can be lost to a scheduler that runs one
-     * runnable thread to completion before it runs the other - which is exactly what a
-     * one-CPU host does, and which is why the sampled census is no longer asserted. The block
-     * comment above this case records that measurement and why this part must not be removed.
-     * ----------------------------------------------------------------------------------- */
+    /* Part 1 - the three orderings, constructed single-threaded so no scheduler can lose an
+     * arm; each asserts the same three invariants as Part 2. */
 
-    // Which of the three orderings a constructed arm is to produce. The three differ by
-    // exactly one thing - where the close side runs relative to the handoff - so naming that
-    // difference keeps them one shape with one varying step rather than three near-copies.
+    /**
+     * @brief The ordering a constructed arm produces; the three differ only in where the close
+     *        side runs relative to the handoff.
+     */
     enum ConstructedOrdering {
-        RECEIVE_FIRST_ACCEPTS,        // the handoff reaches the queue below the refusal point
-        CLOSE_FIRST_REFUSED_BY_SLOT,  // the sentinel is already queued, so the handoff refuses
-        CLOSE_FIRST_REFUSED_BY_STATE  // close() has left OPENED, so the handoff raises
+        RECEIVE_FIRST_ACCEPTS,            // the handoff takes the last slot; the sentinel is dropped
+        CLOSE_FIRST_REFUSED_BY_OCCUPANCY, // the sentinel took the last slot, so the handoff refuses
+        CLOSE_FIRST_REFUSED_BY_STATE      // close() has left OPENED, so the handoff raises
     };
 
-    // The production close(), run into the same three outcome flags the sweep's close worker
-    // writes, so both parts of this case read the close side through one vocabulary. A local
-    // instance holds no service proxy, so the transaction fails and close() raises IOException
-    // AFTER it has offered its sentinel - which is what lets an arm read the sentinel's
-    // arrival from a close() that raised.
+    /**
+     * @brief Runs production close() into the outcome flags the sweep's close worker writes;
+     *        a proxyless instance raises IOException after offering its sentinel.
+     */
     auto driveProductionClose = [](QueueHandoffOverlapState *shared) {
         try {
             shared->probe.close();
@@ -10070,18 +8233,14 @@ TEST_F(DriverAidlLocalInstanceTest, ManyRealOverlapsKeepTheHandoffReportAndTheQu
         }
     };
 
-    // Builds one ordering, asserts it produced that ordering, and asserts the three invariants
-    // on it. EXPECT rather than ASSERT throughout, deliberately: a fatal assertion inside a
-    // lambda returns from the lambda alone, so it would leave the arm's own report unmade and
-    // read as a silently skipped arm rather than as a failure.
-    //
-    // Returns whether the arm really produced the ordering it names, which is the arm's
-    // contribution to the non-vacuity assertion at the end of this case.
+    /**
+     * @brief Builds one ordering and asserts it and the three invariants, with EXPECT because a
+     *        fatal assertion would return from the lambda alone.
+     * @return Whether the arm produced the ordering it names, for the non-vacuity assertions.
+     */
     auto constructOrdering = [&](ConstructedOrdering ordering, const char *arm) -> bool {
-        // The same harness Part 2 uses, for the same reasons: it owns the probe and the frame
-        // ledger off this stack and releases every allocation exactly once on every exit path,
-        // including an early return from a failed expectation. No worker is started here, so
-        // its bounded disposition has nothing to dispose.
+        // The same harness as Part 2: it owns the probe and frame ledger and releases every
+        // allocation exactly once; no worker is started here.
         QueueHandoffOverlapHarness harness;
         QueueHandoffOverlapState  *shared = &*harness;
 
@@ -10090,11 +8249,9 @@ TEST_F(DriverAidlLocalInstanceTest, ManyRealOverlapsKeepTheHandoffReportAndTheQu
         // The frames the handoff handed back, by identity. Pointers only - the ledger owns them.
         std::vector<CECFrame *> ownedByCaller;
 
-        // Filled to capacity - 2 through the production handoff, exactly as Part 2 fills it, so
-        // that both the accepted and the refused outcome stay expressible and neither is a
-        // no-op. This fill is also what drives the slot-available side of the reserved-slot
-        // check, capacity - 2 times over on every arm.
-        for (size_t filled = 0; filled < capacity - 2; filled++) {
+        // Filled to capacity - 1 as in Part 2, so the frame and the sentinel contend for the
+        // last slot and both outcomes stay expressible.
+        for (size_t filled = 0; filled < capacity - 1; filled++) {
             CECFrame *frame = new CECFrame(directedFrame());
             shared->allocated.push_back(frame);
 
@@ -10107,37 +8264,28 @@ TEST_F(DriverAidlLocalInstanceTest, ManyRealOverlapsKeepTheHandoffReportAndTheQu
             << arm << ": the handoff refused " << ownedByCaller.size() << " frames below its "
                "refusal point, so this arm is not the ordering it names";
 
-        EXPECT_EQ(shared->probe.occupancy(), capacity - 2)
+        EXPECT_EQ(shared->probe.occupancy(), capacity - 1)
             << arm << ": the queue holds " << shared->probe.occupancy() << " entries where this "
-               "arm needs " << (capacity - 2);
+               "arm needs " << (capacity - 1);
 
         shared->contending = new CECFrame(directedFrame());
         shared->allocated.push_back(shared->contending);
 
-        // THE CLOSE SIDE, AHEAD OF THE HANDOFF ON TWO OF THE THREE ARMS. This is the whole of
-        // the difference between the arms, and each choice models a real close rather than an
-        // invented state.
-        if (ordering == CLOSE_FIRST_REFUSED_BY_SLOT) {
-            // close()'s sentinel, offered under queueProducerMutex exactly as close() offers
-            // it, reaching the queue BEFORE the handoff does. The instance is deliberately
-            // left OPENED, because the guard runs ahead of the occupancy check: were the state
-            // moved as well, the handoff below would raise from the guard and this arm would
-            // become a second copy of the state-guard arm instead of the occupancy one. This
-            // is the state a close leaves for the window between its sentinel offer and its
-            // own state store, and postCloseSentinel() is the seam that expresses it.
+        // The close side runs ahead of the handoff on two of the three arms; this is the only
+        // difference between them.
+        if (ordering == CLOSE_FIRST_REFUSED_BY_OCCUPANCY) {
+            // close()'s sentinel takes the last slot while the instance stays OPENED, so the
+            // handoff meets the occupancy check rather than the state guard.
             shared->probe.postCloseSentinel();
         }
         else if (ordering == CLOSE_FIRST_REFUSED_BY_STATE) {
-            // The real production close(), run to completion first: it sets CLOSING, offers
-            // its sentinel under the producer lock, and reports the failed transaction of a
-            // proxyless instance. The handoff below then meets an instance that is no longer
-            // OPENED, which is the earliest form of the close-first order.
+            // Production close() runs to completion first, so the handoff meets an instance
+            // that is no longer OPENED - the earliest close-first order.
             driveProductionClose(shared);
         }
 
-        // THE PRODUCTION HANDOFF, reported exactly as it reported it. Nothing is
-        // reinterpreted: the agreement between this report and what the queue really holds is
-        // the property under test.
+        // The production handoff, recorded exactly as reported: its agreement with the queue's
+        // contents is the property under test.
         try {
             shared->contendingAccepted = shared->probe.offer(shared->contending);
         }
@@ -10149,9 +8297,8 @@ TEST_F(DriverAidlLocalInstanceTest, ManyRealOverlapsKeepTheHandoffReportAndTheQu
         }
 
         if (ordering == RECEIVE_FIRST_ACCEPTS) {
-            // The close side runs AFTER the accepted handoff on this arm, so its sentinel lands
-            // in the slot the handoff reserved for it - the property that makes the sentinel
-            // undroppable, and the one a full queue would break.
+            // The close side runs after the accepted handoff filled the queue, so its sentinel
+            // is dropped, as the legacy queue drops it.
             driveProductionClose(shared);
         }
 
@@ -10159,10 +8306,9 @@ TEST_F(DriverAidlLocalInstanceTest, ManyRealOverlapsKeepTheHandoffReportAndTheQu
             << arm << ": the receive handoff raised an exception that is neither "
                "InvalidStateException nor nothing at all, so what follows cannot be interpreted";
 
-        // The close side's own outcome, on the two arms that drive production close(). The
-        // occupancy arm drives no close at all - its sentinel comes from postCloseSentinel()
-        // for the reason given above - so it has no close outcome to read.
-        if (ordering != CLOSE_FIRST_REFUSED_BY_SLOT) {
+        // The close outcome, on the two arms that drive production close(); the occupancy arm
+        // posts its sentinel through postCloseSentinel() instead.
+        if (ordering != CLOSE_FIRST_REFUSED_BY_OCCUPANCY) {
             EXPECT_TRUE(shared->closeRaisedIoException)
                 << arm << ": close() did not report the IOException a proxyless instance must "
                    "report, so the sentinel this arm reads may not have come from the code path "
@@ -10177,18 +8323,16 @@ TEST_F(DriverAidlLocalInstanceTest, ManyRealOverlapsKeepTheHandoffReportAndTheQu
                    "instance must report, so what follows cannot be interpreted";
         }
 
-        // The decisive outcome, asserted per arm. This is what makes each arm the ordering it
-        // claims to be rather than whichever ordering the code happened to take, and it is
-        // also the arm's own non-vacuity evidence.
+        // The decisive outcome per arm, which makes each arm the ordering it claims and is its
+        // non-vacuity evidence.
         bool producedTheOrdering = false;
 
         switch (ordering) {
         case RECEIVE_FIRST_ACCEPTS:
             EXPECT_TRUE(shared->contendingAccepted)
                 << arm << ": the handoff refused a frame offered onto a queue holding "
-                << (capacity - 2) << " of " << capacity << " entries, which is below the "
-                   "reserved-slot refusal point, so the accepted-and-present arm of the "
-                   "invariant was not reached";
+                << (capacity - 1) << " of " << capacity << " entries, which still has a free "
+                   "slot, so the accepted-and-present arm of the invariant was not reached";
 
             EXPECT_FALSE(shared->contendingRefusedByStateGuard)
                 << arm << ": the handoff was refused by the OPENED-state guard on an arm that "
@@ -10198,16 +8342,15 @@ TEST_F(DriverAidlLocalInstanceTest, ManyRealOverlapsKeepTheHandoffReportAndTheQu
                 shared->contendingAccepted && !shared->contendingRefusedByStateGuard;
             break;
 
-        case CLOSE_FIRST_REFUSED_BY_SLOT:
+        case CLOSE_FIRST_REFUSED_BY_OCCUPANCY:
             EXPECT_FALSE(shared->contendingAccepted)
                 << arm << ": the handoff accepted a frame offered onto a queue already holding "
-                << (capacity - 1) << " of " << capacity << " entries. The last slot is reserved "
-                   "for close()'s sentinel, and accepting here is what makes a sentinel "
-                   "droppable";
+                << capacity << " of " << capacity << " entries. EventQueue::offer() drops a "
+                   "frame offered to a full queue, so reporting acceptance here leaks it";
 
             EXPECT_FALSE(shared->contendingRefusedByStateGuard)
                 << arm << ": the handoff was refused by the OPENED-state guard rather than by "
-                   "occupancy, so this arm did not exercise the reserved-slot refusal it exists "
+                   "occupancy, so this arm did not exercise the full-queue refusal it exists "
                    "for. The instance is left OPENED precisely so that it cannot";
 
             producedTheOrdering =
@@ -10241,11 +8384,13 @@ TEST_F(DriverAidlLocalInstanceTest, ManyRealOverlapsKeepTheHandoffReportAndTheQu
             ownedByCaller.push_back(shared->contending);
         }
 
-        // Invariant 1, as Part 2 asserts it: exactly one sentinel, whatever the order was.
-        EXPECT_EQ(sentinels, 1u)
-            << arm << ": the queue yielded " << sentinels << " NULL sentinels; exactly one is "
-               "offered and it must not be droppable - a swallowed sentinel leaves the Bus "
-               "reader blocked in poll() with nothing left to wake it";
+        // Invariant 1, as Part 2 asserts it: the last slot goes to exactly one producer, so the
+        // sentinel is queued exactly when the frame was not.
+        EXPECT_EQ(sentinels, shared->contendingAccepted ? 0u : 1u)
+            << arm << ": the queue yielded " << sentinels << " NULL sentinels with the contending "
+               "frame " << (shared->contendingAccepted ? "ACCEPTED" : "REFUSED") << ". One slot "
+               "was free, so the sentinel lands only when the frame did not, and a full queue "
+               "drops it as the legacy queue does";
 
         // Invariant 2, as Part 2 asserts it: reported-accepted if and only if present.
         size_t contendingInQueue = 0;
@@ -10264,7 +8409,7 @@ TEST_F(DriverAidlLocalInstanceTest, ManyRealOverlapsKeepTheHandoffReportAndTheQu
                "and refusal reported for one that is there has the caller free a frame the queue "
                "still owns";
 
-        const size_t expectedFrames = (capacity - 2) + (shared->contendingAccepted ? 1u : 0u);
+        const size_t expectedFrames = (capacity - 1) + (shared->contendingAccepted ? 1u : 0u);
 
         EXPECT_EQ(takenFromQueue.size(), expectedFrames)
             << arm << ": the queue yielded " << takenFromQueue.size() << " frames where the "
@@ -10309,40 +8454,31 @@ TEST_F(DriverAidlLocalInstanceTest, ManyRealOverlapsKeepTheHandoffReportAndTheQu
         return producedTheOrdering;
     };
 
-    // The three arms, each run exactly once, in the order that reads as the story: the handoff
-    // wins; the sentinel wins on occupancy; the sentinel wins on the state. Every one of them
-    // runs on every scheduler, which is the property the sampled census cannot offer.
+    // The three arms, each run once: the handoff wins, the sentinel wins on occupancy, the
+    // sentinel wins on the state.
     const bool receiveFirstConstructed =
         constructOrdering(RECEIVE_FIRST_ACCEPTS, "[constructed receive-first]");
-    const bool refusedBySlotConstructed =
-        constructOrdering(CLOSE_FIRST_REFUSED_BY_SLOT, "[constructed close-first, occupancy]");
+    const bool refusedByOccupancyConstructed =
+        constructOrdering(CLOSE_FIRST_REFUSED_BY_OCCUPANCY, "[constructed close-first, occupancy]");
     const bool refusedByStateConstructed =
         constructOrdering(CLOSE_FIRST_REFUSED_BY_STATE, "[constructed close-first, state guard]");
 
-    // The deterministic counterpart of the census below, and the reason it is printed rather
-    // than left implicit: a reader of any run - on any number of CPUs - can see that all three
-    // orderings were reached, which is precisely what the sampled census cannot show. The
-    // assertions at the end of this case are made on these three outcomes.
+    // Printed so any run shows all three orderings were reached; the final assertions are made
+    // on these outcomes.
     std::cout << "[queue handoff constructed orderings] receive-first accepted: "
               << (receiveFirstConstructed ? "yes" : "NO")
               << ", close-first refused by occupancy: "
-              << (refusedBySlotConstructed ? "yes" : "NO")
+              << (refusedByOccupancyConstructed ? "yes" : "NO")
               << ", close-first refused by the state guard: "
               << (refusedByStateConstructed ? "yes" : "NO") << std::endl;
 
-    /* -------------------------------------------------------------------------------------
-     * PART 2 - THE CONTENDED SWEEP, UNCHANGED.
-     *
-     * Real overlaps of the two production producers on one queue, which no constructed
-     * ordering can supply. Its invariants are asserted below exactly as before; its census is
-     * printed and NOT asserted, for the reason the block comment above this case records.
-     * ----------------------------------------------------------------------------------- */
+    /* Part 2 - the contended sweep: real overlaps of both production producers on one queue.
+     * Its invariants are asserted; its census is only printed. */
 
-    // The interleaving census. PRINTED, NEVER ASSERTED: which interleaving a machine produces
-    // is the scheduler's choice, and asserting it made a one-CPU host report a false failure.
-    // It stays because a reader of a passing run should be able to see what was sampled.
+    // The interleaving census, printed and never asserted: which interleaving a host produces
+    // is the scheduler's choice.
     size_t overlapsCompleted        = 0;
-    size_t receiveFirstOverlaps     = 0;   // the handoff got in below the refusal point
+    size_t receiveFirstOverlaps     = 0;   // the handoff took the last slot first
     size_t closeFirstByOccupancy    = 0;   // the sentinel landed first, so the handoff refused
     size_t closeFirstByStateGuard   = 0;   // close() reached CLOSING before the handoff's guard
 
@@ -10357,9 +8493,9 @@ TEST_F(DriverAidlLocalInstanceTest, ManyRealOverlapsKeepTheHandoffReportAndTheQu
         // The frames the handoff handed back, by identity. Pointers only - the ledger owns them.
         std::vector<CECFrame *> ownedByCaller;
 
-        // Fill to capacity - 2 through the production handoff, leaving one slot the contending
-        // frame may take and one the sentinel is reserved.
-        for (size_t filled = 0; filled < capacity - 2; filled++) {
+        // Fill to capacity - 1 through the production handoff, leaving one slot for the
+        // contending frame and the sentinel to race for.
+        for (size_t filled = 0; filled < capacity - 1; filled++) {
             CECFrame *frame = new CECFrame(directedFrame());
             shared->allocated.push_back(frame);
 
@@ -10373,9 +8509,9 @@ TEST_F(DriverAidlLocalInstanceTest, ManyRealOverlapsKeepTheHandoffReportAndTheQu
             << " frames below its refusal point, so this iteration's overlap would not be the "
                "one the case describes";
 
-        EXPECT_EQ(shared->probe.occupancy(), capacity - 2)
+        EXPECT_EQ(shared->probe.occupancy(), capacity - 1)
             << "iteration " << iteration << ": the queue holds " << shared->probe.occupancy()
-            << " entries where the overlap needs " << (capacity - 2);
+            << " entries where the overlap needs " << (capacity - 1);
 
         shared->contending = new CECFrame(directedFrame());
         shared->allocated.push_back(shared->contending);
@@ -10400,9 +8536,8 @@ TEST_F(DriverAidlLocalInstanceTest, ManyRealOverlapsKeepTheHandoffReportAndTheQu
                 shared->contendingAccepted = shared->probe.offer(shared->contending);
             }
             catch (InvalidStateException &) {
-                // The legitimate close-first order in its earliest form: close() had already
-                // moved the state out of OPENED when this thread reached getIncomingQueue()'s
-                // guard. The frame stays the caller's, which the ownership ledger below records.
+                // The earliest close-first order: close() left OPENED before this thread reached
+                // the guard, so the frame stays the caller's.
                 shared->contendingRefusedByStateGuard = true;
             }
             catch (...) {
@@ -10425,9 +8560,8 @@ TEST_F(DriverAidlLocalInstanceTest, ManyRealOverlapsKeepTheHandoffReportAndTheQu
                 shared->closeReturnedCleanly = true;
             }
             catch (IOException &) {
-                // Expected: a local instance holds no service proxy, so the close transaction
-                // reports DEAD_OBJECT. The sentinel is offered before that transaction, which is
-                // why this case can read the sentinel's arrival from a close() that raises.
+                // Expected: no service proxy, so the close transaction reports DEAD_OBJECT;
+                // the sentinel is offered before it.
                 shared->closeRaisedIoException = true;
             }
             catch (...) {
@@ -10435,9 +8569,8 @@ TEST_F(DriverAidlLocalInstanceTest, ManyRealOverlapsKeepTheHandoffReportAndTheQu
             }
         });
 
-        // Bounded completion, then a bounded disposition. Both are needed: the first says the
-        // producers finished, the second says they were joined rather than abandoned - and only
-        // a join is the happens-before that makes the plain flags below safe to read.
+        // Bounded completion, then a bounded join: only the join makes the plain flags below
+        // safe to read.
         EXPECT_TRUE(receiver.finishedWithin(PRODUCER_COMPLETION_TIMEOUT_MS))
             << "iteration " << iteration << ": the receive handoff did not complete within "
             << PRODUCER_COMPLETION_TIMEOUT_MS << " ms. Nothing is holding the producer lock in "
@@ -10488,14 +8621,13 @@ TEST_F(DriverAidlLocalInstanceTest, ManyRealOverlapsKeepTheHandoffReportAndTheQu
             ownedByCaller.push_back(shared->contending);
         }
 
-        // Invariant 1: exactly one sentinel, whatever the order was. close() posts one, and the
-        // slot the receive path reserves is what guarantees it is never the entry
-        // EventQueue::offer() drops - a swallowed sentinel leaves the Bus reader blocked in
-        // poll() with nothing left to wake it.
-        EXPECT_EQ(sentinels, 1u)
+        // Invariant 1: the last slot goes to exactly one producer, so the sentinel is queued
+        // exactly when the frame was not; a full queue drops it as the legacy queue does.
+        EXPECT_EQ(sentinels, shared->contendingAccepted ? 0u : 1u)
             << "iteration " << iteration << ": the queue yielded " << sentinels
-            << " NULL sentinels after an overlap; close() posts exactly one and it must not be "
-               "droppable";
+            << " NULL sentinels after an overlap whose handoff was "
+            << (shared->contendingAccepted ? "ACCEPTED" : "REFUSED") << ". One slot was free, so "
+               "exactly one of the two producers can have landed";
 
         // Invariant 2: reported-accepted if and only if present. This is the one the missing
         // lock violates, in either direction, and it is the reason this case exists.
@@ -10514,8 +8646,8 @@ TEST_F(DriverAidlLocalInstanceTest, ManyRealOverlapsKeepTheHandoffReportAndTheQu
                "acceptance reported for a frame that is not there leaves NOBODY to release it - "
                "the ownership leak - and refusal reported for one that is there has the caller "
                "free a frame the queue still owns. An unserialized close() sentinel landing "
-               "between offerReceivedFrame()'s occupancy check and its read-back produces "
-               "exactly this disagreement";
+               "between offerReceivedFrame()'s occupancy check and its offer produces exactly "
+               "this disagreement";
 
         // Invariant 3: the partition, over every allocation, so "no owner" and "two owners" are
         // distinguished from each other and from the expected answer.
@@ -10575,11 +8707,8 @@ TEST_F(DriverAidlLocalInstanceTest, ManyRealOverlapsKeepTheHandoffReportAndTheQu
         }
     }
 
-    // The census, printed rather than inferred, so a reader of a passing run can see which
-    // interleavings it actually sampled. INFORMATIONAL: nothing below asserts these figures,
-    // and a distribution of 0 / 0 / 256 - which is what one CPU produces - is a fact about the
-    // machine rather than a defect. The three constructed arms above are what guarantee each
-    // ordering was exercised.
+    // The census, printed for the reader and not asserted: a 0 / 0 / 256 split is what one CPU
+    // produces. The constructed arms guarantee each ordering ran.
     std::cout << "[queue handoff overlap stress] " << overlapsCompleted << " of "
               << OVERLAP_STRESS_ITERATIONS << " overlaps completed: " << receiveFirstOverlaps
               << " receive-first, " << closeFirstByOccupancy << " close-first refused by "
@@ -10591,20 +8720,15 @@ TEST_F(DriverAidlLocalInstanceTest, ManyRealOverlapsKeepTheHandoffReportAndTheQu
         << "only " << overlapsCompleted << " of " << OVERLAP_STRESS_ITERATIONS
         << " overlaps completed, so the loop stopped early on a failure reported above";
 
-    // NON-VACUITY, ASSERTED ON THE CONSTRUCTED ARMS AND NOT ON THE SWEEP. Each arm reports
-    // whether it really produced the ordering it names, so all three orderings are exercised on
-    // every run, on any number of CPUs, and this case fails if an arm stops producing its
-    // ordering - which is what an arm silently degenerating into a copy of another would look
-    // like. The corresponding assertions on the sampled census were removed deliberately: they
-    // made the verdict depend on how many CPUs the runner was given.
+    // Non-vacuity is asserted on the constructed arms, which run on any CPU count, and fails if
+    // an arm stops producing its ordering.
     EXPECT_TRUE(receiveFirstConstructed)
         << "the constructed receive-first arm did not produce an accepted handoff, so the "
            "accepted-and-present arm of the invariant was not exercised deterministically";
 
-    EXPECT_TRUE(refusedBySlotConstructed)
-        << "the constructed close-first-by-occupancy arm did not produce a refusal from the "
-           "reserved-slot rule, so the refused-and-absent arm of the invariant was not exercised "
-           "deterministically and the reserved slot is unproven on this run";
+    EXPECT_TRUE(refusedByOccupancyConstructed)
+        << "the constructed close-first-by-occupancy arm did not produce a full-queue refusal, so "
+           "the refused-and-absent arm of the invariant was not exercised deterministically";
 
     EXPECT_TRUE(refusedByStateConstructed)
         << "the constructed close-first-by-state-guard arm did not produce an "
@@ -10612,36 +8736,18 @@ TEST_F(DriverAidlLocalInstanceTest, ManyRealOverlapsKeepTheHandoffReportAndTheQu
            "exercised deterministically";
 }
 
-// F5. TWO CLOSE SENTINELS IN THE RECEIVE QUEUE, WHICH IS THE STATE THAT USED TO CRASH THE BUS
-// READER THREAD. read() polls the queue once with a null check, and then - on the arm where the
-// instance is no longer OPENED - FLUSHES whatever remains. That flush used to dereference every
-// pointer it took without checking, so a second sentinel was a null dereference on the one
-// thread in the middleware whose death silently ends all CEC reception.
-//
-// HOW TWO SENTINELS ARISE, and it is ordinary rather than exotic: close() offers one on every
-// transition out of OPENED, so a stop/reopen/close sequence, or a close overlapping a second
-// close from another of the three call sites that reach Driver::close(), leaves two in the
-// queue. The first is consumed by the checked poll and the second is met by the flush.
-//
-// HOW THE FLUSH ARM IS REACHED DETERMINISTICALLY, because that is the whole difficulty of this
-// case. read() only flushes when its poll yields NULL *and* the state is no longer OPENED by the
-// time it takes the instance lock; if the state is still OPENED it loops back and polls again,
-// consuming the second sentinel through the CHECKED path instead and proving nothing. So the
-// test thread holds the instance lock as a gate:
-//   1. the instance is OPENED and the queue is empty, so the reader blocks inside poll();
-//   2. the test thread takes the instance lock, moves the instance to CLOSING, and offers TWO
-//      sentinels - the reader wakes, consumes the first, and then blocks on the lock;
-//   3. the test thread releases the lock; the reader sees CLOSING and enters the flush with the
-//      second sentinel still queued.
-// Step 2 is what a real close does, in the order a real close does it.
-//
-// WHAT A FAILURE LOOKS LIKE: without the null check this case does not report a failed
-// assertion, it CRASHES the runner - which is exactly the production consequence, and is why
-// the queue-empty assertion below is the one that proves the flush actually ran.
-TEST_F(DriverAidlLocalInstanceTest, TheReceiveFlushSurvivesASecondCloseSentinel) {
+/**
+ * @brief read()'s teardown flush drains and releases a real frame queued behind the close
+ *        sentinel, then raises.
+ * @pre Runs under every invocation, through ReceiveQueueProbe. The test thread holds the
+ *      instance lock as a gate so the reader reaches the flush with the frame still queued.
+ * @note The only case that drains a frame through the flush; every other one is taken by the
+ *       reader's first poll.
+ */
+TEST_F(DriverAidlLocalInstanceTest, TheReceiveFlushReleasesARealFrameQueuedBehindTheCloseSentinel) {
     ASSERT_NE(mock, nullptr);
 
-    // Nothing on this path may reach the legacy HAL: the receive queue and its sentinels are
+    // Nothing on this path may reach the legacy HAL: the receive queue and its sentinel are
     // entirely middleware-side on both back-ends.
     EXPECT_CALL(*mock, HdmiCecClose(_)).Times(0);
 
@@ -10678,129 +8784,26 @@ TEST_F(DriverAidlLocalInstanceTest, TheReceiveFlushSurvivesASecondCloseSentinel)
         readerFinished.notify();
     });
 
-    // The reader announces itself before it calls read(), and the margin below covers the
-    // entry guard and the descent into poll(). It is generous on purpose: the consequence of
-    // it being too short is not a wrong answer but a case that reports it did not reach the
-    // flush, which the queue-empty assertion detects and names.
+    // The reader signals before read(); the margin covers its descent into poll(), and a short
+    // margin shows up as the queue-empty assertion naming a missed flush.
     ASSERT_TRUE(readerEnteredRead.wait(PRODUCER_COMPLETION_TIMEOUT_MS))
         << "the reader thread never reached read(), so nothing below was exercised";
 
     std::this_thread::sleep_for(std::chrono::milliseconds(150));
 
-    {
-        // THE GATE. Held across the state change and both offers, exactly as close() holds it
-        // across its own state change and sentinel offer.
-        CCEC_OSAL::AutoLock gate(probe.instanceLock());
-
-        probe.markClosing();
-
-        probe.postCloseSentinel();
-        probe.postCloseSentinel();
-    }
-
-    ASSERT_TRUE(readerFinished.wait(PRODUCER_COMPLETION_TIMEOUT_MS))
-        << "the reader did not finish within " << PRODUCER_COMPLETION_TIMEOUT_MS
-        << " ms after the gate was released. It is blocked somewhere in read()";
-
-    reader.join();
-
-    EXPECT_TRUE(readerRaisedInvalidState)
-        << "read() did not raise InvalidStateException on a driver that stopped being OPENED "
-           "while the reader was blocked. That raise is how the Bus reader unwinds on close, "
-           "and both back-ends must keep it";
-
-    EXPECT_FALSE(readerReturnedCleanly)
-        << "read() returned a frame during teardown, so the flush arm was not taken and this "
-           "case exercised the poll-and-loop path instead";
-
-    EXPECT_FALSE(readerRaisedSomethingElse)
-        << "read() raised something other than InvalidStateException, so the flush handled the "
-           "second sentinel by some path other than skipping it";
-
-    // THE PROOF THAT THE FLUSH RAN AND DRAINED THE SECOND SENTINEL. Two sentinels were offered
-    // and the checked poll consumed one, so an empty queue means the flush took the other and
-    // survived it. An occupancy of one would mean the reader unwound before the flush - a
-    // harness sequencing failure rather than a production one - and is reported as such.
-    EXPECT_EQ(probe.occupancy(), 0u)
-        << "the receive queue still holds " << probe.occupancy()
-        << " entries. If it holds one, the reader raised before reaching the flush and this "
-           "case did not exercise the second sentinel at all; if it holds more, the flush "
-           "stopped early";
-}
-
-// THE PARITY ARM OF THE SAME NULL CHECK: the flush meets a REAL FRAME and must still copy and
-// release it, exactly as it did before the check existed.
-//
-// WHY THIS CASE IS NEEDED BESIDE THE SENTINEL ONE. The null check added two paths where there
-// was one, and the sentinel case only proves the new path. A check written the wrong way round -
-// skipping frames and dereferencing sentinels - would pass that case and fail this one, and
-// nothing else in the suite drains a frame through the flush: every other receive case is
-// consumed by the reader's own checked poll, which is a different line.
-//
-// The frame is placed BEHIND the sentinel and while the gate is held, because that is the only
-// arrangement in which the flush is the code that meets it. Offered before the close it would be
-// taken by the reader's poll; offered after, offerReceivedFrame() would refuse it. Behind the
-// sentinel it is what a frame the HAL delivered a moment before the close looks like, which is
-// the real sequence this arm exists for.
-TEST_F(DriverAidlLocalInstanceTest, TheReceiveFlushReleasesARealFrameQueuedBehindTheCloseSentinel) {
-    ASSERT_NE(mock, nullptr);
-
-    // Nothing on this path may reach the legacy HAL, for the same reason as the sentinel case.
-    EXPECT_CALL(*mock, HdmiCecClose(_)).Times(0);
-
-    ReceiveQueueProbe probe;
-    MonotonicLatch    readerEnteredRead;
-    MonotonicLatch    readerFinished;
-
-    bool readerRaisedInvalidState = false;
-    bool readerRaisedSomethingElse = false;
-    bool readerReturnedCleanly = false;
-
-    probe.markOpened();
-
-    ASSERT_EQ(probe.occupancy(), 0u)
-        << "the receive queue is not empty before the reader starts, so the reader would not "
-           "block inside poll() and the gate below could not be established";
-
-    std::thread reader([&]() {
-        CECFrame received;
-
-        readerEnteredRead.notify();
-
-        try {
-            probe.read(received);
-            readerReturnedCleanly = true;
-        }
-        catch (InvalidStateException &) {
-            readerRaisedInvalidState = true;
-        }
-        catch (...) {
-            readerRaisedSomethingElse = true;
-        }
-
-        readerFinished.notify();
-    });
-
-    ASSERT_TRUE(readerEnteredRead.wait(PRODUCER_COMPLETION_TIMEOUT_MS))
-        << "the reader thread never reached read(), so nothing below was exercised";
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(150));
-
-    // Ownership passes to the queue here; the flush is what releases it, which is the whole
-    // property under test. If the flush never runs, the probe's destructor drains it instead and
-    // the occupancy assertion below reports that this case did not exercise its arm.
+    // Ownership passes to the queue here and the flush releases it; if the flush never runs,
+    // the probe's destructor drains it and the occupancy check reports the miss.
     CECFrame *behindSentinel = new CECFrame(directedFrame());
 
     {
-        // THE GATE, exactly as in the sentinel case: held across the state change and both
-        // offers, so the reader is parked between its poll and its state re-check.
+        // The gate, held across the state change and both offers as close() holds it: the reader
+        // is parked between its poll and its state re-check.
         CCEC_OSAL::AutoLock gate(probe.instanceLock());
 
         probe.markClosing();
 
-        // ORDER IS THE WHOLE MECHANISM. The sentinel goes first so the reader's blocked poll
-        // returns NULL and descends into the flush; the frame goes second so the flush is what
-        // meets it.
+        // Sentinel first, so the blocked poll returns NULL and descends into the flush; the
+        // frame second, so the flush is what meets it.
         probe.postCloseSentinel();
         probe.postFrameBehindSentinel(behindSentinel);
     }
@@ -10829,26 +8832,13 @@ TEST_F(DriverAidlLocalInstanceTest, TheReceiveFlushReleasesARealFrameQueuedBehin
            "drained and this case did not exercise the non-NULL arm at all";
 }
 
-// F6. THE RECEIVE GUARD, READ THROUGH THE ATOMIC STATE, ON EVERY STATE A CALLBACK CAN ARRIVE
-// IN. A binder threadpool thread delivers frames while another thread may be inside open() or
-// close() writing the state under the instance mutex; the guard in getIncomingQueue() reads it
-// WITHOUT that mutex, deliberately, and the member is an std::atomic<int> so that the read is a
-// defined atomic load rather than a data race on a plain int.
-//
-// WHAT THIS CASE ESTABLISHES, deterministically rather than by racing: the guard's VERDICT is
-// unchanged in each of the three states - accepted while OPENED, rejected while CLOSING,
-// rejected while CLOSED - and a rejection leaves the frame with the caller so the listener's
-// catch can release it. Those verdicts are the observable behaviour the atomic must not have
-// altered, and they are what an unlocked read of a torn or cached value could silently change.
-//
-// CLOSING IS THE STATE THAT MATTERS MOST and is unreachable any other way: production sets it
-// inside close(), between the guard and the HAL transaction, so a callback that arrives during a
-// close sees exactly this. The concurrent form of the same interleaving - a real receive handoff
-// racing a real close - is already driven by the overlap cases above; this one pins the verdict
-// per state so a regression in the guard cannot hide behind a scheduler that happened not to
-// interleave. Destruction while a callback is in flight is covered by
-// DriverAidlSessionTest.ACallbackAfterAFailedCloseOrOwnerDestructionIsDroppedNotDelivered, which
-// needs a live listener and therefore a Binder-capable host; it is not duplicated here.
+/**
+ * @brief The receive guard accepts a frame while OPENED and rejects one while CLOSING or
+ *        CLOSED, leaving a rejected frame with the caller.
+ * @pre Runs under every invocation, through ReceiveQueueProbe with each state set directly.
+ * @note Pins the verdict per state deterministically; the overlap cases above drive the
+ *       concurrent form.
+ */
 TEST_F(DriverAidlLocalInstanceTest, TheReceiveGuardRejectsACallbackDuringAndAfterClose) {
     ASSERT_NE(mock, nullptr);
 
@@ -10857,8 +8847,8 @@ TEST_F(DriverAidlLocalInstanceTest, TheReceiveGuardRejectsACallbackDuringAndAfte
 
     ReceiveQueueProbe probe;
 
-    // POSITIVE CONTROL FIRST, so a case that rejected everything - including a frame it should
-    // have taken - cannot pass. OPENED must accept, and acceptance transfers ownership.
+    // Positive control first, so a guard that rejected everything cannot pass: OPENED accepts
+    // and acceptance transfers ownership.
     probe.markOpened();
 
     CECFrame *accepted = new CECFrame();
@@ -10882,7 +8872,9 @@ TEST_F(DriverAidlLocalInstanceTest, TheReceiveGuardRejectsACallbackDuringAndAfte
     ASSERT_EQ(frames, 1u) << "the queue did not hold the accepted frame";
     ASSERT_EQ(sentinels, 0u) << "a close sentinel appeared without a close";
 
-    // The two teardown states. Each is set exactly as production sets it, and each must reject.
+    /**
+     * @brief A teardown state, set as production sets it, in which the guard must reject.
+     */
     struct TeardownState {
         const char *name;
         bool        closing;
@@ -10913,35 +8905,28 @@ TEST_F(DriverAidlLocalInstanceTest, TheReceiveGuardRejectsACallbackDuringAndAfte
             << "a frame reached the queue in state " << states[i].name
             << ", so it would be delivered to the Bus reader after the driver stopped being open";
 
-        // OWNERSHIP STAYED WITH THE CALLER, which is what the listener's catch relies on to
-        // release the frame instead of leaking it. Releasing it here is that release.
+        // Ownership stayed with the caller, which the listener's catch relies on; releasing it
+        // here is that release.
         delete rejected;
     }
 }
 
-// F7. THE HAL'S LOGICAL ADDRESS IS VALIDATED ON THE RAW int32, NOT AFTER CONVERSION. What
-// getLogicalAddresses() delivers is an arbitrary 32-bit integer read out of a parcel by the
-// generated proxy; the AIDL contract says a logical address is 0x0..0xE, and nothing between
-// an out-of-process HAL and this back-end enforces it.
-//
-// WHY VALIDATING AFTER THE CONVERSION WOULD NOT WORK, which is the reason the boundary values
-// below include 256 and 271: LogicalAddress carries the value through a narrower type, so 256
-// truncates to 0 and 271 truncates to 0xF - both of which look like plausible addresses to any
-// check applied afterwards. A middleware that accepted one would then hand it to
-// Connection::matchSource(), which rewrites the initiator nibble of outbound frames, so a
-// value the HAL never reported would go out on the CEC wire.
-//
-// THE REJECTION PATH IS THE METHOD'S EXISTING NO-ADDRESS PATH: a zero return, which
-// LibCCEC::getLogicalAddress() already turns into InvalidStateException. Nothing new is
-// invented, which is also why the genuine address 0 is in the table - it is indistinguishable
-// from "no address" by design on both back-ends, and this case pins that rather than pretending
-// otherwise.
+/**
+ * @brief getLogicalAddress accepts only the contract range 0x0-0xE, validated on the raw int32
+ *        before any narrowing, and reports 0 for anything else.
+ * @pre Runs under every invocation, through SessionStateProbe with an injected service double.
+ * @note 256 and 271 are included because they truncate to 0 and 0xF through a narrower type;
+ *       0 is the existing no-address return, so the genuine address 0 is indistinguishable.
+ */
 TEST_F(DriverAidlLocalInstanceTest, TheLogicalAddressReadAcceptsOnlyContractRangeValues) {
     ASSERT_NE(mock, nullptr);
 
     // The AIDL back-end never reaches the legacy address read, whatever the AIDL HAL reports.
     EXPECT_CALL(*mock, HdmiCecGetLogicalAddress(_, _)).Times(0);
 
+    /**
+     * @brief One HAL-reported value and the address getLogicalAddress must return for it.
+     */
     struct AddressCase {
         const char *name;
         int32_t     reported;
@@ -10993,12 +8978,13 @@ TEST_F(DriverAidlLocalInstanceTest, TheLogicalAddressReadAcceptsOnlyContractRang
     }
 }
 
-// F7, continued. THE VALIDATION APPLIES TO ENTRY ZERO, WHICH IS THE ONLY ENTRY THIS BACK-END
-// EVER USES. AAP divergence 1 requires a multi-address result to be logged and its FIRST entry
-// operated on, with no iteration and no multi-address state - so a vector whose first entry is
-// out of contract must be rejected even when a later entry is perfectly valid. Scanning for the
-// first acceptable entry would be exactly the iteration divergence 1 forbids, and would also
-// silently substitute an address the HAL did not nominate.
+/**
+ * @brief Validation applies to entry zero of a multi-address result: a valid entry zero is
+ *        used, and an out-of-contract one is rejected even with valid entries behind it.
+ * @pre Runs under every invocation, through SessionStateProbe.
+ * @note Scanning for the first acceptable entry would substitute an address the HAL did not
+ *       nominate.
+ */
 TEST_F(DriverAidlLocalInstanceTest, TheLogicalAddressReadValidatesEntryZeroOfAMultiAddressResult) {
     ASSERT_NE(mock, nullptr);
 
@@ -11042,8 +9028,7 @@ TEST_F(DriverAidlLocalInstanceTest, TheLogicalAddressReadValidatesEntryZeroOfAMu
                "divergence 1 forbids, and it reports an address the HAL did not nominate";
     }
 
-    // A non-ok transaction still reports no address, and the vector it may have written is not
-    // read - the pre-existing arm, re-pinned here so the new validation cannot have displaced it.
+    // A non-ok transaction reports no address, and whatever vector it wrote is not read.
     {
         const ::android::sp<AddressReportingDouble> service =
             ::android::sp<AddressReportingDouble>::make();
@@ -11061,20 +9046,27 @@ TEST_F(DriverAidlLocalInstanceTest, TheLogicalAddressReadValidatesEntryZeroOfAMu
     }
 }
 
-// F8. EVERY DOCUMENTED SEND STATUS, ON BOTH DESTINATION KINDS, RE-PINNED HERE BECAUSE THE
-// TRANSLATION IS NOW A SWITCH. The mapping's difficulty is the INVERTED broadcast sense -
-// ACK_STATE_0 is an acknowledgement for a directed message and a REJECTION for a broadcast,
-// ACK_STATE_1 the mirror - so a refactor of the chain into a switch has to be shown not to have
-// swapped an arm. Each row states the destination kind, the reported status and the outcome the
-// legacy back-end produces for the same combination.
+/**
+ * @brief Every documented send status, on directed and broadcast frames, maps to the outcome
+ *        the legacy back-end produces for the same combination.
+ * @pre Runs under every invocation, through SessionStateProbe with an injected session.
+ * @note The broadcast sense is inverted: ACK_STATE_0 acknowledges a directed message and
+ *       rejects a broadcast, and ACK_STATE_1 is the mirror.
+ */
 TEST_F(DriverAidlLocalInstanceTest, EveryDocumentedTransmitStatusKeepsItsLegacyMapping) {
     ASSERT_NE(mock, nullptr);
 
     // The AIDL back-end never reaches the legacy transmit.
     EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _)).Times(0);
 
+    /**
+     * @brief The outcome write() must produce for a row.
+     */
     enum ExpectedOutcome { OUTCOME_SUCCESS, OUTCOME_NO_ACK, OUTCOME_IO_ERROR };
 
+    /**
+     * @brief One destination kind, opcode and reported status, with the expected outcome.
+     */
     struct TransmitCase {
         const char     *name;
         bool            broadcast;
@@ -11149,20 +9141,14 @@ TEST_F(DriverAidlLocalInstanceTest, EveryDocumentedTransmitStatusKeepsItsLegacyM
     }
 }
 
-// F8. AN UNDOCUMENTED SEND STATUS IS A FAILURE, NEVER A COMPLETED TRANSMIT. sendMessage()'s
-// result is an int32 the generated proxy reads out of a parcel, so a HAL - buggy, newer, or
-// hostile - can report a value that is none of the three documented enumerators. Under the old
-// if/else-if chain such a value matched no condition and fell through to "Send Completed", so
-// the caller was told the frame reached the CEC bus. That is the worst available answer: a
-// caller told the transmit completed does not retry, so a suppressed frame is indistinguishable
-// from a delivered one all the way up to the plugin.
-//
-// BOTH DESTINATION KINDS ARE DRIVEN, because the arms that decide the documented values are
-// destination-dependent and a default arm placed inside one of them would only catch half the
-// cases. The values include 3 - one past the last enumerator, the most likely accident - and a
-// negative and a maximal value, which is what a misinterpreted status code or a hostile fake
-// would produce.
-TEST_F(DriverAidlLocalInstanceTest, AnUndocumentedTransmitStatusIsTreatedAsAFailedTransmit) {
+/**
+ * @brief A send status outside the three documented values returns normally on directed and
+ *        broadcast frames, as the legacy status mapping does.
+ * @pre Runs under every invocation, through SessionStateProbe with an injected session.
+ * @note The values include 3 (one past the last enumerator), a negative and the extremes; the
+ *       broadcast frame carries REPORT_PHYSICAL_ADDRESS, so no value may reach the CTS 9-3-3 arm.
+ */
+TEST_F(DriverAidlLocalInstanceTest, AnUndocumentedTransmitStatusReturnsNormallyAsTheLegacyMappingDoes) {
     ASSERT_NE(mock, nullptr);
 
     EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _)).Times(0);
@@ -11184,11 +9170,11 @@ TEST_F(DriverAidlLocalInstanceTest, AnUndocumentedTransmitStatusIsTreatedAsAFail
 
             const CECFrame frame = (broadcast != 0) ? broadcastFrame() : directedFrame();
 
-            EXPECT_THROW({ probe.write(frame); }, IOException)
-                << "write() did not raise IOException for the undocumented send status "
-                << undocumented[i] << " on a " << ((broadcast != 0) ? "broadcast" : "directed")
-                << " frame. Anything other than a raise reports an unrecognised HAL answer to "
-                   "the caller as a completed transmit";
+            EXPECT_NO_THROW({ probe.write(frame); })
+                << "write() raised for the undocumented send status " << undocumented[i]
+                << " on a " << ((broadcast != 0) ? "broadcast" : "directed")
+                << " frame, which the legacy back-end completes normally because the status is "
+                   "in neither its failure set nor its not-acknowledged arm";
 
             EXPECT_EQ(controller->sendCalls, 1u)
                 << "the transmit was attempted " << controller->sendCalls
@@ -11198,28 +9184,1235 @@ TEST_F(DriverAidlLocalInstanceTest, AnUndocumentedTransmitStatusIsTreatedAsAFail
 }
 
 /**
- * @brief Fixture for the legacy halves of the authorized differences, on the resolved
- *        process-global legacy back-end with an open driver.
- *
- * Everything here needs an opened driver, which is what separates this fixture from the
- * invocation-independent local-instance one: a locally built object is always CLOSED, so an
- * arm that only differs once prelude and guard have both passed cannot be reached there.
- * Opening the shared driver is only possible where the legacy back-end is the resolved one,
- * so the fixture is partitioned by invocation and asserts that precondition rather than
- * assuming it.
- *
- * @see DriverAidlSessionFixture for the AIDL halves of the same properties, which need an
- *      opened AIDL session and so are partitioned the other way.
+ * @brief The allocation candidate table is the inverse of LogicalAddress::getType(), for every
+ *        DeviceType and for an unknown type.
+ * @pre Runs under every invocation; the table is a static member and touches no HAL.
+ */
+TEST_F(DriverAidlLocalInstanceTest, TheCandidateTableIsTheInverseOfTheLogicalAddressTypeTable) {
+    /** @brief One device type and the candidate addresses the table must list for it, in order. */
+    struct Expectation {
+        int deviceType;               /**< @brief A DeviceType value, or one outside the enum. */
+        std::vector<int> candidates;  /**< @brief The expected candidates; empty when none. */
+    };
+    const Expectation expectations[] = {
+        { DeviceType::TV,               { 0 } },
+        { DeviceType::RECORDING_DEVICE, { 1, 2, 9 } },
+        { DeviceType::RESERVED,         { } },
+        { DeviceType::TUNER,            { 3, 6, 7, 10 } },
+        { DeviceType::PLAYBACK_DEVICE,  { 4, 8, 11 } },
+        { DeviceType::AUDIO_SYSTEM,     { 5 } },
+        { DeviceType::PURE_CEC_SWITCH,  { } },
+        { DeviceType::VIDEO_PROCESSOR,  { } },
+        { DeviceType::VIDEO_PROCESSOR + 1, { } },
+        { -1,                           { } },
+    };
+
+    for (size_t i = 0; i < sizeof(expectations) / sizeof(expectations[0]); i++) {
+        EXPECT_EQ(AllocationProbe::logicalAddressCandidates(expectations[i].deviceType),
+                  expectations[i].candidates)
+            << "wrong candidate list for device type " << expectations[i].deviceType;
+    }
+
+    for (int address = LogicalAddress::TV; address <= LogicalAddress::SPECIFIC_USE; address++) {
+        const int type = LogicalAddress(address).getType();
+        const std::vector<int> candidates = AllocationProbe::logicalAddressCandidates(type);
+        const bool listed = std::find(candidates.begin(), candidates.end(), address) != candidates.end();
+
+        EXPECT_EQ(listed, type != DeviceType::RESERVED)
+            << "logical address " << address << " is typed " << type
+            << " by LogicalAddress::getType() but the candidate table disagrees";
+    }
+}
+
+/**
+ * @brief Enabling registers exactly one address - the first free PLAYBACK_DEVICE candidate - with
+ *        one addLogicalAddresses() call, and getLogicalAddress() reads it back through the HAL.
+ * @pre Runs under every invocation, on a local instance with an injected session over local fakes.
+ */
+TEST_F(DriverAidlLocalInstanceTest, EnablingRegistersExactlyOneAddressAndReadsItBackThroughTheHal) {
+    const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+    const ::android::sp<FakeHdmiCecController> controller = service->getController();
+    AllocationProbe probe;
+
+    probe.injectOpenSession(service, controller);
+    probe.registerAddress();
+
+    EXPECT_EQ(controller->getAllocationPolls(), std::vector<int32_t>({ 4 }))
+        << "allocation did not poll Playback Device 1 first and stop there";
+    EXPECT_EQ(controller->getAddLogicalAddressesCallCount(), 1)
+        << "enabling did not call addLogicalAddresses exactly once";
+    EXPECT_EQ(controller->getLastAddedLogicalAddresses(), std::vector<int32_t>({ 4 }))
+        << "addLogicalAddresses was not given the one-element vector { 4 }";
+    EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 4 }));
+    EXPECT_EQ(controller->getSendMessageCallCount(), 0)
+        << "an allocation poll was counted as an application frame";
+    EXPECT_EQ(controller->getTotalSendMessageCallCount(), 1)
+        << "enabling made a transmit other than its one allocation poll";
+    EXPECT_EQ(probe.heldAddresses(), std::vector<int>({ 4 }));
+    EXPECT_TRUE(probe.isValidLogicalAddress(LogicalAddress(LogicalAddress::PLAYBACK_DEVICE_1)));
+
+    const int32_t readsBefore = service->getGetLogicalAddressesCallCount();
+    EXPECT_EQ(probe.getLogicalAddress(DeviceType::RECORDING_DEVICE), 4)
+        << "getLogicalAddress did not return the registered address whatever devType it was given";
+    EXPECT_EQ(service->getGetLogicalAddressesCallCount(), readsBefore + 1)
+        << "getLogicalAddress answered without asking IHdmiCec::getLogicalAddresses";
+}
+
+/**
+ * @brief Occupied candidates are skipped in order, and a full set registers nothing without
+ *        raising, leaving getLogicalAddress() at 0.
+ * @pre Runs under every invocation, on local instances with injected sessions.
+ */
+TEST_F(DriverAidlLocalInstanceTest, OccupiedCandidatesAreSkippedAndAFullSetRegistersNothing) {
+    /** @brief One set of occupied candidates and the polls and registration it must produce. */
+    struct Scenario {
+        std::vector<int32_t> occupied;       /**< @brief Addresses the fake reports as taken. */
+        std::vector<int32_t> expectedPolls;  /**< @brief The allocation polls, in order. */
+        std::vector<int> expectedHeld;       /**< @brief The address registered; empty when none. */
+    };
+    const Scenario scenarios[] = {
+        { { 4 },        { 4, 8 },     { 8 } },
+        { { 4, 8 },     { 4, 8, 11 }, { 11 } },
+        { { 4, 8, 11 }, { 4, 8, 11 }, { } },
+    };
+
+    for (size_t i = 0; i < sizeof(scenarios) / sizeof(scenarios[0]); i++) {
+        const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+        const ::android::sp<FakeHdmiCecController> controller = service->getController();
+        AllocationProbe probe;
+
+        for (size_t j = 0; j < scenarios[i].occupied.size(); j++) {
+            controller->setLogicalAddressOccupied(scenarios[i].occupied[j], true);
+        }
+
+        probe.injectOpenSession(service, controller);
+        ASSERT_NO_THROW({ probe.registerAddress(); }) << "allocation raised in scenario " << i;
+
+        EXPECT_EQ(controller->getAllocationPolls(), scenarios[i].expectedPolls) << "scenario " << i;
+        EXPECT_EQ(probe.heldAddresses(), scenarios[i].expectedHeld) << "scenario " << i;
+        EXPECT_EQ(controller->getAddLogicalAddressesCallCount(),
+                  scenarios[i].expectedHeld.empty() ? 0 : 1) << "scenario " << i;
+        EXPECT_EQ(probe.getLogicalAddress(DeviceType::PLAYBACK_DEVICE),
+                  scenarios[i].expectedHeld.empty() ? 0 : scenarios[i].expectedHeld[0])
+            << "scenario " << i;
+    }
+}
+
+/**
+ * @brief A failed poll and a HAL refusal move allocation to the next candidate, while a non-ok
+ *        add status stops it with nothing registered.
+ * @pre Runs under every invocation, on local instances with injected sessions.
+ */
+TEST_F(DriverAidlLocalInstanceTest, AllocationTriesTheNextCandidateOnRefusalAndStopsOnTransportFailure) {
+    {
+        const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+        const ::android::sp<FakeHdmiCecController> controller = service->getController();
+        AllocationProbe probe;
+
+        controller->setAllocationPollResult(4, cechal::SendMessageStatus::BUSY);
+        probe.injectOpenSession(service, controller);
+        probe.registerAddress();
+
+        EXPECT_EQ(probe.heldAddresses(), std::vector<int>({ 8 }))
+            << "a poll that failed with BUSY was not treated as taken";
+        EXPECT_EQ(controller->getLastAddedLogicalAddresses(), std::vector<int32_t>({ 8 }));
+    }
+    {
+        const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+        const ::android::sp<DecliningControllerDouble> controller =
+            ::android::sp<DecliningControllerDouble>::make();
+        AllocationProbe probe;
+
+        probe.injectOpenSession(service, controller);
+        probe.registerAddress();
+
+        EXPECT_EQ(controller->declinedCalls, 1u) << "the refused candidate was not offered once";
+        EXPECT_EQ(probe.heldAddresses(), std::vector<int>({ 8 }))
+            << "a HAL refusal of the first candidate did not move allocation to the next one";
+        EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 8 }));
+    }
+    {
+        const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+        const ::android::sp<FakeHdmiCecController> controller = service->getController();
+        AllocationProbe probe;
+
+        controller->setAddLogicalAddressesBinderStatus(
+            ::android::binder::Status::fromStatusT(::android::DEAD_OBJECT));
+        probe.injectOpenSession(service, controller);
+        ASSERT_NO_THROW({ probe.registerAddress(); });
+
+        EXPECT_EQ(controller->getAddLogicalAddressesCallCount(), 1)
+            << "allocation kept trying after a transport failure";
+        EXPECT_TRUE(probe.heldAddresses().empty());
+        EXPECT_EQ(probe.getLogicalAddress(DeviceType::PLAYBACK_DEVICE), 0);
+    }
+    {
+        AllocationProbe probe;
+
+        probe.injectOpenSession(::android::sp<FakeHdmiCecService>::make(), nullptr);
+        ASSERT_NO_THROW({ probe.registerAddress(); });
+        EXPECT_TRUE(probe.heldAddresses().empty()) << "an address was recorded with no controller";
+    }
+}
+
+/**
+ * @brief A transport failure on every allocation poll leaves each candidate not free, so enabling
+ *        polls all three, offers none to the HAL and leaves getLogicalAddress() at 0.
+ * @pre Runs under every invocation, on a local instance with an injected session over local fakes.
+ */
+TEST_F(DriverAidlLocalInstanceTest, AllocationPollTransportFailuresRegisterNothing) {
+    const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+    const ::android::sp<FakeHdmiCecController> controller = service->getController();
+    AllocationProbe probe;
+
+    controller->setSendMessageBinderStatus(::android::binder::Status::fromStatusT(::android::DEAD_OBJECT));
+    probe.injectOpenSession(service, controller);
+    ASSERT_NO_THROW({ probe.registerAddress(); }) << "a poll transport failure escaped the allocation";
+
+    EXPECT_EQ(controller->getAllocationPolls(), std::vector<int32_t>({ 4, 8, 11 }))
+        << "a failed poll did not move allocation on to the next candidate";
+    EXPECT_EQ(controller->getTotalSendMessageCallCount(), 3);
+    EXPECT_EQ(controller->getAddLogicalAddressesCallCount(), 0)
+        << "a candidate was offered to the HAL although its poll failed in transport";
+    EXPECT_TRUE(controller->getRegisteredLogicalAddresses().empty());
+    EXPECT_TRUE(probe.heldAddresses().empty());
+    EXPECT_EQ(probe.getLogicalAddress(DeviceType::PLAYBACK_DEVICE), 0);
+}
+
+/**
+ * @brief A poll that raises a standard or a non-standard exception marks its candidate taken, so
+ *        allocation goes on to register the next one without raising.
+ * @pre Runs under every invocation, on local instances with injected sessions.
+ */
+TEST_F(DriverAidlLocalInstanceTest, AllocationTreatsANonCecPollExceptionAsTakenAndTriesTheNextCandidate) {
+    for (int nonStandard = 0; nonStandard <= 1; nonStandard++) {
+        const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+        const ::android::sp<RaisingPollControllerDouble> controller =
+            ::android::sp<RaisingPollControllerDouble>::make();
+        AllocationProbe probe;
+
+        controller->raisesNonStandard = (nonStandard != 0);
+        probe.injectOpenSession(service, controller);
+        ASSERT_NO_THROW({ probe.registerAddress(); })
+            << "a raising poll escaped allocation (non-standard: " << nonStandard << ")";
+
+        EXPECT_EQ(controller->raisedPolls, 1u) << "the poll of candidate 4 was not attempted once";
+        EXPECT_EQ(controller->getAllocationPolls(), std::vector<int32_t>({ 8 }))
+            << "allocation did not move on to Playback Device 2 after the raising poll";
+        EXPECT_EQ(controller->getAddLogicalAddressesCallCount(), 1);
+        EXPECT_EQ(controller->getLastAddedLogicalAddresses(), std::vector<int32_t>({ 8 }));
+        EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 8 }))
+            << "the HAL does not hold exactly the next candidate";
+        EXPECT_EQ(probe.heldAddresses(), std::vector<int>({ 8 }))
+            << "a candidate whose poll raised was treated as free";
+    }
+}
+
+/**
+ * @brief An add that raises std::bad_alloc before registering is contained: allocation stops,
+ *        the compensating removal names the candidate, and nothing is held on either side.
+ * @pre Runs under every invocation, on local instances with injected sessions; the removal
+ *      reports true, false and a non-ok status in turn.
+ */
+TEST_F(DriverAidlLocalInstanceTest, AnAddThatRaisesBeforeRegisteringIsContainedAndRegistersNothing) {
+    for (int removal = 0; removal < 3; removal++) {
+        const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+        const ::android::sp<RaisingAddControllerDouble> controller =
+            ::android::sp<RaisingAddControllerDouble>::make();
+        AllocationProbe probe;
+
+        if (removal == 1) {
+            controller->setRemoveLogicalAddressesResult(false);
+        } else if (removal == 2) {
+            controller->setRemoveLogicalAddressesBinderStatus(
+                ::android::binder::Status::fromStatusT(::android::DEAD_OBJECT));
+        }
+        probe.injectOpenSession(service, controller);
+        ASSERT_NO_THROW({ probe.registerAddress(); })
+            << "std::bad_alloc from the add escaped allocation (removal scenario " << removal << ")";
+
+        EXPECT_EQ(controller->raisedAdds, 1u) << "allocation kept trying after the add raised";
+        EXPECT_EQ(controller->getAllocationPolls(), std::vector<int32_t>({ 4 }));
+        EXPECT_EQ(controller->getRemoveLogicalAddressesCallCount(), 1)
+            << "no compensating removal followed the raising add (removal scenario " << removal << ")";
+        EXPECT_EQ(controller->getLastRemovedLogicalAddresses(), std::vector<int32_t>({ 4 }));
+        EXPECT_TRUE(controller->getRegisteredLogicalAddresses().empty())
+            << "the HAL was left holding a registration (removal scenario " << removal << ")";
+        EXPECT_TRUE(probe.heldAddresses().empty())
+            << "an address was recorded although the add raised (removal scenario " << removal << ")";
+
+        // The service fake reports its own controller, so it is pointed at this double's registrations.
+        service->setLogicalAddressesResult(controller->getRegisteredLogicalAddresses());
+        EXPECT_EQ(probe.getLogicalAddress(DeviceType::PLAYBACK_DEVICE), 0);
+    }
+}
+
+/**
+ * @brief An add that registers and then raises is withdrawn by the compensating removal, and a
+ *        removal that raises as well is contained too, leaving nothing recorded locally.
+ * @pre Runs under every invocation, on local instances with injected sessions.
+ */
+TEST_F(DriverAidlLocalInstanceTest, AnAddThatRaisesAfterRegisteringIsWithdrawnByACompensatingRemoval) {
+    {
+        const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+        const ::android::sp<RaisingAddControllerDouble> controller =
+            ::android::sp<RaisingAddControllerDouble>::make();
+        AllocationProbe probe;
+
+        controller->registersBeforeRaising = true;
+        probe.injectOpenSession(service, controller);
+        ASSERT_NO_THROW({ probe.registerAddress(); }) << "the raising add escaped allocation";
+
+        EXPECT_EQ(controller->raisedAdds, 1u) << "allocation kept trying after the add raised";
+        EXPECT_EQ(controller->getLastAddedLogicalAddresses(), std::vector<int32_t>({ 4 }));
+        EXPECT_EQ(controller->getRemoveLogicalAddressesCallCount(), 1);
+        EXPECT_EQ(controller->getLastRemovedLogicalAddresses(), std::vector<int32_t>({ 4 }))
+            << "the compensating removal did not name the candidate the add registered";
+        EXPECT_TRUE(controller->getRegisteredLogicalAddresses().empty())
+            << "the compensating removal left the registration in the HAL";
+        EXPECT_TRUE(probe.heldAddresses().empty());
+
+        service->setLogicalAddressesResult(controller->getRegisteredLogicalAddresses());
+        EXPECT_EQ(probe.getLogicalAddress(DeviceType::PLAYBACK_DEVICE), 0);
+    }
+    {
+        const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+        const ::android::sp<RaisingAddControllerDouble> controller =
+            ::android::sp<RaisingAddControllerDouble>::make();
+        AllocationProbe probe;
+
+        controller->registersBeforeRaising = true;
+        controller->removalRaises = true;
+        probe.injectOpenSession(service, controller);
+        ASSERT_NO_THROW({ probe.registerAddress(); }) << "a raising compensating removal escaped allocation";
+
+        EXPECT_EQ(controller->raisedAdds, 1u) << "allocation kept trying after the add raised";
+        EXPECT_EQ(controller->raisedRemovals, 1u) << "the compensating removal was not attempted once";
+        EXPECT_EQ(controller->getAllocationPolls(), std::vector<int32_t>({ 4 }));
+        EXPECT_TRUE(probe.heldAddresses().empty()) << "an address was recorded although the add raised";
+    }
+}
+
+/**
+ * @brief A compensating removal that raises, reports false or fails in transport leaves the raising
+ *        add's candidate for the next add to release first, so the HAL never holds two addresses.
+ * @pre Runs under every invocation, on local instances whose injected controllers journal calls.
+ * @note Covers a candidate the HAL kept, one it never registered (settled by the read-back), and a
+ *       successful close() discarding the record before the next registration.
+ */
+TEST_F(DriverAidlLocalInstanceTest, AnUnconfirmedCompensatingRemovalIsSettledBeforeTheNextAddressIsAdded) {
+    const char *const failures[] = { "raises", "reports false", "fails with DEAD_OBJECT" };
+
+    for (int kept = 1; kept >= 0; kept--) {
+        for (size_t failure = 0; failure < sizeof(failures) / sizeof(failures[0]); failure++) {
+            const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+            const ::android::sp<RaisingAddControllerDouble> controller =
+                ::android::sp<RaisingAddControllerDouble>::make();
+            const ::android::sp<JournalingControllerDouble> journalling =
+                ::android::sp<JournalingControllerDouble>::make(controller);
+            const std::string arm = std::string(kept ? "candidate kept by the HAL" : "candidate never registered") +
+                                    ", compensating removal " + failures[failure];
+            const std::vector<int32_t> keptRegistration = kept ? std::vector<int32_t>({ 4 }) : std::vector<int32_t>();
+            AllocationProbe probe;
+
+            controller->registersBeforeRaising = (kept != 0);
+            if (failure == 0) {
+                controller->removalRaises = true;
+            } else if (failure == 1) {
+                controller->setRemoveLogicalAddressesResult(false);
+            } else {
+                controller->setRemoveLogicalAddressesBinderStatus(
+                    ::android::binder::Status::fromStatusT(::android::DEAD_OBJECT));
+            }
+            probe.injectOpenSession(service, journalling);
+            ASSERT_NO_THROW({ probe.registerAddress(); }) << arm;
+            ASSERT_EQ(controller->raisedAdds, 1u) << arm;
+            ASSERT_EQ(controller->getRegisteredLogicalAddresses(), keptRegistration) << arm;
+            EXPECT_TRUE(probe.heldAddresses().empty()) << arm;
+
+            // The service fake reports its own controller, so it is pointed at this double's registrations.
+            service->setLogicalAddressesResult(controller->getRegisteredLogicalAddresses());
+
+            // While the kept candidate's release still fails, the next add releases nothing and adds nothing.
+            if (kept && (failure != 0)) {
+                const size_t failedMark = journalling->journal.size();
+
+                if (failure == 1) {
+                    EXPECT_THROW({ probe.addLogicalAddress(LogicalAddress(LogicalAddress::AUDIO_SYSTEM)); },
+                                 AddressNotAvailableException) << arm;
+                } else {
+                    EXPECT_THROW({ probe.addLogicalAddress(LogicalAddress(LogicalAddress::AUDIO_SYSTEM)); },
+                                 IOException) << arm;
+                }
+                EXPECT_EQ(journalling->sequenceSince(failedMark), "remove{4}")
+                    << arm << ": an address was added although the kept candidate was not released";
+                EXPECT_EQ(controller->getRegisteredLogicalAddresses(), keptRegistration) << arm;
+                EXPECT_EQ(probe.getLogicalAddress(DeviceType::PLAYBACK_DEVICE), 4) << arm;
+            }
+
+            // The HAL recovers; releasing an address it never added reports false, as its contract says.
+            controller->addRaises = false;
+            controller->removalRaises = false;
+            controller->setRemoveLogicalAddressesBinderStatus(::android::binder::Status::ok());
+            controller->setRemoveLogicalAddressesResult(kept != 0);
+            const size_t mark = journalling->journal.size();
+            const int32_t readsBefore = service->getGetLogicalAddressesCallCount();
+
+            EXPECT_TRUE(probe.addLogicalAddress(LogicalAddress(LogicalAddress::AUDIO_SYSTEM))) << arm;
+            EXPECT_EQ(journalling->sequenceSince(mark), "remove{4} add{5}")
+                << arm << ": the add did not release the raising add's candidate before adding";
+            EXPECT_EQ(service->getGetLogicalAddressesCallCount(), readsBefore + (kept ? 0 : 1))
+                << arm << ": only a declined release is settled by reading the HAL's addresses";
+            EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 5 })) << arm;
+            EXPECT_EQ(probe.heldAddresses(), std::vector<int>({ 5 })) << arm;
+            service->setLogicalAddressesResult(controller->getRegisteredLogicalAddresses());
+            EXPECT_EQ(probe.getLogicalAddress(DeviceType::PLAYBACK_DEVICE), 5) << arm;
+            EXPECT_LE(journalling->mostRegisteredAtOnce(), 1u)
+                << arm << ": the HAL held more than one address after a call in: " << journalling->sequenceSince(0);
+        }
+    }
+
+    // A successful close drops the record, because IHdmiCec::close() removed every address.
+    {
+        const ::android::sp<RaisingAddControllerDouble> controller =
+            ::android::sp<RaisingAddControllerDouble>::make();
+        const ::android::sp<FakeHdmiCecService> reopened = ::android::sp<FakeHdmiCecService>::make();
+        const ::android::sp<JournalingControllerDouble> journalling =
+            ::android::sp<JournalingControllerDouble>::make(reopened->getController());
+        AllocationProbe probe;
+
+        controller->registersBeforeRaising = true;
+        controller->setRemoveLogicalAddressesResult(false);
+        probe.injectOpenSession(::android::sp<FakeHdmiCecService>::make(), controller);
+        ASSERT_NO_THROW({ probe.registerAddress(); });
+        ASSERT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 4 }));
+        ASSERT_NO_THROW({ probe.close(); });
+
+        reopened->getController()->setLogicalAddressOccupied(4, true);
+        reopened->getController()->setLogicalAddressOccupied(8, true);
+        reopened->getController()->setLogicalAddressOccupied(11, true);
+        probe.injectOpenSession(reopened, journalling);
+        ASSERT_NO_THROW({ probe.registerAddress(); });
+        ASSERT_TRUE(probe.heldAddresses().empty());
+
+        EXPECT_TRUE(probe.addLogicalAddress(LogicalAddress(LogicalAddress::AUDIO_SYSTEM)));
+        EXPECT_EQ(journalling->sequenceSince(0), "add{5}")
+            << "the new session released an address only the previous session's record named";
+        EXPECT_EQ(reopened->getController()->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 5 }));
+        EXPECT_EQ(probe.getLogicalAddress(DeviceType::PLAYBACK_DEVICE), 5);
+    }
+}
+
+/**
+ * @brief Replacing the held address removes it before adding the new one, and a release the HAL
+ *        does not confirm keeps the held address and adds nothing, so one address stays registered.
+ * @pre Runs under every invocation, on a local instance whose injected controller journals calls.
+ * @note After every arm the HAL's registrations, the HAL-backed query and the local list agree.
+ */
+TEST_F(DriverAidlLocalInstanceTest, AddingADifferentAddressReplacesTheRegisteredOne) {
+    const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+    const ::android::sp<FakeHdmiCecController> controller = service->getController();
+    const ::android::sp<JournalingControllerDouble> journalling =
+        ::android::sp<JournalingControllerDouble>::make(controller);
+    AllocationProbe probe;
+
+    // The HAL, the HAL-backed query and the local list must each hold exactly this one address.
+    const auto expectOnlyRegistered = [&](int address, const char *arm) {
+        EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ address }))
+            << arm << ": the HAL does not hold exactly logical address " << address;
+        EXPECT_EQ(probe.getLogicalAddress(DeviceType::PLAYBACK_DEVICE), address)
+            << arm << ": the HAL-backed query reports a different address";
+        EXPECT_EQ(probe.heldAddresses(), std::vector<int>({ address }))
+            << arm << ": the local list disagrees with the HAL";
+        EXPECT_TRUE(probe.isValidLogicalAddress(LogicalAddress(address))) << arm;
+    };
+
+    probe.injectOpenSession(service, journalling);
+    probe.registerAddress();
+    ASSERT_EQ(journalling->sequenceSince(0), "add{4}");
+    expectOnlyRegistered(4, "enable");
+
+    size_t mark = journalling->journal.size();
+    EXPECT_TRUE(probe.addLogicalAddress(LogicalAddress(LogicalAddress::AUDIO_SYSTEM)));
+    EXPECT_EQ(journalling->sequenceSince(mark), "remove{4} add{5}")
+        << "the held address was not removed, as a one-element vector, before the new one was added";
+    expectOnlyRegistered(5, "replacement");
+    EXPECT_FALSE(probe.isValidLogicalAddress(LogicalAddress(LogicalAddress::PLAYBACK_DEVICE_1)));
+
+    mark = journalling->journal.size();
+    EXPECT_TRUE(probe.addLogicalAddress(LogicalAddress(LogicalAddress::AUDIO_SYSTEM)));
+    EXPECT_EQ(journalling->sequenceSince(mark), "") << "re-adding the held address reached the HAL";
+
+    // A DEAD_OBJECT release the read-back shows did not happen: IOException, nothing added.
+    controller->setRemoveLogicalAddressesBinderStatus(
+        ::android::binder::Status::fromStatusT(::android::DEAD_OBJECT));
+    mark = journalling->journal.size();
+    const int32_t readsBefore = service->getGetLogicalAddressesCallCount();
+    EXPECT_THROW({ probe.addLogicalAddress(LogicalAddress(LogicalAddress::RECORDING_DEVICE_1)); },
+                 IOException);
+    EXPECT_EQ(journalling->sequenceSince(mark), "remove{5}")
+        << "an address was added although the held one was not released";
+    EXPECT_EQ(service->getGetLogicalAddressesCallCount(), readsBefore + 1)
+        << "the failed release was not checked against the HAL's own address list";
+    expectOnlyRegistered(5, "failed release");
+    EXPECT_FALSE(probe.isValidLogicalAddress(LogicalAddress(LogicalAddress::RECORDING_DEVICE_1)));
+
+    // A declined release while the HAL still lists the address: AddressNotAvailableException.
+    controller->setRemoveLogicalAddressesBinderStatus(::android::binder::Status::ok());
+    controller->setRemoveLogicalAddressesResult(false);
+    mark = journalling->journal.size();
+    EXPECT_THROW({ probe.addLogicalAddress(LogicalAddress(LogicalAddress::RECORDING_DEVICE_1)); },
+                 AddressNotAvailableException);
+    EXPECT_EQ(journalling->sequenceSince(mark), "remove{5}")
+        << "an address was added although the HAL declined to release the held one";
+    expectOnlyRegistered(5, "declined release, still listed");
+
+    // A declined release of an address the HAL no longer lists counts as released.
+    controller->clearRegisteredLogicalAddresses();
+    mark = journalling->journal.size();
+    EXPECT_TRUE(probe.addLogicalAddress(LogicalAddress(LogicalAddress::RECORDING_DEVICE_1)));
+    EXPECT_EQ(journalling->sequenceSince(mark), "remove{5} add{1}");
+    expectOnlyRegistered(1, "declined release, no longer listed");
+    EXPECT_FALSE(probe.isValidLogicalAddress(LogicalAddress(LogicalAddress::AUDIO_SYSTEM)));
+
+    // A refused add after a confirmed release leaves nothing registered anywhere.
+    controller->setRemoveLogicalAddressesResult(true);
+    controller->setAddLogicalAddressesResult(false);
+    mark = journalling->journal.size();
+    EXPECT_THROW({ probe.addLogicalAddress(LogicalAddress(LogicalAddress::TUNER_1)); },
+                 AddressNotAvailableException);
+    EXPECT_EQ(journalling->sequenceSince(mark), "remove{1} add{3}");
+    EXPECT_TRUE(controller->getRegisteredLogicalAddresses().empty());
+    EXPECT_TRUE(probe.heldAddresses().empty())
+        << "a refused replacement left the released address recorded";
+    EXPECT_EQ(probe.getLogicalAddress(DeviceType::PLAYBACK_DEVICE), 0);
+
+    EXPECT_LE(journalling->mostRegisteredAtOnce(), 1u)
+        << "the HAL held more than one address after a call in: " << journalling->sequenceSince(0);
+}
+
+/**
+ * @brief An address outside 0x0..0xE is refused with AddressNotAvailableException before any HAL
+ *        call, so the registered address survives the request.
+ * @pre Runs under every invocation, on a local instance whose injected controller journals calls.
+ */
+TEST_F(DriverAidlLocalInstanceTest, AnOutOfRangeAddressIsRefusedBeforeTheHeldOneIsReleased) {
+    const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+    const ::android::sp<FakeHdmiCecController> controller = service->getController();
+    const ::android::sp<JournalingControllerDouble> journalling =
+        ::android::sp<JournalingControllerDouble>::make(controller);
+    AllocationProbe probe;
+
+    probe.injectOpenSession(service, journalling);
+    probe.registerAddress();
+    ASSERT_EQ(journalling->sequenceSince(0), "add{4}");
+
+    const int outOfRange[] = { LogicalAddress::UNREGISTERED, 0x10, 0xFF };
+    for (size_t i = 0; i < sizeof(outOfRange) / sizeof(outOfRange[0]); i++) {
+        const size_t mark = journalling->journal.size();
+
+        EXPECT_THROW({ probe.addLogicalAddress(LogicalAddress(outOfRange[i])); },
+                     AddressNotAvailableException)
+            << "logical address " << outOfRange[i] << " was not refused";
+        EXPECT_EQ(journalling->sequenceSince(mark), "")
+            << "logical address " << outOfRange[i] << " reached the HAL before it was refused";
+    }
+
+    EXPECT_EQ(controller->getRemoveLogicalAddressesCallCount(), 0)
+        << "an invalid request released the registered address";
+    EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 4 }));
+    EXPECT_EQ(probe.heldAddresses(), std::vector<int>({ 4 }));
+    EXPECT_EQ(probe.getLogicalAddress(DeviceType::PLAYBACK_DEVICE), 4);
+    EXPECT_TRUE(probe.isValidLogicalAddress(LogicalAddress(LogicalAddress::PLAYBACK_DEVICE_1)));
+}
+
+/**
+ * @brief A standalone removal the HAL fails or declines keeps the address recorded, and the next
+ *        add releases it, or confirms it gone, before adding, so at most one address is registered.
+ * @pre Runs under every invocation, on a local instance whose injected controller journals calls.
+ * @note The removal itself still raises nothing and drops the local entry, as on legacy.
+ */
+TEST_F(DriverAidlLocalInstanceTest, AnUnconfirmedRemovalIsSettledBeforeTheNextAddressIsAdded) {
+    const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+    const ::android::sp<FakeHdmiCecController> controller = service->getController();
+    const ::android::sp<JournalingControllerDouble> journalling =
+        ::android::sp<JournalingControllerDouble>::make(controller);
+    AllocationProbe probe;
+
+    probe.injectOpenSession(service, journalling);
+    probe.registerAddress();
+    ASSERT_EQ(journalling->sequenceSince(0), "add{4}");
+
+    // A transport failure: the local entry goes, the HAL keeps the address.
+    controller->setRemoveLogicalAddressesBinderStatus(
+        ::android::binder::Status::fromStatusT(::android::DEAD_OBJECT));
+    EXPECT_NO_THROW({ probe.removeLogicalAddress(LogicalAddress(LogicalAddress::PLAYBACK_DEVICE_1)); });
+    EXPECT_TRUE(probe.heldAddresses().empty());
+    EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 4 }));
+
+    // While releases still fail, the next add cannot confirm the release and adds nothing.
+    size_t mark = journalling->journal.size();
+    EXPECT_THROW({ probe.addLogicalAddress(LogicalAddress(LogicalAddress::AUDIO_SYSTEM)); },
+                 IOException);
+    EXPECT_EQ(journalling->sequenceSince(mark), "remove{4}")
+        << "the add did not release the address the failed removal left registered";
+    EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 4 }));
+    EXPECT_EQ(probe.getLogicalAddress(DeviceType::PLAYBACK_DEVICE), 4);
+    EXPECT_TRUE(probe.heldAddresses().empty());
+
+    // Once releases succeed, the recorded address is removed before the new one is added.
+    controller->setRemoveLogicalAddressesBinderStatus(::android::binder::Status::ok());
+    mark = journalling->journal.size();
+    EXPECT_TRUE(probe.addLogicalAddress(LogicalAddress(LogicalAddress::AUDIO_SYSTEM)));
+    EXPECT_EQ(journalling->sequenceSince(mark), "remove{4} add{5}");
+    EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 5 }));
+    EXPECT_EQ(probe.getLogicalAddress(DeviceType::PLAYBACK_DEVICE), 5);
+    EXPECT_EQ(probe.heldAddresses(), std::vector<int>({ 5 }));
+
+    // A declined removal that a retry then confirms leaves nothing for the next add to release.
+    controller->setRemoveLogicalAddressesResult(false);
+    EXPECT_NO_THROW({ probe.removeLogicalAddress(LogicalAddress(LogicalAddress::AUDIO_SYSTEM)); });
+    controller->setRemoveLogicalAddressesResult(true);
+    EXPECT_NO_THROW({ probe.removeLogicalAddress(LogicalAddress(LogicalAddress::AUDIO_SYSTEM)); });
+    EXPECT_TRUE(controller->getRegisteredLogicalAddresses().empty());
+    mark = journalling->journal.size();
+    EXPECT_TRUE(probe.addLogicalAddress(LogicalAddress(LogicalAddress::PLAYBACK_DEVICE_2)));
+    EXPECT_EQ(journalling->sequenceSince(mark), "add{8}")
+        << "the add released an address whose removal was already confirmed";
+    EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 8 }));
+
+    // A declined removal of an address the HAL has since dropped is confirmed by the read-back.
+    controller->setRemoveLogicalAddressesResult(false);
+    EXPECT_NO_THROW({ probe.removeLogicalAddress(LogicalAddress(LogicalAddress::PLAYBACK_DEVICE_2)); });
+    controller->clearRegisteredLogicalAddresses();
+    mark = journalling->journal.size();
+    EXPECT_TRUE(probe.addLogicalAddress(LogicalAddress(LogicalAddress::PLAYBACK_DEVICE_3)));
+    EXPECT_EQ(journalling->sequenceSince(mark), "remove{8} add{11}");
+    EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 11 }));
+    EXPECT_EQ(probe.getLogicalAddress(DeviceType::PLAYBACK_DEVICE), 11);
+    EXPECT_EQ(probe.heldAddresses(), std::vector<int>({ 11 }));
+
+    // A declined removal of an address this back-end does not hold records nothing, whether an
+    // address is held at the time or not, so the next add has nothing to release.
+    controller->setRemoveLogicalAddressesResult(false);
+    EXPECT_NO_THROW({ probe.removeLogicalAddress(LogicalAddress(LogicalAddress::TUNER_1)); });
+    controller->setRemoveLogicalAddressesResult(true);
+    EXPECT_NO_THROW({ probe.removeLogicalAddress(LogicalAddress(LogicalAddress::PLAYBACK_DEVICE_3)); });
+    controller->setRemoveLogicalAddressesResult(false);
+    EXPECT_NO_THROW({ probe.removeLogicalAddress(LogicalAddress(LogicalAddress::TUNER_1)); });
+    controller->setRemoveLogicalAddressesResult(true);
+    mark = journalling->journal.size();
+    EXPECT_TRUE(probe.addLogicalAddress(LogicalAddress(LogicalAddress::PLAYBACK_DEVICE_1)));
+    EXPECT_EQ(journalling->sequenceSince(mark), "add{4}")
+        << "a declined removal of an address this device did not hold was recorded as its own";
+    EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 4 }));
+
+    EXPECT_LE(journalling->mostRegisteredAtOnce(), 1u)
+        << "the HAL held more than one address after a call in: " << journalling->sequenceSince(0);
+}
+
+/**
+ * @brief A declined release that cannot be read back, because the query fails or no service proxy
+ *        is held, raises IOException and keeps the held address with nothing added.
+ * @pre Runs under every invocation, on local instances whose injected controllers journal calls.
+ */
+TEST_F(DriverAidlLocalInstanceTest, AReleaseThatCannotBeReadBackRaisesIoExceptionAndAddsNothing) {
+    {
+        const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+        const ::android::sp<FakeHdmiCecController> controller = service->getController();
+        const ::android::sp<JournalingControllerDouble> journalling =
+            ::android::sp<JournalingControllerDouble>::make(controller);
+        AllocationProbe probe;
+
+        probe.injectOpenSession(service, journalling);
+        probe.registerAddress();
+        ASSERT_EQ(journalling->sequenceSince(0), "add{4}");
+
+        controller->setRemoveLogicalAddressesResult(false);
+        service->setGetLogicalAddressesBinderStatus(
+            ::android::binder::Status::fromStatusT(::android::DEAD_OBJECT));
+        EXPECT_THROW({ probe.addLogicalAddress(LogicalAddress(LogicalAddress::AUDIO_SYSTEM)); },
+                     IOException) << "a failed read-back did not raise IOException";
+        EXPECT_EQ(journalling->sequenceSince(1), "remove{4}") << "an address was added unconfirmed";
+        EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 4 }));
+        EXPECT_EQ(probe.heldAddresses(), std::vector<int>({ 4 }))
+            << "the held address was dropped although its release was never confirmed";
+
+        service->setGetLogicalAddressesBinderStatus(::android::binder::Status::ok());
+        EXPECT_EQ(probe.getLogicalAddress(DeviceType::PLAYBACK_DEVICE), 4);
+    }
+    {
+        const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+        const ::android::sp<FakeHdmiCecController> controller = service->getController();
+        const ::android::sp<JournalingControllerDouble> journalling =
+            ::android::sp<JournalingControllerDouble>::make(controller);
+        AllocationProbe probe;
+
+        probe.injectOpenSession(nullptr, journalling);
+        probe.registerAddress();
+        ASSERT_EQ(probe.heldAddresses(), std::vector<int>({ 4 }));
+
+        controller->setRemoveLogicalAddressesResult(false);
+        EXPECT_THROW({ probe.addLogicalAddress(LogicalAddress(LogicalAddress::AUDIO_SYSTEM)); },
+                     IOException) << "a release with no service proxy to confirm it did not raise";
+        EXPECT_EQ(journalling->sequenceSince(1), "remove{4}") << "an address was added unconfirmed";
+        EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 4 }));
+        EXPECT_EQ(probe.heldAddresses(), std::vector<int>({ 4 }));
+    }
+}
+
+/**
+ * @brief A standalone removal of the held address that raises or fails, before or after the HAL
+ *        drops it, keeps the address recorded, so the next add releases it before adding.
+ * @pre Runs under every invocation, on local instances whose injected controllers journal calls.
+ * @note A raise propagates as std::bad_alloc; a failure is ignored, as on legacy.
+ */
+TEST_F(DriverAidlLocalInstanceTest, ARemovalThatRaisesOrFailsIsReleasedAgainBeforeTheNextAdd) {
+    /** @brief Outcome enumeration of UnconfirmedOutcomeControllerDouble, shortened for the case. */
+    typedef UnconfirmedOutcomeControllerDouble::Outcome Outcome;
+    const Outcome outcomes[] = { Outcome::RAISES_UNAPPLIED, Outcome::RAISES_APPLIED,
+                                 Outcome::FAILS_UNAPPLIED, Outcome::FAILS_APPLIED };
+    const char *const names[] = { "raises unapplied", "raises applied", "fails unapplied", "fails applied" };
+
+    for (size_t i = 0; i < sizeof(outcomes) / sizeof(outcomes[0]); i++) {
+        const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+        const ::android::sp<UnconfirmedOutcomeControllerDouble> journalling =
+            ::android::sp<UnconfirmedOutcomeControllerDouble>::make(service->getController());
+        const bool applied = (outcomes[i] == Outcome::RAISES_APPLIED) || (outcomes[i] == Outcome::FAILS_APPLIED);
+        const bool raises = (outcomes[i] == Outcome::RAISES_UNAPPLIED) || (outcomes[i] == Outcome::RAISES_APPLIED);
+        const std::string arm = std::string("removal ") + names[i];
+        AllocationProbe probe;
+
+        probe.injectOpenSession(service, journalling);
+        probe.registerAddress();
+        ASSERT_EQ(journalling->sequenceSince(0), "add{4}") << arm;
+        expectRegistrationState(service, probe, { 4 }, { 4 }, arm + ", after enable");
+
+        journalling->nextRemove = outcomes[i];
+        if (raises) {
+            EXPECT_THROW({ probe.removeLogicalAddress(LogicalAddress(LogicalAddress::PLAYBACK_DEVICE_1)); },
+                         std::bad_alloc) << arm;
+        } else {
+            EXPECT_NO_THROW({ probe.removeLogicalAddress(LogicalAddress(LogicalAddress::PLAYBACK_DEVICE_1)); })
+                << arm;
+        }
+        EXPECT_EQ(journalling->sequenceSince(1), "remove!{4}") << arm;
+        expectRegistrationState(service, probe, applied ? std::vector<int32_t>() : std::vector<int32_t>({ 4 }),
+                                { }, arm + ", after the removal");
+
+        const size_t mark = journalling->journal.size();
+        EXPECT_TRUE(probe.addLogicalAddress(LogicalAddress(LogicalAddress::AUDIO_SYSTEM))) << arm;
+        EXPECT_EQ(journalling->sequenceSince(mark), "remove{4} add{5}")
+            << arm << ": the add did not release the address the removal left unconfirmed";
+        expectRegistrationState(service, probe, { 5 }, { 5 }, arm + ", after the next add");
+        EXPECT_LE(journalling->mostRegisteredAtOnce(), 1u)
+            << arm << ": the HAL held more than one address after a call in: " << journalling->sequenceSince(0);
+    }
+}
+
+/**
+ * @brief An enable-time add that fails in transport, whether or not the HAL applied it, records
+ *        nothing locally and keeps the candidate, so the next add releases it before adding.
+ * @pre Runs under every invocation, on local instances whose injected controllers journal calls.
+ */
+TEST_F(DriverAidlLocalInstanceTest, AnEnableTimeAddThatFailsInTransportIsReleasedBeforeTheNextAdd) {
+    /** @brief Outcome enumeration of UnconfirmedOutcomeControllerDouble, shortened for the case. */
+    typedef UnconfirmedOutcomeControllerDouble::Outcome Outcome;
+    const Outcome outcomes[] = { Outcome::FAILS_UNAPPLIED, Outcome::FAILS_APPLIED };
+
+    for (size_t i = 0; i < sizeof(outcomes) / sizeof(outcomes[0]); i++) {
+        const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+        const ::android::sp<UnconfirmedOutcomeControllerDouble> journalling =
+            ::android::sp<UnconfirmedOutcomeControllerDouble>::make(service->getController());
+        const bool applied = (outcomes[i] == Outcome::FAILS_APPLIED);
+        const std::string arm = applied ? "add applied, then FAILED_TRANSACTION" : "add unapplied, FAILED_TRANSACTION";
+        AllocationProbe probe;
+
+        journalling->nextAdd = outcomes[i];
+        probe.injectOpenSession(service, journalling);
+        ASSERT_NO_THROW({ probe.registerAddress(); }) << arm;
+        EXPECT_EQ(journalling->sequenceSince(0), "add!{4}") << arm << ": allocation went on after the failure";
+        expectRegistrationState(service, probe, applied ? std::vector<int32_t>({ 4 }) : std::vector<int32_t>(),
+                                { }, arm + ", after enable");
+
+        const size_t mark = journalling->journal.size();
+        EXPECT_TRUE(probe.addLogicalAddress(LogicalAddress(LogicalAddress::AUDIO_SYSTEM))) << arm;
+        EXPECT_EQ(journalling->sequenceSince(mark), "remove{4} add{5}")
+            << arm << ": the add did not release the candidate the failed enable-time add left unconfirmed";
+        expectRegistrationState(service, probe, { 5 }, { 5 }, arm + ", after the next add");
+        EXPECT_LE(journalling->mostRegisteredAtOnce(), 1u)
+            << arm << ": the HAL held more than one address after a call in: " << journalling->sequenceSince(0);
+    }
+}
+
+/**
+ * @brief An explicit add that raises or fails in transport, whether or not the HAL applied it,
+ *        keeps its address recorded, so the next add releases it before adding.
+ * @pre Runs under every invocation, on local instances whose injected controllers journal calls.
+ * @note A raise propagates as std::bad_alloc; a transport failure raises IOException. A confirmed
+ *       removal of an unheld address in between leaves the record alone.
+ */
+TEST_F(DriverAidlLocalInstanceTest, AnExplicitAddThatRaisesOrFailsIsReleasedBeforeTheNextAdd) {
+    /** @brief Outcome enumeration of UnconfirmedOutcomeControllerDouble, shortened for the case. */
+    typedef UnconfirmedOutcomeControllerDouble::Outcome Outcome;
+    const Outcome outcomes[] = { Outcome::RAISES_UNAPPLIED, Outcome::RAISES_APPLIED,
+                                 Outcome::FAILS_UNAPPLIED, Outcome::FAILS_APPLIED };
+    const char *const names[] = { "raises unapplied", "raises applied", "fails unapplied", "fails applied" };
+
+    for (size_t i = 0; i < sizeof(outcomes) / sizeof(outcomes[0]); i++) {
+        const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+        const ::android::sp<UnconfirmedOutcomeControllerDouble> journalling =
+            ::android::sp<UnconfirmedOutcomeControllerDouble>::make(service->getController());
+        const bool applied = (outcomes[i] == Outcome::RAISES_APPLIED) || (outcomes[i] == Outcome::FAILS_APPLIED);
+        const bool raises = (outcomes[i] == Outcome::RAISES_UNAPPLIED) || (outcomes[i] == Outcome::RAISES_APPLIED);
+        const std::string arm = std::string("explicit add ") + names[i];
+        AllocationProbe probe;
+
+        probe.injectOpenSession(service, journalling);
+        probe.registerAddress();
+        ASSERT_EQ(journalling->sequenceSince(0), "add{4}") << arm;
+
+        journalling->nextAdd = outcomes[i];
+        if (raises) {
+            EXPECT_THROW({ probe.addLogicalAddress(LogicalAddress(LogicalAddress::AUDIO_SYSTEM)); },
+                         std::bad_alloc) << arm;
+        } else {
+            EXPECT_THROW({ probe.addLogicalAddress(LogicalAddress(LogicalAddress::AUDIO_SYSTEM)); },
+                         IOException) << arm;
+        }
+        EXPECT_EQ(journalling->sequenceSince(1), "remove{4} add!{5}") << arm;
+        expectRegistrationState(service, probe, applied ? std::vector<int32_t>({ 5 }) : std::vector<int32_t>(),
+                                { }, arm + ", after the add");
+
+        // TUNER_1 is registered on the fake directly, as another client would, so the HAL confirms a
+        // removal this back-end does not hold; that confirmed removal leaves the pending record alone.
+        bool foreignAdded = false;
+        ASSERT_TRUE(service->getController()->addLogicalAddresses({ LogicalAddress::TUNER_1 }, &foreignAdded).isOk())
+            << arm;
+        ASSERT_TRUE(foreignAdded) << arm;
+        EXPECT_NO_THROW({ probe.removeLogicalAddress(LogicalAddress(LogicalAddress::TUNER_1)); }) << arm;
+        EXPECT_EQ(journalling->sequenceSince(3), "remove{3}") << arm;
+        expectRegistrationState(service, probe, applied ? std::vector<int32_t>({ 5 }) : std::vector<int32_t>(),
+                                { }, arm + ", after the confirmed removal of TUNER_1");
+
+        const size_t mark = journalling->journal.size();
+        EXPECT_TRUE(probe.addLogicalAddress(LogicalAddress(LogicalAddress::PLAYBACK_DEVICE_2))) << arm;
+        EXPECT_EQ(journalling->sequenceSince(mark), "remove{5} add{8}")
+            << arm << ": the add did not release the address the previous add left unconfirmed";
+        expectRegistrationState(service, probe, { 8 }, { 8 }, arm + ", after the next add");
+        EXPECT_LE(journalling->mostRegisteredAtOnce(), 1u)
+            << arm << ": the HAL held more than one address after a call in: " << journalling->sequenceSince(0);
+    }
+}
+
+/**
+ * @brief An add the HAL declines, explicit or at enable, leaves nothing recorded, so the next add
+ *        releases nothing before adding.
+ * @pre Runs under every invocation, on local instances whose injected controllers journal calls.
+ */
+TEST_F(DriverAidlLocalInstanceTest, ADeclinedAddLeavesNothingForTheNextAddToRelease) {
+    {
+        const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+        const ::android::sp<UnconfirmedOutcomeControllerDouble> journalling =
+            ::android::sp<UnconfirmedOutcomeControllerDouble>::make(service->getController());
+        AllocationProbe probe;
+
+        probe.injectOpenSession(service, journalling);
+        probe.registerAddress();
+        ASSERT_EQ(journalling->sequenceSince(0), "add{4}");
+
+        service->getController()->setAddLogicalAddressesResult(false);
+        EXPECT_THROW({ probe.addLogicalAddress(LogicalAddress(LogicalAddress::AUDIO_SYSTEM)); },
+                     AddressNotAvailableException);
+        EXPECT_EQ(journalling->sequenceSince(1), "remove{4} add{5}");
+        expectRegistrationState(service, probe, { }, { }, "explicit add declined");
+
+        service->getController()->setAddLogicalAddressesResult(true);
+        const size_t mark = journalling->journal.size();
+        EXPECT_TRUE(probe.addLogicalAddress(LogicalAddress(LogicalAddress::PLAYBACK_DEVICE_2)));
+        EXPECT_EQ(journalling->sequenceSince(mark), "add{8}")
+            << "the add released an address the HAL had declined to add";
+        expectRegistrationState(service, probe, { 8 }, { 8 }, "after the declined explicit add");
+        EXPECT_LE(journalling->mostRegisteredAtOnce(), 1u) << journalling->sequenceSince(0);
+    }
+    {
+        const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+        const ::android::sp<UnconfirmedOutcomeControllerDouble> journalling =
+            ::android::sp<UnconfirmedOutcomeControllerDouble>::make(service->getController());
+        AllocationProbe probe;
+
+        service->getController()->setAddLogicalAddressesResult(false);
+        probe.injectOpenSession(service, journalling);
+        ASSERT_NO_THROW({ probe.registerAddress(); });
+        EXPECT_EQ(journalling->sequenceSince(0), "add{4} add{8} add{11}");
+        expectRegistrationState(service, probe, { }, { }, "every enable-time add declined");
+
+        service->getController()->setAddLogicalAddressesResult(true);
+        const size_t mark = journalling->journal.size();
+        EXPECT_TRUE(probe.addLogicalAddress(LogicalAddress(LogicalAddress::AUDIO_SYSTEM)));
+        EXPECT_EQ(journalling->sequenceSince(mark), "add{5}")
+            << "the add released a candidate the HAL had declined at enable";
+        expectRegistrationState(service, probe, { 5 }, { 5 }, "after the declined enable-time adds");
+        EXPECT_LE(journalling->mostRegisteredAtOnce(), 1u) << journalling->sequenceSince(0);
+    }
+}
+
+/**
+ * @brief close() keeps the registered address locally, and the next registration replaces it
+ *        so exactly one is held.
+ * @pre Runs under every invocation, on a local instance with an injected session.
+ */
+TEST_F(DriverAidlLocalInstanceTest, CloseKeepsTheAddressAndTheNextRegistrationReplacesIt) {
+    const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+    const ::android::sp<FakeHdmiCecController> controller = service->getController();
+    AllocationProbe probe;
+
+    probe.injectOpenSession(service, controller);
+    probe.registerAddress();
+    ASSERT_NO_THROW({ probe.close(); });
+
+    EXPECT_TRUE(probe.isValidLogicalAddress(LogicalAddress(LogicalAddress::PLAYBACK_DEVICE_1)))
+        << "close() cleared the local address list";
+    EXPECT_TRUE(controller->getRegisteredLogicalAddresses().empty())
+        << "the fake kept registrations across a successful close";
+
+    controller->setLogicalAddressOccupied(4, true);
+    probe.injectOpenSession(service, controller);
+    probe.registerAddress();
+
+    EXPECT_EQ(probe.heldAddresses(), std::vector<int>({ 8 }))
+        << "the re-registration appended instead of replacing";
+    EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 8 }));
+}
+
+/**
+ * @brief A re-open after a failed close() releases the address the HAL kept before allocating, so
+ *        exactly one address is registered and every view of it agrees.
+ * @pre Runs under every invocation, on local instances whose injected controllers journal calls;
+ *      the fake's close() reports false, so it keeps its registrations.
+ * @note Covers the first candidate free or occupied at re-open, and an enable-time add left
+ *       unconfirmed before the failed close.
+ */
+TEST_F(DriverAidlLocalInstanceTest, AReopenAfterAFailedCloseReleasesTheKeptAddressBeforeAllocating) {
+    /** @brief Outcome enumeration of UnconfirmedOutcomeControllerDouble, shortened for the case. */
+    typedef UnconfirmedOutcomeControllerDouble::Outcome Outcome;
+    /** @brief One arm: how the first enable-time add ends, whether 4 is taken at re-open, the result. */
+    struct Arm {
+        const char *name;       /**< @brief Names the arm in every failure message. */
+        Outcome firstAdd;       /**< @brief How the first session's enable-time add ends. */
+        bool occupiedAtReopen;  /**< @brief Whether logical address 4 answers its poll at re-open. */
+        int expected;           /**< @brief The one address the re-open must leave registered. */
+    };
+    const Arm arms[] = {
+        { "first candidate free at re-open", Outcome::CONFIRMED, false, LogicalAddress::PLAYBACK_DEVICE_1 },
+        { "first candidate occupied at re-open", Outcome::CONFIRMED, true, LogicalAddress::PLAYBACK_DEVICE_2 },
+        { "enable-time add unconfirmed before the failed close", Outcome::FAILS_APPLIED, false,
+          LogicalAddress::PLAYBACK_DEVICE_1 },
+    };
+
+    for (size_t i = 0; i < sizeof(arms) / sizeof(arms[0]); i++) {
+        const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+        const ::android::sp<FakeHdmiCecController> controller = service->getController();
+        const ::android::sp<UnconfirmedOutcomeControllerDouble> journalling =
+            ::android::sp<UnconfirmedOutcomeControllerDouble>::make(controller);
+        const bool confirmed = (arms[i].firstAdd == Outcome::CONFIRMED);
+        const std::string arm = arms[i].name;
+        AllocationProbe probe;
+
+        journalling->nextAdd = arms[i].firstAdd;
+        probe.injectOpenSession(service, journalling);
+        probe.registerAddress();
+        ASSERT_EQ(journalling->sequenceSince(0), confirmed ? "add{4}" : "add!{4}") << arm;
+        ASSERT_EQ(probe.heldAddresses(), confirmed ? std::vector<int>({ 4 }) : std::vector<int>()) << arm;
+
+        service->setCloseResult(false);
+        EXPECT_THROW({ probe.close(); }, IOException) << arm;
+        ASSERT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 4 }))
+            << arm << ": the failed close was expected to leave the HAL holding logical address 4";
+
+        controller->setLogicalAddressOccupied(4, arms[i].occupiedAtReopen);
+        const size_t mark = journalling->journal.size();
+        probe.injectOpenSession(service, journalling);
+        ASSERT_NO_THROW({ probe.registerAddress(); }) << arm;
+
+        EXPECT_EQ(journalling->sequenceSince(mark), "remove{4} add{" + std::to_string(arms[i].expected) + "}")
+            << arm << ": the re-open did not release the kept address before adding";
+        expectRegistrationState(service, probe, { arms[i].expected }, { arms[i].expected },
+                                arm + ", after the re-open");
+        EXPECT_LE(journalling->mostRegisteredAtOnce(), 1u)
+            << arm << ": the HAL held more than one address after a call in: " << journalling->sequenceSince(0);
+    }
+}
+
+/**
+ * @brief A re-open whose release of the kept address the HAL declines follows the HAL's own list:
+ *        an address it still holds is adopted with nothing added, one it no longer holds is released.
+ * @pre Runs under every invocation, on local instances whose injected controllers journal calls;
+ *      the fake's close() reports false.
+ * @note The adopted address is then replaced by the next add like any registered one.
+ */
+TEST_F(DriverAidlLocalInstanceTest, AReopenWhoseReleaseIsDeclinedFollowsTheHalsOwnAddressList) {
+    for (int stillListed = 1; stillListed >= 0; stillListed--) {
+        const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+        const ::android::sp<FakeHdmiCecController> controller = service->getController();
+        const ::android::sp<JournalingControllerDouble> journalling =
+            ::android::sp<JournalingControllerDouble>::make(controller);
+        const std::string arm = stillListed ? "declined release, still listed" : "declined release, no longer listed";
+        AllocationProbe probe;
+
+        probe.injectOpenSession(service, journalling);
+        probe.registerAddress();
+        ASSERT_EQ(journalling->sequenceSince(0), "add{4}") << arm;
+        service->setCloseResult(false);
+        EXPECT_THROW({ probe.close(); }, IOException) << arm;
+
+        if (stillListed) {
+            controller->setRemoveLogicalAddressesResult(false);
+        } else {
+            // The HAL dropped the address on its own, so releasing it reports false, as its contract says.
+            controller->clearRegisteredLogicalAddresses();
+        }
+        const size_t mark = journalling->journal.size();
+        const int32_t readsBefore = service->getGetLogicalAddressesCallCount();
+        const int32_t pollsBefore = controller->getTotalSendMessageCallCount();
+        probe.injectOpenSession(service, journalling);
+        ASSERT_NO_THROW({ probe.registerAddress(); }) << arm;
+
+        EXPECT_EQ(service->getGetLogicalAddressesCallCount(), readsBefore + 1)
+            << arm << ": the declined release was not settled by one read of the HAL's addresses";
+        if (stillListed) {
+            EXPECT_EQ(journalling->sequenceSince(mark), "remove{4}")
+                << arm << ": an address was added although the HAL kept the previous one";
+            EXPECT_EQ(controller->getTotalSendMessageCallCount(), pollsBefore)
+                << arm << ": a candidate was polled although the HAL's address was adopted";
+            expectRegistrationState(service, probe, { 4 }, { 4 }, arm + ", after the re-open");
+
+            controller->setRemoveLogicalAddressesResult(true);
+            const size_t replaceMark = journalling->journal.size();
+            EXPECT_TRUE(probe.addLogicalAddress(LogicalAddress(LogicalAddress::AUDIO_SYSTEM))) << arm;
+            EXPECT_EQ(journalling->sequenceSince(replaceMark), "remove{4} add{5}")
+                << arm << ": the adopted address was not replaced like a registered one";
+            expectRegistrationState(service, probe, { 5 }, { 5 }, arm + ", after the next add");
+        } else {
+            EXPECT_EQ(journalling->sequenceSince(mark), "remove{4} add{4}")
+                << arm << ": an address the HAL no longer holds was not treated as released";
+            expectRegistrationState(service, probe, { 4 }, { 4 }, arm + ", after the re-open");
+        }
+        EXPECT_LE(journalling->mostRegisteredAtOnce(), 1u)
+            << arm << ": the HAL held more than one address after a call in: " << journalling->sequenceSince(0);
+    }
+}
+
+/**
+ * @brief A re-open whose release of the kept address cannot be confirmed registers nothing and keeps
+ *        the address recorded, so the next add releases it first and one address remains.
+ * @pre Runs under every invocation, on local instances whose injected controllers journal calls;
+ *      the fake's close() reports false.
+ * @note The arms: a DEAD_OBJECT release whose read-back fails, a declined release with no service
+ *       proxy to read back from, and a release that raises std::bad_alloc or an int.
+ */
+TEST_F(DriverAidlLocalInstanceTest, AReopenWhoseReleaseCannotBeConfirmedRegistersNothingUntilTheNextAdd) {
+    /** @brief Outcome enumeration of UnconfirmedOutcomeControllerDouble, shortened for the case. */
+    typedef UnconfirmedOutcomeControllerDouble::Outcome Outcome;
+    const char *const names[] = { "release fails and the read-back fails",
+                                  "release declined with no service proxy", "release raises std::bad_alloc",
+                                  "release raises a non-standard exception" };
+
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+        const ::android::sp<FakeHdmiCecController> controller = service->getController();
+        const ::android::sp<UnconfirmedOutcomeControllerDouble> journalling =
+            ::android::sp<UnconfirmedOutcomeControllerDouble>::make(controller);
+        const std::string arm = names[i];
+        AllocationProbe probe;
+
+        probe.injectOpenSession(service, journalling);
+        probe.registerAddress();
+        ASSERT_EQ(journalling->sequenceSince(0), "add{4}") << arm;
+        service->setCloseResult(false);
+        EXPECT_THROW({ probe.close(); }, IOException) << arm;
+
+        if (i == 0) {
+            controller->setRemoveLogicalAddressesBinderStatus(
+                ::android::binder::Status::fromStatusT(::android::DEAD_OBJECT));
+            service->setGetLogicalAddressesBinderStatus(
+                ::android::binder::Status::fromStatusT(::android::DEAD_OBJECT));
+        } else if (i == 1) {
+            controller->setRemoveLogicalAddressesResult(false);
+        } else {
+            journalling->nextRemove = (i == 2) ? Outcome::RAISES_UNAPPLIED : Outcome::RAISES_NON_STANDARD_UNAPPLIED;
+        }
+        const size_t mark = journalling->journal.size();
+        const int32_t pollsBefore = controller->getTotalSendMessageCallCount();
+        probe.injectOpenSession((i == 1) ? ::android::sp<FakeHdmiCecService>() : service, journalling);
+        ASSERT_NO_THROW({ probe.registerAddress(); }) << arm << ": the unconfirmed release escaped the allocation";
+
+        EXPECT_EQ(journalling->sequenceSince(mark), (i >= 2) ? "remove!{4}" : "remove{4}")
+            << arm << ": allocation went ahead although the kept address was not confirmed released";
+        EXPECT_EQ(controller->getTotalSendMessageCallCount(), pollsBefore) << arm << ": a candidate was polled";
+        EXPECT_EQ(probe.currentStatus(), probe.openedState()) << arm;
+        EXPECT_TRUE(probe.heldAddresses().empty()) << arm;
+        EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 4 })) << arm;
+
+        // The HAL recovers; the next add finds the kept address still recorded and releases it first.
+        controller->setRemoveLogicalAddressesBinderStatus(::android::binder::Status::ok());
+        controller->setRemoveLogicalAddressesResult(true);
+        service->setGetLogicalAddressesBinderStatus(::android::binder::Status::ok());
+        probe.injectOpenSession(service, journalling);
+        expectRegistrationState(service, probe, { 4 }, { }, arm + ", after the re-open");
+
+        const size_t addMark = journalling->journal.size();
+        EXPECT_TRUE(probe.addLogicalAddress(LogicalAddress(LogicalAddress::AUDIO_SYSTEM))) << arm;
+        EXPECT_EQ(journalling->sequenceSince(addMark), "remove{4} add{5}")
+            << arm << ": the next add did not release the address the re-open left recorded";
+        expectRegistrationState(service, probe, { 5 }, { 5 }, arm + ", after the next add");
+        EXPECT_LE(journalling->mostRegisteredAtOnce(), 1u)
+            << arm << ": the HAL held more than one address after a call in: " << journalling->sequenceSince(0);
+    }
+}
+
+/**
+ * @brief A re-open with nothing recorded releases nothing and reads nothing back: neither after a
+ *        successful close(), which removed every address, nor after a failed one that held none.
+ * @pre Runs under every invocation, on local instances whose injected controllers journal calls.
+ */
+TEST_F(DriverAidlLocalInstanceTest, AReopenWithNothingRecordedReleasesNothingBeforeAllocating) {
+    for (int closeFails = 0; closeFails <= 1; closeFails++) {
+        const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+        const ::android::sp<FakeHdmiCecController> controller = service->getController();
+        const ::android::sp<JournalingControllerDouble> journalling =
+            ::android::sp<JournalingControllerDouble>::make(controller);
+        const std::string arm = closeFails ? "failed close holding no address" : "successful close";
+        AllocationProbe probe;
+
+        // A failed close holds no address only when enabling registered none.
+        if (closeFails) {
+            controller->setLogicalAddressOccupied(4, true);
+            controller->setLogicalAddressOccupied(8, true);
+            controller->setLogicalAddressOccupied(11, true);
+        }
+        probe.injectOpenSession(service, journalling);
+        probe.registerAddress();
+        ASSERT_EQ(journalling->sequenceSince(0), closeFails ? "" : "add{4}") << arm;
+
+        service->setCloseResult(closeFails == 0);
+        if (closeFails) {
+            EXPECT_THROW({ probe.close(); }, IOException) << arm;
+            controller->setLogicalAddressOccupied(4, false);
+        } else {
+            ASSERT_NO_THROW({ probe.close(); }) << arm;
+        }
+        ASSERT_TRUE(controller->getRegisteredLogicalAddresses().empty()) << arm;
+
+        const size_t mark = journalling->journal.size();
+        const int32_t readsBefore = service->getGetLogicalAddressesCallCount();
+        probe.injectOpenSession(service, journalling);
+        probe.registerAddress();
+
+        EXPECT_EQ(journalling->sequenceSince(mark), "add{4}")
+            << arm << ": the re-open released an address although nothing was recorded";
+        EXPECT_EQ(controller->getRemoveLogicalAddressesCallCount(), 0) << arm;
+        EXPECT_EQ(service->getGetLogicalAddressesCallCount(), readsBefore)
+            << arm << ": the re-open read the HAL's addresses although there was nothing to settle";
+        expectRegistrationState(service, probe, { 4 }, { 4 }, arm + ", after the re-open");
+    }
+}
+
+/**
+ * @brief Whichever operator new call of the enable-time allocation raises std::bad_alloc, nothing
+ *        escapes, the session stays OPENED and the HAL holds at most the address the local list or
+ *        the release record names.
+ * @pre Runs under every invocation, on local instances with injected sessions; for each k from 1 to
+ *      the K calls an unfailed allocation makes, the k-th call raises once.
+ * @note A failure before any add reaches the outer std::exception handler; the next add proves the
+ *       release record by leaving the HAL holding only its own address.
+ */
+TEST_F(DriverAidlLocalInstanceTest, AnAllocationFailureAnywhereInEnableTimeAllocationIsContained) {
+    unsigned long unfailedAllocations = 0;
+
+    // The first pass absorbs any one-time initialization, so the second counts what every pass makes.
+    for (int pass = 0; pass < 2; pass++) {
+        const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+        AllocationProbe probe;
+
+        probe.injectOpenSession(service, service->getController());
+        {
+            ScopedAllocationFailure counting(0);
+            probe.registerAddress();
+            unfailedAllocations = counting.allocations();
+        }
+        ASSERT_EQ(probe.heldAddresses(), std::vector<int>({ 4 })) << "the unfailed allocation did not register 4";
+    }
+    ASSERT_GT(unfailedAllocations, 0u) << "the unfailed allocation made no operator new call to fail";
+
+    unsigned long containedBeforeAnyAdd = 0;
+
+    for (unsigned long k = 1; k <= unfailedAllocations; k++) {
+        const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
+        const ::android::sp<FakeHdmiCecController> controller = service->getController();
+        const std::string step = "operator new call " + std::to_string(k) + " of " +
+                                 std::to_string(unfailedAllocations) + " raising";
+        AllocationProbe probe;
+        bool escaped = false;
+        bool injected = false;
+
+        probe.injectOpenSession(service, controller);
+        {
+            ScopedAllocationFailure failure(k);
+            try {
+                probe.registerAddress();
+            } catch (...) {
+                escaped = true;
+            }
+            injected = failure.injected();
+        }
+
+        EXPECT_FALSE(escaped) << step << ": an exception escaped the allocation";
+        EXPECT_TRUE(injected) << step << ": the failure was never injected, so the pass is not deterministic";
+        EXPECT_EQ(probe.currentStatus(), probe.openedState()) << step << ": the session is no longer OPENED";
+
+        const std::vector<int32_t> registered = controller->getRegisteredLogicalAddresses();
+        const std::vector<int> held = probe.heldAddresses();
+
+        EXPECT_LE(registered.size(), 1u) << step << ": the HAL holds more than one address";
+        EXPECT_TRUE(held.empty() || (std::vector<int32_t>(held.begin(), held.end()) == registered))
+            << step << ": the local list is neither empty nor the HAL's single registration";
+        if ((controller->getAddLogicalAddressesCallCount() == 0) && registered.empty() && held.empty()) {
+            containedBeforeAnyAdd++;
+        }
+
+        // An address the HAL holds without a local entry must be the one the next add releases first.
+        const ::android::sp<JournalingControllerDouble> journalling =
+            ::android::sp<JournalingControllerDouble>::make(controller);
+        probe.injectOpenSession(service, journalling);
+        EXPECT_NO_THROW({ probe.addLogicalAddress(LogicalAddress(LogicalAddress::AUDIO_SYSTEM)); }) << step;
+        if ((registered.size() == 1) && held.empty()) {
+            EXPECT_EQ(journalling->sequenceSince(0), "remove{" + std::to_string(registered[0]) + "} add{5}")
+                << step << ": the release record did not name the address the HAL kept";
+        }
+        expectRegistrationState(service, probe, { 5 }, { 5 }, step + ", after the next add");
+        EXPECT_LE(journalling->mostRegisteredAtOnce(), 1u)
+            << step << ": the HAL held more than one address after a call in: " << journalling->sequenceSince(0);
+    }
+
+    EXPECT_GT(containedBeforeAnyAdd, 0u)
+        << "no failure was contained before the add, so the outer std::exception handler was not reached";
+    std::cout << "[DriverAidlLocalInstanceTest] each of the " << unfailedAllocations
+              << " operator new calls of an unfailed enable-time allocation was failed in turn; "
+              << containedBeforeAnyAdd << " failed before any add" << std::endl;
+}
+
+/**
+ * @brief Fixture for the legacy halves of the declared back-end differences and the legacy
+ *        baselines, on the open process-global legacy driver.
+ * @pre Invocation A (CEC_TEST_AIDL_MODE absent or unset). SetUp asserts the legacy back-end is
+ *      resolved and opens the shared driver; TearDown leaves it open.
+ * @see DriverAidlSessionFixture for the AIDL halves, which need an opened AIDL session.
  */
 class DriverAidlLegacyArmTest : public ::testing::Test {
 protected:
     /**
-     * @brief Establishes the fixture's precondition: the legacy back-end is resolved and the
-     *        shared driver is open.
-     *
-     * @note Both checks are fatal. A body that ran against a closed driver, or against the
-     *       wrong back-end, would report a failure whose cause is the harness rather than
-     *       the middleware.
+     * @brief Asserts the legacy back-end is resolved and opens the shared driver, both fatally.
      */
     void SetUp() override {
         mock = HdmiCecDriverMock::getInstance();
@@ -11233,34 +10426,24 @@ protected:
                "inside LibCCEC::init and cannot be changed from here; re-run with the invocation-A "
                "filter from the fixture manifest above";
 
-        // open() is deliberately not wrapped in catch(...). It returns silently when the driver
-        // is already opened - its InvalidStateException throw is compiled out - so the only
-        // exception it can raise is the IOException meaning the mock HAL refused to open.
-        // Swallowing that would leave the process-global driver CLOSED while this fixture went
-        // on asserting against it, and would hand every sibling suite in this binary a closed
-        // driver too. A fatal setup failure instead: the body does not run, and TearDown still
-        // gets its chance to put the shared state back.
+        // Not wrapped in catch(...): open() is silent when already opened, so its only exception
+        // is the mock HAL's refusal, which must fail setup rather than leave the driver CLOSED.
         ASSERT_NO_THROW({ Driver::getInstance().open(); })
             << "the shared driver could not be opened, so this fixture's precondition does not "
                "hold; continuing would assert against a closed driver";
     }
 
     /**
-     * @brief Verifies legacy HAL expectations and restores the shared driver's opened
-     *        baseline.
-     *
-     * @note The restore is a non-fatal expectation so a failure is reported rather than
-     *       cutting the rest of the cleanup short, and so no sibling suite in this binary
-     *       observes a closed driver because of anything done here.
+     * @brief Verifies the legacy HAL expectations and restores the shared driver's opened
+     *        baseline with a non-fatal expectation.
      */
     void TearDown() override {
         if (mock != nullptr) {
             ::testing::Mock::VerifyAndClearExpectations(mock);
         }
 
-        // Restore the baseline the global environment set up, so no sibling suite observes a
-        // closed driver because of anything done here. A non-fatal expectation is used so that
-        // a failure is reported rather than cutting the rest of the cleanup short.
+        // Restore the global environment's opened baseline; non-fatal, so a failure is reported
+        // without cutting the cleanup short.
         EXPECT_NO_THROW({ Driver::getInstance().open(); })
             << "failed to restore the shared driver to its opened baseline";
     }
@@ -11274,30 +10457,12 @@ protected:
     HdmiCecDriverMock *mock = nullptr;
 };
 
-// SC6(f), the legacy half: physical-address retrieval reads the legacy HAL API and the value
-// reaches the caller.
-//
-// This is the half of SC6(f) that is fully dischargeable. The other half is blocked on B1 and
-// is covered as the documented interim behaviour by
-// DriverAidlLocalInstanceTest.GetPhysicalAddressIsBlockedOnB1AndLeavesTheOutParameterUntouched
-// - see the B1 paragraph in the contract block above for what would close it. The two cases
-// together are the whole of SC6(f) that exists today, and the pairing is what makes the
-// partial discharge visible rather than implied.
-//
-// The value asserted is a real HDMI physical address shape - 1.0.0.0 encoded as 0x1000 - so
-// that a case which happened to leave the out-parameter untouched could not pass by accident.
 /**
- * @brief SC6(f), legacy half: physical-address retrieval reads the legacy HAL API and the
- *        value reaches the caller.
- * @pre Invocation A - the legacy back-end must be the resolved one, and the shared driver
- *      open.
- * @note This is the half of SC6(f) that is fully dischargeable; the other half is blocked on
- *       B1 and covered as documented interim behaviour by the local-instance case named in the
- *       body. The pairing is what makes the partial discharge visible rather than implied.
- * @note Evidence: a real HDMI physical-address shape is asserted, and the seeded sentinel is
- *       asserted to be gone, so a case that happened to leave the out-parameter untouched
- *       could not pass by accident - which is also what keeps this case distinguishable from
- *       the blocked AIDL behaviour.
+ * @brief The legacy back-end reads the physical address through the legacy HAL API and
+ *        delivers the HAL's value to the caller.
+ * @pre Invocation A, with the shared legacy driver open.
+ * @note The out-parameter is seeded with a sentinel that must be overwritten, so a case that
+ *       wrote nothing cannot pass.
  */
 TEST_F(DriverAidlLegacyArmTest, PhysicalAddressIsReadThroughTheLegacyHalApi) {
     ASSERT_NE(mock, nullptr);
@@ -11315,34 +10480,16 @@ TEST_F(DriverAidlLegacyArmTest, PhysicalAddressIsReadThroughTheLegacyHalApi) {
     EXPECT_EQ(physicalAddress, halPhysicalAddress)
         << "the legacy back-end did not deliver the HAL's physical address to the caller";
     EXPECT_NE(physicalAddress, sentinel)
-        << "the out-parameter still holds the sentinel, so nothing was written and this case would "
-           "also pass against the BLOCKED AIDL behaviour - which would make the two back-ends "
-           "indistinguishable here and hide the B1 gap";
+        << "the out-parameter still holds the sentinel, so the legacy back-end wrote nothing";
 }
 
-// Authorized difference 1, legacy half: frames of 16, 17 and 20 bytes are all sendable on the
-// legacy back-end.
-//
-// The three sizes straddle an authority conflict rather than sampling a range. A CECFrame
-// carries up to 128 bytes; the legacy HAL specification allows 20; the AIDL sendMessage
-// contract states 16. Each is authoritative for its own back-end and no divergence settles
-// the overlap, so 17 through 20 is a disputed band: accepted here, refused by the AIDL
-// back-end. 16 is the control that must be accepted by both, which is what confines the
-// difference to the band rather than to the guard's existence.
-//
-// The captured length is asserted per size, because "the call happened" is not the claim -
-// the claim is that the whole frame reached the HAL, un-truncated, which is the property the
-// AIDL half refuses to compromise by truncating.
 /**
- * @brief Authorized difference 1, legacy half: frames of 16, 17 and 20 bytes are all sendable
- *        on the legacy back-end.
+ * @brief Legacy half of the frame-length difference: frames of 16, 17 and 20 bytes are all sent
+ *        un-truncated on the legacy back-end.
  * @pre Invocation A, with the shared legacy driver open.
- * @note The three sizes straddle an authority conflict rather than sampling a range, and 16 is
- *       the control that both back-ends must accept - which is what confines the difference to
- *       the disputed 17-to-20 band rather than to the existence of a guard.
- * @note The length captured at the HAL is asserted per size, because the claim is that the
- *       whole frame arrives un-truncated, which is precisely the property the AIDL half
- *       refuses to compromise.
+ * @note 17 to 20 bytes is the band the AIDL back-end refuses and 16 the control both accept;
+ *       the length captured at the HAL is asserted per size.
+ * @see DriverAidlTransmitTest::FramesOverTheAidlLimitAreRefusedWithoutBeingSentOrTruncated
  */
 TEST_F(DriverAidlLegacyArmTest, FramesUpToTheLegacyMaximumAreSentOnTheLegacyBackEnd) {
     ASSERT_NE(mock, nullptr);
@@ -11374,27 +10521,13 @@ TEST_F(DriverAidlLegacyArmTest, FramesUpToTheLegacyMaximumAreSentOnTheLegacyBack
     }
 }
 
-// Authorized difference 2, legacy half: writeAsync succeeds on an open legacy driver.
-//
-// This is the arm that the AIDL back-end refuses with OperationNotSupportedException, and it
-// is the only part of writeAsync where the two differ - the prelude ordering and the state
-// guard are identical on both, asserted in DriverAidlLocalInstanceTest above. So this case is
-// the control that confines difference 2 to exactly one arm: if the prelude cases and this one
-// all hold, the divergence is one branch wide and not a diffuse one.
-//
-// No production call site reaches writeAsync on either back-end - every plugin transmit goes
-// through Connection::sendToAsync and Connection::sendAsync onto the Bus writer thread, which
-// then calls the synchronous write - so the difference is unreachable in production today. It
-// is asserted anyway, because "unreachable today" is not "impossible".
 /**
- * @brief Authorized difference 2, legacy half: writeAsync succeeds on an open legacy driver.
- * @pre Invocation A, with the shared legacy driver open - the arm needs an open driver, which
- *      is why it cannot live in the invocation-independent fixture.
- * @note This is the control that confines difference 2 to one branch: taken with the prelude
- *       and guard cases, which are identical on both back-ends, the divergence is one arm wide
- *       rather than diffuse.
- * @note Asserted even though no production call site reaches writeAsync on either back-end,
- *       because "unreachable today" is not "impossible".
+ * @brief Legacy half of the asynchronous-transmit difference: writeAsync succeeds on an open
+ *        legacy driver.
+ * @pre Invocation A, with the shared legacy driver open.
+ * @note With the prelude and guard cases, identical on both back-ends, this confines the
+ *       difference to one arm; no production call site reaches writeAsync today.
+ * @see DriverAidlTransmitTest::WriteAsyncRaisesOperationNotSupportedOnAnOpenDriver
  */
 TEST_F(DriverAidlLegacyArmTest, WriteAsyncSucceedsOnAnOpenLegacyDriver) {
     ASSERT_NE(mock, nullptr);
@@ -11414,25 +10547,11 @@ TEST_F(DriverAidlLegacyArmTest, WriteAsyncSucceedsOnAnOpenLegacyDriver) {
         << " bytes rather than the frame's 2";
 }
 
-// The legacy back-end still translates its own transmit statuses, asserted on the two arms the
-// AIDL translation mirrors, so that the mirror has something measured to be a mirror OF.
-//
-// Two arms are chosen because they are the two that the inverted AIDL sense makes easy to get
-// wrong: a directed frame reported as not acknowledged raises CECNoAckException
-// (DriverImpl.cpp:276-278), while a broadcast frame reported the same way returns normally
-// unless it is the CEC CTS 9-3-3 opcode (:279-284). The corresponding AIDL arms are asserted
-// in DriverAidlTransmitTest below, where ACK_STATE_0 and ACK_STATE_1 swap meaning between the
-// two destinations.
 /**
- * @brief The legacy back-end's own transmit-status translation, on the two arms the AIDL
- *        translation mirrors.
+ * @brief The legacy transmit-status translation raises for an unacknowledged directed frame
+ *        and not for an unacknowledged broadcast, except the CEC CTS 9-3-3 opcode.
  * @pre Invocation A, with the shared legacy driver open.
- * @note Measured so the mirror has something measured to be a mirror of. The two arms are the
- *       ones the inverted AIDL sense makes easy to get wrong: unacknowledged directed raises,
- *       unacknowledged broadcast does not, and the CEC CTS 9-3-3 opcode is the one broadcast
- *       that does.
- * @see DriverAidlTransmitTest for the corresponding AIDL arms, where the two status values
- *      swap meaning between the two destinations.
+ * @see DriverAidlTransmitTest for the mirrored AIDL arms.
  */
 TEST_F(DriverAidlLegacyArmTest, LegacyTransmitStatusTranslationDistinguishesDirectedFromBroadcast) {
     ASSERT_NE(mock, nullptr);
@@ -11450,9 +10569,8 @@ TEST_F(DriverAidlLegacyArmTest, LegacyTransmitStatusTranslationDistinguishesDire
 
     ::testing::Mock::VerifyAndClearExpectations(mock);
 
-    // The same status on a broadcast frame carrying an opcode other than
-    // REPORT_PHYSICAL_ADDRESS returns normally: a broadcast has no single follower to
-    // acknowledge it, so "not acknowledged" is not a failure.
+    // The same status on a broadcast other than REPORT_PHYSICAL_ADDRESS returns normally: a
+    // broadcast has no single follower to acknowledge it.
     EXPECT_CALL(*mock, HdmiCecTx(_, _, _, _))
         .Times(1)
         .WillOnce(DoAll(SetArgPointee<3>(HDMI_CEC_IO_SENT_BUT_NOT_ACKD),
@@ -11479,38 +10597,12 @@ TEST_F(DriverAidlLegacyArmTest, LegacyTransmitStatusTranslationDistinguishesDire
            "the CEC CTS 9-3-3 retry arm is gone";
 }
 
-// The legacy half of the receive path, which the AIDL half is measured against.
-//
-// The receive path is not one of the authorized observable differences: a frame the HAL delivers
-// must reach an application listener identically on both back-ends, byte for byte. So the claim
-// the AIDL cases make - that a received message is copied into a fresh CECFrame, offered through
-// the state-guarded accessor, drained by the Bus reader and delivered through Connection's filter
-// to a FrameListener - is only meaningful against a measured legacy baseline for the same claim.
-// This is that baseline, and it is asserted on the same helpers, with the same bounded wait, so
-// the two halves are comparable rather than merely adjacent.
-//
-// It also exercises the observation machinery itself, on any host, which is the second reason it
-// is here. The AIDL receive cases live in an invocation-B fixture and cannot execute without a
-// binder driver; if the recording listener or the listening connection those cases rely on were
-// wired wrongly, every one of them would fail on the binder-capable runner for a reason that had
-// nothing to do with the middleware. Running the identical machinery here, where the legacy HAL
-// mock can inject a frame, closes that gap.
-//
-// The frame is injected through the mock's captured Rx callback, which is the same route the
-// existing end-to-end integration cases use (ccec/test_Connection.cpp) - it is the vendor HAL's
-// own delivery mechanism, invoked on the caller's thread here rather than on a HAL thread.
 /**
- * @brief The legacy half of the receive path, end to end from HAL delivery to an application
- *        listener, which the AIDL half is measured against.
- * @pre Invocation A, with the shared legacy driver open. The frame is injected through the
- *      mock's captured Rx callback, which is the vendor HAL's own delivery mechanism.
- * @note The receive path is not an authorized difference, so the AIDL claim is only meaningful
- *       against a measured legacy baseline for the same claim. Same helpers, same bounded
- *       wait, so the two halves are comparable rather than merely adjacent.
- * @note It also exercises the observation machinery on any host. The AIDL receive cases need a
- *       binder driver; a miswired recording listener or listening connection would fail every
- *       one of them on the binder-capable runner for a reason unrelated to the middleware, and
- *       running the identical machinery here closes that gap.
+ * @brief A frame injected through the legacy HAL's Rx callback reaches an application listener
+ *        byte for byte, the baseline the AIDL receive cases are measured against.
+ * @pre Invocation A, with the shared legacy driver open.
+ * @note Uses the same helpers and bounded wait as the AIDL cases, so it also proves that
+ *       observation machinery on a host without a binder driver.
  */
 TEST_F(DriverAidlLegacyArmTest, ReceivedMessageReachesAnApplicationListenerOnTheLegacyBackEnd) {
     ASSERT_NE(mock, nullptr);
@@ -11544,60 +10636,17 @@ TEST_F(DriverAidlLegacyArmTest, ReceivedMessageReachesAnApplicationListenerOnThe
 }
 
 /**
- * @brief Shared precondition for the two invocation-B fixtures.
- *
- * Not a test suite of its own - no TEST_F names it - so it adds no case and no fixture to the
- * filter surface. It exists because both fixtures below need exactly the same non-trivial
- * precondition, and one copy of it is one thing to keep correct rather than two.
- *
- * Requires invocation B - CEC_TEST_AIDL_MODE=compatible. SetUp asserts that the resolved
- * back-end is the AIDL one and fails if it is not, with a message naming the mode. It does
- * not skip: a skipped arm is indistinguishable from a passing one in an aggregate count,
- * which is exactly the shape that would let an AIDL invocation report green having never
- * exercised the AIDL path. And it does not read CEC_TEST_AIDL_MODE to decide - that variable
- * is read by the harness only, by applyAidlModeBeforeInit() and publishFakeForMode() in
- * tests/L1Tests/test_main.cpp; these fixtures are positioned by it
- * and must not branch on it, or a mis-set variable and a mis-wired filter would become
- * indistinguishable.
- *
- * The session is cycled in SetUp, and the order matters:
- *
- *   close -> reset -> open
- *
- * The reason is the captured listener. FakeHdmiCecService::reset() clears it, which returns
- * the event triggers to their no-op behaviour, and the listener is captured only by
- * IHdmiCec::open() - which DriverAidlImpl::open() does not call when the driver is already
- * OPENED, because it returns silently in that state. Resetting without re-opening would
- * therefore leave every trigger a silent no-op, and a case asserting on a delivered frame
- * would fail for a reason that had nothing to do with the code under test. Closing first,
- * then resetting, then opening leaves each case with a clean fake, a captured listener, and
- * counters that describe only SetUp's own open.
- *
- * Closing the shared driver here is safe, and it is safe for a documented reason rather than
- * by luck. close() offers the NULL sentinel onto the incoming queue, which is exactly what
- * that sentinel is for - it wakes the blocked Bus reader - and Bus::Reader::run() catches
- * InvalidStateException and stays in its loop (Bus.cpp:156-173), so it re-arms cleanly the
- * moment open() restores the driver. The reader is left running throughout. What is not done
- * here is reaching the same state through LibCCEC::term() and a re-arming init(): that is the
- * pattern the middleware's own test notes identify as the reader-thread hazard, and the
- * neighbouring async suite records the analysis at test_DriverImpl_Async.cpp:614-636.
- *
- * Self-sufficiency. Every case gets a freshly reset fake and an open session from SetUp, and
- * TearDown resets the fake again and restores the opened baseline non-fatally, so a failing
- * case cannot leave a closed driver or a configured fake behind for the next one - here or in
- * a sibling suite.
+ * @brief Shared invocation-B precondition: the AIDL back-end is resolved and each case starts
+ *        from a freshly reset fake and an open session.
+ * @pre Invocation B (CEC_TEST_AIDL_MODE=compatible); SetUp fails rather than skips otherwise.
+ * @note SetUp cycles close -> reset -> open, because the fake's reset clears the captured
+ *       listener and only IHdmiCec::open() captures it again.
  */
 class DriverAidlSessionFixture : public ::testing::Test {
 protected:
     /**
-     * @brief Establishes the invocation-B precondition and cycles the AIDL session so each
-     *        case starts from a freshly reset fake with a captured listener.
-     *
-     * @note Every check is fatal, and none of them skips. A skipped arm is indistinguishable
-     *       from a passing one in an aggregate count, which is the shape that would let an
-     *       AIDL invocation report green having never exercised the AIDL path.
-     * @note The close-reset-open order is load-bearing - see the class block for why
-     *       resetting without re-opening would leave every event trigger a silent no-op.
+     * @brief Asserts the AIDL back-end and the fake are present, then cycles the session
+     *        close -> reset -> open, every step fatal.
      */
     void SetUp() override {
         aidlBackEnd = dynamic_cast<DriverAidlImpl *>(&Driver::getInstance());
@@ -11639,26 +10688,22 @@ protected:
     }
 
     /**
-     * @brief Wipes the fake and restores the opened baseline, so a failing case leaves neither
-     *        a configured fake nor a closed driver behind.
-     *
-     * @note The reset precedes the restore deliberately: a case that installed a failing open
-     *       or close status would otherwise make the restoration fail for a reason the case
-     *       created rather than a real one.
+     * @brief Resets the fake, then closes and re-opens the shared driver non-fatally, so the
+     *        enable-time address is re-registered against the reset fake.
      */
     void TearDown() override {
         if (fake != nullptr) {
-            // Reset before restoring the baseline: a case that installed a failing close or a
-            // failing open status would otherwise make the restoration below fail for a reason
-            // the case created rather than for a real one.
+            // Reset first, so a failing close or open status a case installed cannot make the
+            // restoration below fail.
             if (fake->getController() != nullptr) {
                 fake->getController()->reset();
             }
             fake->reset();
         }
 
-        // Restore the baseline the global environment set up, non-fatally so that a failure is
-        // reported rather than cutting the rest of the cleanup short.
+        // Non-fatal, so a failure is reported rather than cutting the cleanup short.
+        EXPECT_NO_THROW({ Driver::getInstance().close(); })
+            << "failed to close the shared driver while restoring its opened baseline";
         EXPECT_NO_THROW({ Driver::getInstance().open(); })
             << "failed to restore the shared driver to its opened baseline";
     }
@@ -11679,24 +10724,15 @@ protected:
 
 /**
  * @brief Session lifecycle, address marshalling and event delivery on the AIDL back-end.
- *
- * Requires invocation B. See DriverAidlSessionFixture for the precondition and for why the
- * session is cycled in SetUp.
+ * @pre Invocation B; see DriverAidlSessionFixture.
  */
 class DriverAidlSessionTest : public DriverAidlSessionFixture {
 };
 
-// SC6(a): a present and compatible service selects the AIDL back-end, asserted by concrete
-// type in both directions and by the selected-path log line - the same two independent routes
-// the legacy half uses, so that the pair of assertions is symmetric.
 /**
- * @brief SC6(a): a present and compatible service selects the AIDL back-end, and the selected
- *        path is named in the log.
+ * @brief A present, compatible service selects the AIDL back-end, asserted by concrete type in
+ *        both directions and by the selected-path log line.
  * @pre Invocation B.
- * @note Asserted by concrete type in both directions and by the selected-path line, which are
- *       the same two independent routes the legacy half uses, so the pair is symmetric. The log
- *       route is the one device-level validation has, since the Driver interface carries no
- *       introspection API.
  */
 TEST_F(DriverAidlSessionTest, CompatibleServiceSelectsTheAidlBackEndAndNamesItInTheLog) {
     Driver &resolved = Driver::getInstance();
@@ -11728,32 +10764,124 @@ TEST_F(DriverAidlSessionTest, CompatibleServiceSelectsTheAidlBackEndAndNamesItIn
            "Captured instead: [" << captured << "]";
 }
 
-// SC6(d), the add half: one logical address is marshalled as a one-element array.
-//
-// This is divergence 1 made observable. The AIDL calls take int[], the middleware API is
-// single-valued throughout, and the array shape must stay confined to the temporary the
-// adapter builds - no multi-address state, no iteration, no fan-out, and no middleware
-// structure or signature growing a plural form. Asserting size() == 1 and the value is what
-// distinguishes "one address was sent" from "an array happened to arrive"; a case that checked
-// only the value would pass against an implementation that padded the vector.
 /**
- * @brief SC6(d), add half: one middleware address is marshalled as a one-element array, and is
- *        then held locally.
- * @pre Invocation B, with the session open and the fake reset by SetUp.
- * @note Divergence 1 made observable. Both the size and the value are asserted: a case checking
- *       only the value would pass against an implementation that padded the vector, and the
- *       array shape must stay confined to the adapter's temporary.
- * @note The local effect is asserted too, because that is the caller-visible half - Connection
- *       consults exactly this, one address at a time.
+ * @brief Enabling the driver registers exactly one logical address, Playback Device 1, with one
+ *        addLogicalAddresses() call, and getLogicalAddress() reads it back through the HAL.
+ * @pre Invocation B; SetUp's open() is the enable under test.
+ */
+TEST_F(DriverAidlSessionTest, EnablingTheDriverRegistersExactlyOnePlaybackAddress) {
+    const ::android::sp<FakeHdmiCecController> controller = fake->getController();
+
+    EXPECT_EQ(controller->getAllocationPolls(), std::vector<int32_t>({ 4 }))
+        << "enabling did not poll Playback Device 1 and stop at the free address";
+    EXPECT_EQ(controller->getAddLogicalAddressesCallCount(), 1)
+        << "enabling did not call addLogicalAddresses exactly once";
+    EXPECT_EQ(controller->getLastAddedLogicalAddresses(), std::vector<int32_t>({ 4 }));
+    EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 4 }));
+    EXPECT_TRUE(Driver::getInstance().isValidLogicalAddress(LogicalAddress(LogicalAddress::PLAYBACK_DEVICE_1)));
+
+    const int32_t readsBefore = fake->getGetLogicalAddressesCallCount();
+    EXPECT_EQ(Driver::getInstance().getLogicalAddress(DeviceType::TUNER), 4);
+    EXPECT_EQ(fake->getGetLogicalAddressesCallCount(), readsBefore + 1)
+        << "getLogicalAddress did not read the address through IHdmiCec::getLogicalAddresses";
+}
+
+/**
+ * @brief LibCCEC::getLogicalAddress(), called as the Source plugin calls it, returns the address
+ *        registered at enable, read through the HAL.
+ * @pre Invocation B.
+ */
+TEST_F(DriverAidlSessionTest, LibCcecReturnsTheRegisteredAddressThroughTheHal) {
+    const int32_t readsBefore = fake->getGetLogicalAddressesCallCount();
+
+    EXPECT_EQ(LibCCEC::getInstance().getLogicalAddress(1), LogicalAddress::PLAYBACK_DEVICE_1);
+    EXPECT_EQ(fake->getGetLogicalAddressesCallCount(), readsBefore + 1);
+}
+
+/**
+ * @brief A re-open repeats the allocation and holds exactly one address, and an open while OPENED
+ *        allocates nothing.
+ * @pre Invocation B, with Playback Device 1 marked occupied before the re-open.
+ */
+TEST_F(DriverAidlSessionTest, ReopeningRepeatsTheRegistrationAndHoldsOneAddress) {
+    const ::android::sp<FakeHdmiCecController> controller = fake->getController();
+
+    ASSERT_NO_THROW({ Driver::getInstance().open(); });
+    EXPECT_EQ(controller->getAddLogicalAddressesCallCount(), 1)
+        << "an open() while OPENED allocated again";
+
+    controller->setLogicalAddressOccupied(4, true);
+    ASSERT_NO_THROW({ Driver::getInstance().close(); });
+    ASSERT_NO_THROW({ Driver::getInstance().open(); });
+
+    EXPECT_EQ(controller->getAddLogicalAddressesCallCount(), 2);
+    EXPECT_EQ(controller->getLastAddedLogicalAddresses(), std::vector<int32_t>({ 8 }));
+    EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 8 }));
+    EXPECT_FALSE(Driver::getInstance().isValidLogicalAddress(LogicalAddress(LogicalAddress::PLAYBACK_DEVICE_1)))
+        << "the previous session's address is still held alongside the new one";
+    EXPECT_EQ(Driver::getInstance().getLogicalAddress(DeviceType::PLAYBACK_DEVICE), 8);
+}
+
+/**
+ * @brief With every candidate occupied, enabling succeeds with no address registered, and
+ *        LibCCEC reports that through its existing InvalidStateException.
+ * @pre Invocation B, with Playback Devices 1 to 3 marked occupied before the re-open.
+ */
+TEST_F(DriverAidlSessionTest, NoFreeCandidateLeavesNoAddressAndLibCcecReportsInvalidState) {
+    const ::android::sp<FakeHdmiCecController> controller = fake->getController();
+
+    controller->setLogicalAddressOccupied(4, true);
+    controller->setLogicalAddressOccupied(8, true);
+    controller->setLogicalAddressOccupied(11, true);
+    ASSERT_NO_THROW({ Driver::getInstance().close(); });
+    ASSERT_NO_THROW({ Driver::getInstance().open(); }) << "allocation failure raised from open()";
+
+    EXPECT_EQ(controller->getAddLogicalAddressesCallCount(), 1) << "an occupied address was added";
+    EXPECT_TRUE(controller->getRegisteredLogicalAddresses().empty());
+    EXPECT_EQ(Driver::getInstance().getLogicalAddress(DeviceType::PLAYBACK_DEVICE), 0);
+    EXPECT_THROW({ LibCCEC::getInstance().getLogicalAddress(1); }, InvalidStateException);
+}
+
+/**
+ * @brief Adding a different address releases the enable-time one before marshalling the new one
+ *        as a one-element array, which is then held locally.
+ * @pre Invocation B, with Playback Device 1 registered by SetUp's open().
+ * @note Size and value are both asserted, so a padded vector cannot pass; the call order is read
+ *       from the fake's own per-call log lines.
  */
 TEST_F(DriverAidlSessionTest, AddLogicalAddressMarshalsExactlyOneElement) {
-    const LogicalAddress address(LogicalAddress::PLAYBACK_DEVICE_1);
+    const LogicalAddress address(LogicalAddress::PLAYBACK_DEVICE_2);
+    const int32_t addsBefore = fake->getController()->getAddLogicalAddressesCallCount();
+    const int32_t removalsBefore = fake->getController()->getRemoveLogicalAddressesCallCount();
+    bool added = false;
+    bool captureWasValid = false;
+    std::string logged;
 
-    EXPECT_TRUE(Driver::getInstance().addLogicalAddress(address))
+    // The fake logs each call as it runs, so the captured order is the order the HAL saw them in.
+    {
+        StdoutCapture capture;
+        captureWasValid = capture.isValid();
+        added = Driver::getInstance().addLogicalAddress(address);
+        logged = capture.read();
+    }
+
+    ASSERT_TRUE(captureWasValid) << "stdout could not be redirected, so the call order cannot be read";
+    EXPECT_TRUE(added)
         << "addLogicalAddress reported failure although the fake accepts by default";
 
-    EXPECT_EQ(fake->getController()->getAddLogicalAddressesCallCount(), 1)
+    EXPECT_EQ(fake->getController()->getAddLogicalAddressesCallCount(), addsBefore + 1)
         << "the HAL was not asked exactly once to add the address";
+    EXPECT_EQ(fake->getController()->getRemoveLogicalAddressesCallCount(), removalsBefore + 1)
+        << "the HAL was not asked exactly once to release the enable-time address";
+    EXPECT_EQ(fake->getController()->getLastRemovedLogicalAddresses(), std::vector<int32_t>({ 4 }))
+        << "the enable-time address was not released before the new one was added";
+
+    const size_t removal = logged.find("[FakeHdmiCecController::removeLogicalAddresses]");
+    const size_t addition = logged.find("[FakeHdmiCecController::addLogicalAddresses]");
+    ASSERT_NE(removal, std::string::npos) << "no release reached the HAL; captured: [" << logged << "]";
+    ASSERT_NE(addition, std::string::npos) << "no add reached the HAL; captured: [" << logged << "]";
+    EXPECT_LT(removal, addition)
+        << "the new address was added before the enable-time one was released, so the HAL held two";
 
     const std::vector<int32_t> sent = fake->getController()->getLastAddedLogicalAddresses();
     ASSERT_EQ(sent.size(), 1u)
@@ -11763,30 +10891,19 @@ TEST_F(DriverAidlSessionTest, AddLogicalAddressMarshalsExactlyOneElement) {
     EXPECT_EQ(sent[0], address.toInt())
         << "the marshalled address does not match the one requested";
 
-    // The address is now held locally, which is the caller-visible half of the operation -
-    // Connection consults exactly this, one address at a time (Connection.cpp:354).
     EXPECT_TRUE(Driver::getInstance().isValidLogicalAddress(address))
         << "the address was accepted by the HAL but not recorded locally, so isValidLogicalAddress "
            "would deny an address this device holds";
+    EXPECT_EQ(fake->getController()->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 8 }))
+        << "the HAL holds more than one address for this device";
 }
 
-// SC6(d), the remove half, plus the order-visible consequence that makes the legacy
-// disposition observable.
-//
-// The legacy shape is the specification here and it is reproduced rather than improved
-// (DriverImpl.cpp:316-327): the state guard, then the removal from the local list at :324,
-// and only then the HAL call at :325 - whose return value is discarded. So a HAL that declines
-// the removal changes nothing: the address is gone locally either way, and nothing is raised.
-// Asserting the local effect after a declined remove is what pins that order; a case that only
-// asserted "no exception escaped" would pass against an implementation that rolled the local
-// removal back.
 /**
- * @brief SC6(d), remove half: one element is marshalled, and a HAL refusal changes nothing.
- * @pre Invocation B, with an address added first so the removal has something to remove.
- * @note The legacy shape is the specification and is reproduced rather than improved: guard,
- *       local removal, then the HAL call whose return value is discarded. Asserting the local
- *       effect after a declined removal is what pins that order - a case asserting only "no
- *       exception escaped" would pass against an implementation that rolled the removal back.
+ * @brief removeLogicalAddress marshals one element, and a HAL refusal raises nothing and still
+ *        leaves the address removed locally.
+ * @pre Invocation B, with an address added first.
+ * @note Reproduces the legacy order: guard, local removal, then the HAL call whose result is
+ *       discarded.
  */
 TEST_F(DriverAidlSessionTest, RemoveLogicalAddressMarshalsOneElementAndIgnoresHalRefusal) {
     const LogicalAddress address(LogicalAddress::PLAYBACK_DEVICE_1);
@@ -11817,29 +10934,10 @@ TEST_F(DriverAidlSessionTest, RemoveLogicalAddressMarshalsOneElementAndIgnoresHa
            "reported - that ordering is the legacy behaviour being preserved";
 }
 
-// SC6(d), the remove half's successful arm - the one the branch manifest names an
-// invocation-B reacher for, and the one no case in this file reached until now.
-//
-// The declined arm above and the transport-failure arm below both establish that a failure is
-// discarded, and between them they leave `ok == true` uncovered: an implementation that always
-// took the failure path - logging, and never treating the removal as having succeeded - would
-// satisfy every one of the other cases. So this arm is asserted on its own terms, and it asserts
-// the four things that together describe a successful removal: exactly one HAL call, a
-// one-element vector carrying the right value, no exception, and the address gone locally.
-//
-// The result is set explicitly rather than left to the fake's default, so the arm the case
-// covers is stated in the case rather than inferred from the fake's initial state - which a
-// change to that state would silently move.
 /**
- * @brief The remove half's successful arm, asserted on its own terms.
- * @pre Invocation B. The HAL result is set explicitly rather than left to the fake's default, so
- *      the arm under test is stated in the case rather than inferred from the fake's initial
- *      state.
- * @note The declined and transport-failure arms both establish that a failure is discarded, and
- *       between them leave the success path uncovered: an implementation that always took the
- *       failure path would satisfy every other case. Four things together describe a success -
- *       exactly one HAL call, a one-element vector carrying the right value, no exception, and
- *       the address gone locally - and all four are asserted.
+ * @brief On a HAL-accepted removal, exactly one call carries a one-element vector with the
+ *        address, nothing is raised and the address is dropped locally.
+ * @pre Invocation B, with the HAL result set explicitly rather than left to the fake's default.
  */
 TEST_F(DriverAidlSessionTest, RemoveLogicalAddressSucceedsMarshalsOneElementAndDropsItLocally) {
     const LogicalAddress address(LogicalAddress::PLAYBACK_DEVICE_1);
@@ -11882,67 +10980,15 @@ TEST_F(DriverAidlSessionTest, RemoveLogicalAddressSucceedsMarshalsOneElementAndD
            "would admit frames for an address the HAL no longer serves";
 }
 
-// The close sentinel is offered before the transaction and its result are evaluated, proved by a
-// reader that is actually parked on the incoming queue.
-//
-// What this protects. DriverAidlImpl::close() offers the NULL sentinel onto the incoming queue
-// immediately after moving the state to CLOSING, and only then performs the HAL transaction and
-// evaluates its result - raising IOException if either says the close did not happen. That order
-// is load-bearing and it is invisible to every other assertion in this file: move the offer
-// below the `if (!txn.isOk() || !closed) throw` and, on the failure path, the sentinel is never
-// offered at all. The state still reaches CLOSED, the exception still escapes, the local address
-// list is still kept, the call counts are all still right - and a thread parked in the queue's
-// blocking poll stays parked forever, because the sentinel is the only thing that ever wakes it.
-// A middleware whose reader thread never returns cannot be torn down and cannot be
-// re-initialised.
-//
-// So a reader is actually parked, and its release is what is asserted. Three properties make the
-// proof sound rather than a race:
-//
-//   1. The session is proved live first, by a successful write, so read()'s entry guard cannot be
-//      what releases the reader.
-//
-//   2. The reader is proved parked, positively, by delivering a frame to it and observing read()
-//      return with it. After that it re-enters read() and can only be in the blocking poll - it
-//      is not "probably scheduled by now", it has demonstrably been round the loop once.
-//
-//   3. The release cannot be explained by later cleanup. The bound is waited out while the driver
-//      is still fully alive and in scope; the destructor has not run, and nothing else touches
-//      the queue. And the release is identified specifically: read() must raise
-//      InvalidStateException, which is what the sentinel plus a state that is no longer OPENED
-//      produces, and not some other exception.
-//
-// A local instance is used, not the process-global driver, because the global one is the Bus
-// reader's and parking a second consumer on the same queue would make the two compete for one
-// sentinel. A local instance under invocation B resolves its own proxy through
-// isServiceAvailable() and opens against the same fake, which accepts the session, so it has a
-// queue of its own with exactly one reader on it.
-//
-// Both failure arms are covered, because they converge on one condition and each can satisfy it
-// alone: the HAL reporting that it did not close, and the transaction itself failing.
-//
-// The driver and the reader state are heap-held, deliberately. If the sentinel really is missing
-// the reader cannot be joined, and abandoning that thread is the only alternative to hanging the
-// whole run - which is only safe if everything the thread touches outlives this scope.
 /**
- * @brief close() offers the sentinel before it evaluates the transaction, proved by a reader
- *        actually parked on the incoming queue and released on both failure arms.
- * @pre Invocation B. A local instance is used rather than the process-global driver, because
- *      parking a second consumer on the Bus reader's queue would make the two compete for one
- *      sentinel.
- * @note What it protects is invisible to every other assertion here: move the offer below the
- *       failure check and, on the failure path, the sentinel is never offered - the state still
- *       reaches CLOSED, the exception still escapes, every count is still right, and a parked
- *       reader stays parked forever.
- * @note Three properties make it a proof rather than a race: the session is proved live first,
- *       so the entry guard cannot be what releases the reader; the reader is proved parked
- *       positively, by a delivered frame it returns with before re-entering; and the release is
- *       identified specifically as InvalidStateException while the driver is still in scope, so
- *       later cleanup cannot explain it.
- * @warning The driver and the reader state are heap-held deliberately. If the sentinel really is
- *          missing the reader cannot be joined, and abandoning that thread is the only
- *          alternative to hanging the run - which is safe only if everything it touches outlives
- *          this scope.
+ * @brief A reader that re-entered read() after its first read returned a delivered frame ends
+ *        with InvalidStateException within the bound when close() then fails, on both failure arms.
+ * @pre Invocation B. A local instance with its own queue is used, so the Bus reader does not
+ *      compete for the sentinel.
+ * @note The second read may begin before or after close(); the case asserts termination, not
+ *       whether the sentinel or read()'s entry guard ended it.
+ * @warning The driver and reader state are heap-held so an unreleasable reader can be abandoned
+ *          rather than hang the run.
  */
 TEST_F(DriverAidlSessionTest, AFailedCloseStillReleasesAReaderParkedOnTheIncomingQueue) {
     /**
@@ -11952,9 +10998,9 @@ TEST_F(DriverAidlSessionTest, AFailedCloseStillReleasesAReaderParkedOnTheIncomin
      *       converge on one condition in production and each must release the reader alone.
      */
     struct Arm {
-        const char *description;  /**< Text for SCOPED_TRACE, so a failure names its arm. */
-        bool reportNotClosed;     /**< The HAL reports that the session was not closed. */
-        bool failTransaction;     /**< The close transaction itself fails. */
+        const char *description;  /**< @brief Text for SCOPED_TRACE, so a failure names its arm. */
+        bool reportNotClosed;     /**< @brief The HAL reports that the session was not closed. */
+        bool failTransaction;     /**< @brief The close transaction itself fails. */
     };
 
     const Arm arms[] = {
@@ -12011,8 +11057,8 @@ TEST_F(DriverAidlSessionTest, AFailedCloseStillReleasesAReaderParkedOnTheIncomin
                 }
                 reader->signal.notify_all();
 
-                // Second read: nothing is queued, so this parks in the blocking poll and only the
-                // close sentinel can release it.
+                // Second read: re-entered with nothing queued, and ended by the failing close
+                // through its sentinel or through read()'s entry guard.
                 localDriver->read(frame);
                 {
                     std::lock_guard<std::mutex> guard(reader->mutex);
@@ -12043,7 +11089,7 @@ TEST_F(DriverAidlSessionTest, AFailedCloseStillReleasesAReaderParkedOnTheIncomin
             << "the reader thread never reached read(), so nothing was parked and the release "
                "asserted below would be meaningless";
 
-        // Property 2: prove the reader is parked, by making it return once.
+        // Property 2: the first read completes on a delivered frame.
         const std::vector<uint8_t> wakeUpFrame{ 0x4F, REPORT_PHYSICAL_ADDRESS, 0x51, 0x00, 0x04 };
         EXPECT_TRUE(fake->fireOnMessageReceived(wakeUpFrame))
             << "the fake held no listener, so the frame that proves the reader is parked could not "
@@ -12055,7 +11101,7 @@ TEST_F(DriverAidlSessionTest, AFailedCloseStillReleasesAReaderParkedOnTheIncomin
                "reader is not parked on THIS driver's queue and the rest of this case cannot "
                "establish anything about the sentinel";
 
-        // Now the failing close. The reader is parked in the poll with an empty queue.
+        // Now the failing close, with the queue empty and the reader past its first read.
         if (arm.reportNotClosed) {
             fake->setCloseResult(false);
         }
@@ -12109,9 +11155,8 @@ TEST_F(DriverAidlSessionTest, AFailedCloseStillReleasesAReaderParkedOnTheIncomin
 
             if (!reader->waitFor(kFrameDeliveryTimeoutMs,
                                  [&reader]() { return reader->finished; })) {
-                // Still parked. Abandon the thread rather than hang: it holds shared ownership of
-                // both the driver and its own state, so both outlive this scope and nothing it
-                // touches is freed underneath it.
+                // Still parked: abandon the thread rather than hang; it shares ownership of the
+                // driver and its state, so nothing it touches is freed underneath it.
                 readerThread.detach();
                 ADD_FAILURE() << "the reader could not be released even by a clean close, so the "
                                  "thread was abandoned to keep the run from hanging. This process "
@@ -12128,20 +11173,10 @@ TEST_F(DriverAidlSessionTest, AFailedCloseStillReleasesAReaderParkedOnTheIncomin
     }
 }
 
-// SC6(d), the get half: the address is read from entry zero of the returned array, and it is
-// read from IHdmiCec rather than from the controller.
-//
-// The interface split is worth asserting and not merely commenting: getLogicalAddresses lives
-// on IHdmiCec, while only addLogicalAddresses, removeLogicalAddresses and sendMessage live on
-// IHdmiCecController. The existing technical specification attributes it to the controller,
-// which is wrong, so the service-side call counter is checked to pin where the call actually
-// goes.
 /**
- * @brief getLogicalAddress reads entry zero of the result, and asks the service interface rather
- *        than the controller.
- * @pre Invocation B, with the fake holding exactly one address.
- * @note The call count is asserted because getLogicalAddresses lives on IHdmiCec and not on
- *       IHdmiCecController: a zero here means the address came from somewhere else entirely.
+ * @brief getLogicalAddress reports entry zero of the result IHdmiCec::getLogicalAddresses()
+ *        returns, asking the service interface rather than the controller.
+ * @pre Invocation B, with the fake's address result holding exactly one address.
  */
 TEST_F(DriverAidlSessionTest, GetLogicalAddressReadsEntryZeroFromTheServiceInterface) {
     const int32_t halAddress = 8;
@@ -12159,54 +11194,19 @@ TEST_F(DriverAidlSessionTest, GetLogicalAddressReadsEntryZeroFromTheServiceInter
            "somewhere else entirely";
 }
 
-// SC6(e): more than one returned address operates on entry zero and logs the condition.
-//
-// Divergence 1 is explicit that a multi-address HAL result is logged and the first entry used,
-// with no multi-address state, no iteration and no dispatch fan-out added to the middleware.
-// Both halves are asserted - the returned value and the log naming the count and the entry
-// used - because the log is the only signal a platform integrator gets that the HAL is
-// reporting more than the middleware can represent, and a silent first-entry pick would hide
-// a real configuration problem.
-//
-// The log half matches the composed line, not a digit, and the difference is not cosmetic. A
-// search for a bare "3" - the count this fixture's vector happens to have - could not fail:
-// every CCEC_LOG line is prefixed with a YYMMDD-HH:MM:SS:usec timestamp, so a bare digit is
-// present in any non-empty capture and such an assertion holds against a log that never
-// mentions the count at all. The expected text is therefore built from the fixture's own
-// vector, its size and
-// its entry 0, and matched as one contiguous string: a digit can then only satisfy it in the
-// place the report is supposed to put it, next to the label that gives it meaning. Building it
-// from the vector rather than typing it also keeps the expectation and the stimulus from
-// drifting apart if the addresses below are ever changed.
 /**
- * @brief SC6(e): a multi-address HAL result operates on entry zero and reports the condition,
- *        naming the count and the entry used.
- * @pre Invocation B, with the fake holding more than one address.
- * @note Both halves are asserted because the log is the only signal an integrator gets that the
- *       HAL reports more than the middleware can represent, and a silent first-entry pick would
- *       hide a real configuration problem.
- * @note The expected text is composed from the stimulus vector and matched as one contiguous
- *       string. A bare digit cannot serve: every log line carries a timestamp, so a digit is
- *       present in any non-empty capture and would be satisfied without the report naming the
- *       count at all. Composing it from the vector also keeps expectation and stimulus from
- *       drifting apart.
+ * @brief A multi-address HAL result operates on entry zero and is logged with the count and the
+ *        entry used.
+ * @pre Invocation B, with the fake's address result holding more than one address.
+ * @note The expected log text is composed from the stimulus vector and matched whole, because
+ *       every log line's timestamp would satisfy a bare-digit search.
  */
 TEST_F(DriverAidlSessionTest, MultipleReturnedAddressesUseEntryZeroAndAreLogged) {
     const std::vector<int32_t> halAddresses{ 4, 8, 11 };
     fake->setLogicalAddressesResult(halAddresses);
 
-    /*
-     * Transcribed from the producer's format string, which lives inline in
-     * DriverAidlImpl::getLogicalAddress() and so cannot be imported:
-     *
-     *   "DriverAidlImpl::getLogicalAddress : the HAL reports %zu logical addresses;
-     *    operating on entry 0 [%d]\r\n"      <- one line there, wrapped here
-     *
-     * The two substitutions are halAddresses.size() and (int)halAddresses[0], which is exactly
-     * what is composed here. The terminator is deliberately not part of the expectation: the
-     * line is matched as a substring of a capture that also holds the CEC log prefix, the
-     * timestamp and anything else emitted while the capture was open.
-     */
+    /* Transcribed from DriverAidlImpl::getLogicalAddress()'s inline format string with its two
+     * substitutions; the terminator is omitted because the line is matched as a substring. */
     const std::string expectedMultiAddressReport =
         std::string("DriverAidlImpl::getLogicalAddress : the HAL reports ")
         + std::to_string(halAddresses.size()) + " logical addresses; operating on entry 0 ["
@@ -12229,10 +11229,8 @@ TEST_F(DriverAidlSessionTest, MultipleReturnedAddressesUseEntryZeroAndAreLogged)
            "first entry is the specified behaviour; picking any other entry, or iterating, would "
            "introduce multi-address behaviour the middleware has no way to represent";
 
-    // One match covers both halves the AAP requires of this report - the count the HAL returned
-    // and the entry that was used - because both appear in the one line, each next to its own
-    // label. Two loose fragment searches would report which half is missing but would also each
-    // be satisfiable by text the report did not produce.
+    // One contiguous match covers both the count and the entry used, each next to its label;
+    // loose fragment searches could each be satisfied by text the report did not produce.
     EXPECT_NE(captured.find(expectedMultiAddressReport), std::string::npos)
         << "the multi-address report is missing or no longer names the count and the entry used. "
            "Expected to find: [" << expectedMultiAddressReport
@@ -12242,20 +11240,11 @@ TEST_F(DriverAidlSessionTest, MultipleReturnedAddressesUseEntryZeroAndAreLogged)
         << captured << "]";
 }
 
-// An empty result reports 0, and 0 is the contract rather than a shortfall.
-//
-// The AIDL contract states the array is empty when no additional addresses have been set, so
-// this is a documented normal outcome and not an error. Reporting 0 is what makes it behave
-// like the legacy path: LibCCEC::getLogicalAddress turns a zero into InvalidStateException
-// (LibCCEC.cpp:164-167), which is the signal callers already handle. Any other sentinel would
-// suppress that throw and hand a caller an address it does not hold.
 /**
- * @brief An empty HAL result reports 0, which is the contract rather than a shortfall.
+ * @brief An empty HAL result reports 0, the documented "no address" outcome.
  * @pre Invocation B, with the fake holding no addresses.
- * @note The AIDL contract states the array is empty when no additional addresses have been set,
- *       so this is a documented normal outcome. Reporting 0 is what keeps the behaviour identical
- *       to the legacy path, where LibCCEC turns a zero into InvalidStateException - the signal
- *       callers already handle. Any other sentinel would suppress that throw.
+ * @note LibCCEC turns a zero into InvalidStateException, the signal callers already handle; any
+ *       other sentinel would suppress that throw.
  */
 TEST_F(DriverAidlSessionTest, EmptyAddressResultReportsZeroSoTheExistingCallerSignalSurvives) {
     fake->setLogicalAddressesResult(std::vector<int32_t>());
@@ -12269,32 +11258,15 @@ TEST_F(DriverAidlSessionTest, EmptyAddressResultReportsZeroSoTheExistingCallerSi
         << "the HAL was not asked exactly once";
 }
 
-// Authorized difference 3: addLogicalAddress's failure category is coarser on the AIDL
-// back-end than on the legacy one, and that is forced rather than chosen.
-//
-// The legacy implementation distinguishes three outcomes from one HAL status
-// (DriverImpl.cpp:339-347): LOGICALADDRESS_UNAVAILABLE becomes AddressNotAvailableException,
-// GENERAL_ERROR becomes IOException, and any other value is success. IHdmiCecController::
-// addLogicalAddresses returns one boolean, documented as false when the address is outside
-// 0x0..0xE or already added, so the distinction cannot be carried without a new HAL method -
-// which the constraints forbid. So false maps to the nearer legacy category,
-// AddressNotAvailableException, and a non-ok binder status maps to IOException.
-//
-// Both mappings are asserted here, and their caller-visible effect is measured separately
-// below rather than assumed to be equivalent.
 /**
- * @brief Authorized difference 3: a HAL refusal and a transport failure map to distinct
- *        exceptions, which is the coarser categorisation the AIDL contract forces.
- * @pre Invocation B.
- * @note The legacy implementation distinguishes three outcomes from one HAL status; the AIDL call
- *       returns one boolean, so the distinction cannot be carried without a new HAL method, which
- *       the constraints forbid. A refusal therefore maps to the nearer legacy category and a
- *       non-ok status to IOException.
- * @see The following case, which measures the caller-visible effect through the real Sink call
- *      paths rather than assuming the two categories are equivalent.
+ * @brief A HAL refusal raises AddressNotAvailableException and a transport failure raises
+ *        IOException, and neither records the address locally.
+ * @pre Invocation B. Playback Device 2 is used because Playback Device 1 is already registered.
+ * @note The AIDL call returns one boolean, so the legacy three-way status split cannot be
+ *       carried; a refusal maps to the nearer legacy category.
  */
 TEST_F(DriverAidlSessionTest, AddLogicalAddressMapsRefusalAndTransportFailureToDistinctExceptions) {
-    const LogicalAddress address(LogicalAddress::PLAYBACK_DEVICE_1);
+    const LogicalAddress address(LogicalAddress::PLAYBACK_DEVICE_2);
 
     // The HAL refuses the address: it is out of range, or already taken.
     fake->getController()->setAddLogicalAddressesResult(false);
@@ -12323,60 +11295,19 @@ TEST_F(DriverAidlSessionTest, AddLogicalAddressMapsRefusalAndTransportFailureToD
         << "the address was recorded locally although the transaction failed";
 }
 
-// The same two failures again, measured through the real caller paths rather than through the
-// Driver interface, because "the caller sees the same thing" is a claim about the plugin and
-// not about the adapter.
-//
-// The two Sink call paths differ, and the difference is structural - re-read from the plugin
-// source, which is out of scope and is not modified:
-//
-//   Path 1  LibCCEC::getInstance().addLogicalAddress(...) at
-//           entservices-hdmicecsink/plugin/HdmiCecSinkImplementation.cpp:2767, inside the try
-//           opened at :2764, which has three catches - catch(InvalidStateException &e) at
-//           :2789, catch(IOException &e) at :2793 and catch(...) at :2797. So a transport
-//           failure reaches the distinct :2793 arm, while a refused address falls through to
-//           the generic :2797 arm. Both set the same poll-thread state, but they are
-//           different arms and they log differently.
-//
-//   Path 2  the enable-time call at :3065, inside the if at :3061 and not inside any try
-//           block - the nearby IOException catches at :3040 and :3173 belong to LibCCEC::init
-//           and term, not to this call - so either exception propagates out of the enable path.
-//
-// LibCCEC::addLogicalAddress itself catches nothing and propagates (LibCCEC.cpp:133-144).
-// Both dispositions are modelled here - a try/catch shaped like path 1, and an uncaught
-// propagation shaped like path 2 - so the caller-visible effect of difference 3 is measured.
-// What this establishes is that the coarser category still lands in a specific, handled arm on
-// path 1 and still propagates on path 2, which is the property that makes the difference
-// tolerable for those callers.
-//
-// The model is guarded against drift separately, and that guard is what makes this case
-// evidence about the plugin rather than about a shape once copied out of it:
-// DriverAidlLocalInstanceTest.TheModelledSinkCallPathsStillMatchTheRealSinkSource reads the
-// plugin source and asserts the three structural facts this case depends on - two call sites,
-// the first inside a try carrying both an IOException arm and a generic arm, the second inside
-// no try. It runs on every invocation, including the ones with no binder driver, so it is
-// present on runs where this case is filtered out. If the plugin drifts, that case fails and
-// names what changed; this one keeps asserting the behaviour, which is still the middleware's
-// to guarantee whatever the caller does with it.
 /**
- * @brief The same two failures measured through the real Sink call paths, so difference 3's
- *        caller-visible effect is established rather than assumed.
- * @pre Invocation B. Both Sink dispositions are modelled: a try/catch shaped like the first call
- *      site, and an uncaught propagation shaped like the enable-time one.
- * @note "The caller sees the same thing" is a claim about the plugin, not about the adapter, so
- *       it is asserted at the plugin's shape. What this establishes is that the coarser category
- *       still lands in a specific handled arm on the first path and still propagates on the
- *       second, which is the property that makes the difference tolerable for those callers.
- * @see DriverAidlLocalInstanceTest::TheModelledSinkCallPathsStillMatchTheRealSinkSource, which
- *      reads the plugin source and asserts the three structural facts this case depends on. It
- *      runs on every invocation, so it is present on runs where this case is filtered out; if
- *      the plugin drifts, that case fails and names what changed.
+ * @brief Through LibCCEC, a refusal reaches the Sink's generic catch arm, a transport failure its
+ *        IOException arm, and a refusal propagates uncaught on the enable-time path.
+ * @pre Invocation B. Playback Device 2 is used because Playback Device 1 is already registered.
+ * @note Both Sink call paths are modelled: the three-catch try block and the enable-time call
+ *       outside any try.
+ * @see DriverAidlLocalInstanceTest::TheModelledSinkCallPathsStillMatchTheRealSinkSource
  */
 TEST_F(DriverAidlSessionTest, AddLogicalAddressFailuresReachBothRealSinkCallPathsAsExpected) {
-    const LogicalAddress address(LogicalAddress::PLAYBACK_DEVICE_1);
+    const LogicalAddress address(LogicalAddress::PLAYBACK_DEVICE_2);
 
-    // Path 1, refusal: the three-catch shape at HdmiCecSinkImplementation.cpp:2789-2799. A
-    // refusal is not an IOException, so it must fall through to the generic arm.
+    // Path 1, refusal: the Sink's three-catch shape. A refusal is not an IOException, so it must
+    // fall through to the generic arm.
     fake->getController()->setAddLogicalAddressesResult(false);
     {
         bool reachedInvalidStateArm = false;
@@ -12439,10 +11370,8 @@ TEST_F(DriverAidlSessionTest, AddLogicalAddressFailuresReachBothRealSinkCallPath
 
     fake->getController()->reset();
 
-    // Path 2: the enable-time call site sits outside any try block, so the exception must
-    // propagate out of LibCCEC rather than be absorbed anywhere below it. Modelled as the
-    // uncaught propagation it is; EXPECT_THROW here is the assertion that nothing in the
-    // middleware swallows it on the way up.
+    // Path 2: the enable-time call sits outside any try block, so the refusal must propagate
+    // out of LibCCEC unabsorbed.
     fake->getController()->setAddLogicalAddressesResult(false);
     EXPECT_THROW({ LibCCEC::getInstance().addLogicalAddress(address); },
                  AddressNotAvailableException)
@@ -12451,39 +11380,11 @@ TEST_F(DriverAidlSessionTest, AddLogicalAddressFailuresReachBothRealSinkCallPath
            "absorbed in the middleware would leave that path believing it acquired an address";
 }
 
-// The close sequence, asserted as a sequence rather than as an outcome.
-//
-// Three things are ordered inside DriverAidlImpl::close(), and each is observable:
-//
-//   1. the state becomes CLOSED **before** any failure is raised
-//      (the closing sequence in DriverAidlImpl::close(), mirroring DriverImpl.cpp:145-150), so
-//      a caller that
-//      swallows the exception still sees a consistently closed object rather than one that
-//      believes it is open with no session behind it;
-//   2. the local logical-address list is deliberately not cleared - DriverImpl::close() does
-//      not clear it either, so isValidLogicalAddress can keep reporting true across a close,
-//      and the HAL drops the addresses on its own side anyway. Clearing would be an
-//      unauthorized improvement and a fourth observable difference;
-//   3. the controller reference is released, so a subsequent operation cannot reach a stale
-//      session.
-//
-// Asserting only that IOException escaped would leave all three unproved. Note that a green
-// result here does not confirm B2 - which AIDL method corresponds to the legacy HdmiCecClose()
-// is pending owner confirmation; what is asserted is the sequence, which holds whichever
-// method the owners confirm.
 /**
- * @brief The close sequence asserted as a sequence: CLOSED is reached before the failure is
- *        raised, the local address list is kept, and the controller reference is released.
- * @pre Invocation B, with an address held locally so the second property is not vacuous.
- * @note Asserting only that IOException escaped would leave all three unproved. The kept address
- *       list is deliberate parity - the legacy close does not clear it either, and clearing would
- *       be an unauthorized improvement and a fourth observable difference.
- * @note The controller identity is asserted, not merely that some close happened: a close naming
- *       the wrong controller leaves the real session open HAL-side while the middleware believes
- *       it has gone, which is the state a subsequent open then refuses.
- * @note A green result here does not confirm B2. Which AIDL method corresponds to the legacy
- *       close is pending owner confirmation; what is asserted is the sequence, which holds
- *       whichever method the owners confirm.
+ * @brief A failed close raises IOException after reaching CLOSED, names the controller open()
+ *        returned, and keeps the local address list.
+ * @pre Invocation B, with an address held locally so the kept-list check is not vacuous.
+ * @note The kept list matches the legacy close, which does not clear it either.
  */
 TEST_F(DriverAidlSessionTest, FailedCloseStillReachesTheClosedStateAndKeepsTheLocalAddressList) {
     const LogicalAddress address(LogicalAddress::PLAYBACK_DEVICE_1);
@@ -12498,11 +11399,8 @@ TEST_F(DriverAidlSessionTest, FailedCloseStillReachesTheClosedStateAndKeepsTheLo
 
     EXPECT_EQ(fake->getCloseCallCount(), 1) << "the HAL was not asked exactly once to close";
 
-    // Which session was closed, not merely that one was. The controller is captured before the
-    // fake evaluates its configured result, so this holds on the failure path too - and it has
-    // to: a close that names the wrong controller leaves the real session open HAL-side while
-    // the middleware believes it has gone, which is exactly the state IHdmiCec::open() then
-    // refuses with EX_ILLEGAL_STATE.
+    // The closed controller must be the opened one, on this failure path too; a wrong one would
+    // leave the real session open HAL-side.
     {
         const ::android::sp<cechal::IHdmiCecController> closedController =
             fake->getLastClosedController();
@@ -12516,9 +11414,7 @@ TEST_F(DriverAidlSessionTest, FailedCloseStillReachesTheClosedStateAndKeepsTheLo
                "where the HAL reports the session was not closed";
     }
 
-    // The state reached CLOSED before the raise, so the guards are live again. Observed
-    // through a guarded operation, since the state itself is private and no introspection
-    // exists - which is the point: this is the caller-visible form of the invariant.
+    // CLOSED was reached before the raise, observed through a guarded operation.
     CECFrame frame = directedFrame();
     EXPECT_THROW({ Driver::getInstance().write(frame); }, InvalidStateException)
         << "the driver still behaves as though it were open after a failed close. The state must "
@@ -12538,18 +11434,12 @@ TEST_F(DriverAidlSessionTest, FailedCloseStillReachesTheClosedStateAndKeepsTheLo
            "circuiting the second close";
 }
 
-// A non-ok binder status on close is a different arm from a false result, and it must reach the
-// same closed state.
-//
-// Both arms converge on one condition in DriverAidlImpl::close(), and covering
-// only one of them would leave a short-circuit reordering - which would skip the CLOSED
-// assignment on the transport arm - undetected.
 /**
- * @brief The transport arm of the same close guard also reaches the closed state.
+ * @brief A close whose transaction fails also raises IOException after reaching CLOSED, and
+ *        names the controller open() returned.
  * @pre Invocation B, with a failing close transaction installed on the fake.
- * @note Both arms converge on one condition and either can satisfy it alone, so covering only
- *       one would leave a short-circuit reordering - which would skip the state assignment on
- *       this arm - undetected.
+ * @note Both failure arms converge on one condition, so each is covered to catch a short-circuit
+ *       that skips the state assignment on this arm.
  */
 TEST_F(DriverAidlSessionTest, CloseWithNonOkBinderStatusAlsoReachesTheClosedState) {
     fake->setCloseBinderStatus(::android::binder::Status::fromStatusT(::android::DEAD_OBJECT));
@@ -12557,9 +11447,7 @@ TEST_F(DriverAidlSessionTest, CloseWithNonOkBinderStatusAlsoReachesTheClosedStat
     EXPECT_THROW({ Driver::getInstance().close(); }, IOException)
         << "a close whose transaction failed did not raise IOException";
 
-    // The controller is captured by the fake before the transaction status is applied, so the
-    // identity is observable on this arm too - and a transport failure is precisely when a
-    // mis-named session matters most, because nothing HAL-side has changed.
+    // The fake captures the controller before applying the status, so identity holds here too.
     {
         const ::android::sp<cechal::IHdmiCecController> closedController =
             fake->getLastClosedController();
@@ -12580,40 +11468,12 @@ TEST_F(DriverAidlSessionTest, CloseWithNonOkBinderStatusAlsoReachesTheClosedStat
            "on one condition, so this is a short-circuit that skips the state assignment";
 }
 
-// A received CEC frame is delivered end to end while the driver is open - HAL event, adapter,
-// incoming queue, Bus reader thread, Connection's filter, application listener - and the bytes
-// that arrive are the bytes that were sent.
-//
-// Why the delivery and not just the trigger. FakeHdmiCecService::fireOnMessageReceived returns
-// false only when no listener was captured; it reports nothing at all about what the listener
-// then did with the message. So "the trigger returned true" is satisfied by an adapter that
-// allocates the frame and drops it, by one that offers it onto a queue nothing drains, and by
-// one whose state guard wrongly rejects it - three defects that would each break the receive
-// path completely. What distinguishes them is whether an application listener is notified, so
-// that is what is asserted, together with the exact bytes.
-//
-// The wait is bounded and is a condition variable, not a sleep. Delivery is asynchronous with
-// respect to this case even here, because the Bus reader is a separate thread blocked in the
-// queue's poll: the adapter offers on the calling thread and the reader wakes and notifies. A
-// fixed sleep would be either flaky or wasteful and would assert nothing; the wait returns the
-// moment the frame arrives and fails at the deadline.
-//
-// What this does not establish. In this process the callback itself runs on the calling thread,
-// because an in-process fake resolves to the local BBinder and no transaction crosses the
-// binder driver. So this case establishes the adapter's behaviour and the delivery chain above
-// it - not that a callback arriving on a genuine binder threadpool thread is delivered. That
-// is invocation E's, over real IPC, in hdmicec/tests/L2Tests/ccec/test_DualPathIntegration.cpp.
 /**
- * @brief A received frame is delivered end to end while the driver is open, and the bytes that
- *        arrive are the bytes that were sent.
- * @pre Invocation B, with the session open and the listener captured by SetUp's cycle.
- * @note The delivery is asserted rather than the trigger's return value: the trigger reports only
- *       whether a listener was captured, so "it returned true" is satisfied by an adapter that
- *       logs and discards. Every step between is load-bearing, and a bounded wait is used so the
- *       case ends the moment the frame arrives and fails at the deadline.
- * @note What it does not establish: in this process the callback runs on the calling thread,
- *       because an in-process fake resolves to the local BBinder and no transaction crosses the
- *       driver. Delivery on a genuine binder threadpool thread is invocation E's, over real IPC.
+ * @brief A frame received while the driver is open reaches an application listener exactly once,
+ *        byte for byte.
+ * @pre Invocation B, with the listener captured by SetUp's session cycle.
+ * @note Delivery is asserted rather than the trigger's result, which only reports a captured
+ *       listener; delivery on a real binder thread is covered by invocation E.
  */
 TEST_F(DriverAidlSessionTest, ReceivedMessageIsAcceptedWhileTheDriverIsOpen) {
     RecordingFrameListener applicationListener;
@@ -12656,44 +11516,12 @@ TEST_F(DriverAidlSessionTest, ReceivedMessageIsAcceptedWhileTheDriverIsOpen) {
            "it";
 }
 
-// AN UNDER-LENGTH MESSAGE IS DISCARDED BEFORE ANYTHING IS ALLOCATED, and the reason this arm is
-// worth a case of its own is that the alternative is not a dropped frame but a dead process.
-//
-// A CECFrame carrying no bytes cannot be decoded: the first thing every consumer does is read
-// byte zero for the header nibbles, and CECFrame::at() raises std::out_of_range when there is no
-// byte zero to read. Neither printFrameDetails() nor Bus::Reader::run() catches that, so it
-// escapes the reader's thread function and takes the process with it. The guard therefore has to
-// sit ahead of the allocation and ahead of the queue, and an empty payload is the only input that
-// reaches it - no canned status, no binder failure and no state can.
-//
-// Why it could not have been covered before. Nothing in the middleware ever produces a zero-byte
-// message; only a HAL can, which is exactly why the guard exists and exactly why a fake is the
-// only way to drive it. On a host with no binder driver the AIDL back-end is never selected and
-// this callback never runs at all, so the arm went unmeasured on every driverless run - and the
-// runs that DO select the AIDL back-end had no case delivering an empty payload.
-//
-// Three things are asserted, and the second is the one that separates "discarded" from "queued
-// and undecodable":
-//
-//   1. nothing escapes into the oneway callback. Letting an exception reach onTransact would be
-//      worse than dropping the frame, which is the disposition the legacy callback also takes.
-//
-//   2. no frame is delivered, waited for rather than checked at one instant. A zero-byte frame
-//      that had been queued would be drained by the reader and would raise inside it, so a
-//      bounded non-delivery window is the observation that the queue never received it.
-//
-//   3. the delivery chain is alive throughout, established by a positive control after the
-//      empty payload. Without it a run where the whole receive path was dead would read as a
-//      correct discard.
 /**
  * @brief A zero-byte message from the HAL is discarded before allocation, and the receive path
- *        keeps working afterwards.
- * @pre Invocation B, with the AIDL back-end resolved and a session open.
- * @note The guard runs ahead of the allocation and ahead of the queue because a zero-byte
- *       CECFrame raises std::out_of_range in the Bus reader, which nothing on that thread
- *       catches - so the alternative to discarding is losing the process, not losing a frame.
- * @note The positive control after the empty payload is load-bearing: a dead receive chain would
- *       otherwise be indistinguishable from a correct discard.
+ *        keeps delivering afterwards.
+ * @pre Invocation B.
+ * @note A queued empty CECFrame would raise std::out_of_range on the Bus reader thread, where
+ *       nothing catches it; the trailing well-formed frame is the positive control.
  * @see DriverAidlImpl::EventListener::onMessageReceived()
  */
 TEST_F(DriverAidlSessionTest, AZeroByteMessageFromTheHalIsDiscardedBeforeAllocation) {
@@ -12706,9 +11534,7 @@ TEST_F(DriverAidlSessionTest, AZeroByteMessageFromTheHalIsDiscardedBeforeAllocat
         << "the fake holds no listener although open() completed, so no callback can arrive and "
            "this case would prove nothing";
 
-    // The empty payload. fireOnMessageReceived reports only whether a listener was captured, so a
-    // true return here says the callback ran - it says nothing about what the callback did, which
-    // is what the assertions below are for.
+    // The empty payload; a true return only says the callback ran, not what it did.
     ASSERT_TRUE(fake->fireOnMessageReceived(std::vector<uint8_t>()))
         << "no listener was captured, so the trigger was a silent no-op";
 
@@ -12739,107 +11565,25 @@ TEST_F(DriverAidlSessionTest, AZeroByteMessageFromTheHalIsDiscardedBeforeAllocat
            "the marshalling of the frame after it";
 }
 
-// THE OTHER ARM OF THE SAME LENGTH GUARD - AN OVER-LENGTH MESSAGE - AND IT IS THE ARM WHERE THE
-// TWO BACK-ENDS DIFFER IN CONSEQUENCE AND NOT MERELY IN DEGREE.
-//
-// A message longer than a CECFrame can hold cannot be copied into one at all: CECFrame::append()
-// takes the bytes one at a time and raises std::out_of_range("Frame grows beyond maximum") on the
-// byte past the capacity (CECFrame.cpp:54-64). Where that append sits decides what happens next,
-// and the two back-ends put it in different places. On the legacy back-end it is OUTSIDE
-// DriverImpl::DriverReceiveCallback's try block (DriverImpl.cpp:60), so the exception escapes the
-// HAL's callback and takes the process down - measured, and measured identically on the
-// pre-migration base, so it is a pre-existing condition of that back-end and out of scope to fix
-// here. This back-end is written so that it cannot happen: the allocation and the append are both
-// inside the try, and the general catch arm deletes the frame and returns binder::Status::ok().
-// Containment is therefore a deliberate property of the new code rather than a byproduct of it,
-// and a deliberate property nothing exercises is a property nobody knows still holds.
-//
-// Why it could not have been covered before. The same reason as the under-length arm: nothing in
-// the middleware can produce a message this long - a CECFrame cannot hold one, and the outbound
-// guard refuses anything past the AIDL contract's length before a transmit is attempted - so only
-// a HAL can deliver one, and only a fake can stand in for a HAL. On a host with no binder driver
-// this back-end is never selected and this callback never runs at all.
-//
-// ONE CASE OVER TWO SIZES rather than two cases, and not a parameterized fixture. 129 and 4096 are
-// two points on ONE arm, not two arms, so the reasoning above is stated once and SCOPED_TRACE
-// names whichever size failed; the transmit half of this same guard already has exactly this shape
-// (FramesOverTheAidlLimitAreRefusedWithoutBeingSentOrTruncated loops over its two over-limit sizes
-// in a single case); and nothing in this file is value-parameterized, so a TEST_P would introduce
-// machinery for two rows. The one thing a loop risks that two cases would not - a fatal assertion
-// returning early and leaving the second size unmeasured - is removed by making every per-size
-// precondition non-fatal, so each size reports its own outcome whatever the other one did.
-//
-// THE SIZES ARE DERIVED FROM CECFrame::MAX_LENGTH AND NOT RESTATED. One byte past the capacity is
-// the boundary whatever the capacity becomes, and a multiple of it stays comfortably past the
-// boundary for the same reason; a case that restated 129 would silently stop testing the boundary
-// the day the capacity moved. The static_assert on MAX_LENGTH near the top of this file would fire
-// on such a change, but it guards a different question - the 16/17/20 authority conflict on the
-// transmit side, and its text sends the reader to those three sizes - so leaning on it here would
-// tie this case to an assertion that is not about it, for no saving.
-//
-// Four things are asserted per size, and the first is the one that separates this back-end from
-// the legacy one:
-//
-//   1. nothing escapes the callback. The fake invokes the listener directly and catches nothing
-//      (fake_hdmi_cec_aidl_service.cpp:1063-1085), and under this invocation the fake is
-//      in-process, so the dispatch is local and anything escaping onMessageReceived arrives in
-//      this case body. EXPECT_NO_THROW is a real observation here rather than a formality: it is
-//      the property the legacy back-end does not have on this input, and losing it would not be a
-//      dropped frame but a dead process.
-//
-//   2. no frame is delivered, waited for over a window rather than checked at one instant. The
-//      append copies MAX_LENGTH bytes before it raises, so what is being ruled out is not an
-//      empty frame but a silently TRUNCATED one - and a truncated frame is a perfectly ordinary
-//      frame to every consumer above the queue, which would hand it to the application as though
-//      the HAL had sent it. A peer can read a truncated CEC frame as a different message entirely.
-//
-//   3. the listener holds nothing afterwards, which is what catches a frame that surfaced after
-//      the window closed rather than not at all.
-//
-//   4. the delivery chain is alive, established by a positive control after each over-length
-//      payload. The control carries the same header byte as the payload, and this connection
-//      filters nothing whatever - DefaultFilter::isFiltered returns false outright for an
-//      UNREGISTERED source (Connection.cpp:304-306) - so the two deliveries differ in exactly one
-//      property, which is length. Without the control, a receive path that was dead for the whole
-//      case would read as correct containment.
-//
-// The middleware's own log line is deliberately NOT asserted, unlike the queue-refusal case below
-// where the log is the only trace the arm leaves. Here the arm emits the general catch arm's line,
-// which an allocation failure emits too, so it does not discriminate this arm; and a future change
-// that moved the rejection ahead of the allocation would change that text while every property
-// asserted above stayed true. The containment is what this case is about.
 /**
- * @brief An over-length message from the HAL is contained: nothing escapes the callback, no frame
- *        reaches an application listener, and the receive path keeps working afterwards.
- * @pre Invocation B, with the AIDL back-end resolved and a session open.
- * @note Two sizes in one case - one byte past CECFrame::MAX_LENGTH and a multiple of it, both
- *       derived rather than restated so that neither stops exercising the arm if the capacity
- *       changes. SCOPED_TRACE names whichever size failed, and every per-size precondition is
- *       non-fatal so one size cannot leave the other unmeasured.
- * @note CECFrame::append() copies MAX_LENGTH bytes before it raises, so what the non-delivery
- *       assertions rule out is a silently TRUNCATED frame reaching the application, not an empty
- *       one. On the legacy back-end the same input is fatal, because there the append sits outside
- *       the try (DriverImpl.cpp:60) and the exception escapes the HAL's callback.
- * @note The positive control after each payload is load-bearing: a dead receive chain would
- *       otherwise be indistinguishable from correct containment.
+ * @brief An over-length message from the HAL is contained: nothing escapes the callback, no
+ *        truncated frame is delivered, and the receive path keeps working.
+ * @pre Invocation B. Two sizes derived from CECFrame::MAX_LENGTH, each under its own SCOPED_TRACE.
+ * @note append() copies MAX_LENGTH bytes before raising, so the non-delivery checks rule out a
+ *       truncated frame; each size ends with a positive control.
  * @see DriverAidlImpl::EventListener::onMessageReceived()
- * @see CECFrame::append()
  */
 TEST_F(DriverAidlSessionTest, AnOverLengthMessageFromTheHalIsDiscardedWithoutEscaping) {
     ASSERT_NE(fake->getListener(), nullptr)
         << "the fake holds no listener although open() completed, so no callback can arrive and "
            "this case would prove nothing";
 
-    // Derived, never restated. One byte past the capacity is the boundary itself, which is the
-    // only size an off-by-one in the copy would be visible at; thirty-two times the capacity is
-    // the arbitrarily large delivery an out-of-process HAL is free to make, and is the size class
-    // an ad-hoc guest harness demonstrated containment at once without leaving a guard behind.
+    // One byte past the capacity is the boundary; 32 times it is an arbitrarily large delivery.
     constexpr size_t frameCapacity = static_cast<size_t>(CECFrame::MAX_LENGTH);
     const size_t overLength[] = { frameCapacity + 1, frameCapacity * 32 };
 
-    // A well-formed broadcast Report Physical Address. It serves twice: as the positive control,
-    // and as the first bytes of each over-length payload, so that the payload and the control
-    // differ in length and in nothing else.
+    // The positive control, and the prefix of each over-length payload, so the two differ only in
+    // length.
     const std::vector<uint8_t> wellFormed{ 0x4F, REPORT_PHYSICAL_ADDRESS, 0x21, 0x00, 0x04 };
 
     for (size_t index = 0; index < sizeof(overLength) / sizeof(overLength[0]); index++) {
@@ -12856,9 +11600,7 @@ TEST_F(DriverAidlSessionTest, AnOverLengthMessageFromTheHalIsDiscardedWithoutEsc
             "DriverAidlSessionTest-receive-too-long-" + std::to_string(size),
             applicationListener);
 
-        // The payload: the control's bytes, then padding out to the target size. The first
-        // frameCapacity bytes are therefore a frame the whole chain above the queue would accept,
-        // which is what makes a truncated delivery detectable rather than plausible.
+        // The control's bytes padded to the target size, so a truncated delivery is detectable.
         std::vector<uint8_t> oversized(wellFormed);
         oversized.resize(size, 0x00);
 
@@ -12930,43 +11672,12 @@ TEST_F(DriverAidlSessionTest, AnOverLengthMessageFromTheHalIsDiscardedWithoutEsc
     }
 }
 
-// THE QUEUE'S REFUSAL ARM, WHICH IS WHAT STOPS A STALLED READER TURNING EVERY FURTHER EVENT INTO
-// A LEAKED FRAME.
-//
-// EventQueue::offer() returns void and silently discards its argument once the queue is full, so
-// a callback that offered and then dropped its pointer would leak one heap CECFrame per event,
-// without bound, for as long as the reader stayed behind. offerReceivedFrame() exists to report
-// the refusal instead, and the callback releases the frame when it is refused. That release is
-// the arm here.
-//
-// Making the queue fill is the whole difficulty, and it is why this case needs a listener that
-// blocks. The reader is normally parked in EventQueue::poll() on an empty queue and woken by each
-// offer, so it drains as fast as frames arrive and the occupancy never leaves one. Parking it
-// inside a notification instead - on its own thread, in its own call graph, with nothing injected
-// into the queue - is what produces the real condition: frames offered from that moment on
-// accumulate exactly as they would behind a slow application.
-//
-// The numbers are the production ones and are not restated as literals here. The queue's capacity
-// reserves its last slot for close()'s wake-the-reader sentinel, so the refusal point is one
-// entry below capacity; the case delivers comfortably more than capacity so that the arm is
-// reached whatever those two constants are, and asserts on the middleware's own refusal line
-// rather than on an occupancy it would have to compute.
-//
-// The refusal is observed in the middleware's log because a released allocation has no other
-// externally visible trace - asserting the absence of a leak would need a heap harness this suite
-// does not have. The reader is released BEFORE the assertions, so an ASSERT_* returning early can
-// never strand it and hang the teardown.
 /**
- * @brief A frame arriving while the incoming queue is at its refusal point is released rather
- *        than leaked, and the receive path recovers once the reader moves again.
- * @pre Invocation B, with the AIDL back-end resolved and a session open.
- * @note The reader is parked inside a blocking listener on its own thread, which is the only way
- *       the queue can reach its refusal point at all: it otherwise drains as fast as frames are
- *       offered and the occupancy never exceeds one.
- * @note Asserted on the middleware's own refusal line, not on an occupancy: the capacity and the
- *       reserved sentinel slot are production constants and a test that restated them would
- *       silently stop testing the arm if either changed.
- * @note The reader is released before the assertions so that a fatal assertion cannot strand it.
+ * @brief A frame offered while the incoming queue is at its refusal point is released rather than
+ *        leaked, and delivery recovers once the reader moves again.
+ * @pre Invocation B. A blocking listener parks the Bus reader so the queue can fill.
+ * @note Asserted on the middleware's refusal log line, the release's only visible trace; the
+ *       reader is released before any assertion so a fatal one cannot strand it.
  * @see DriverAidlImpl::offerReceivedFrame()
  */
 TEST_F(DriverAidlSessionTest, AFrameArrivingWhileTheQueueIsFullIsReleasedRatherThanLeaked) {
@@ -12993,7 +11704,7 @@ TEST_F(DriverAidlSessionTest, AFrameArrivingWhileTheQueueIsFullIsReleasedRatherT
                   "not share a failure message";
     }
 
-    // Comfortably past the refusal point, whatever the capacity and the reserved slot are. Every
+    // Comfortably past the refusal point, whatever the queue's capacity is. Every
     // delivery from here is offered onto a queue nothing is draining.
     const size_t deliveriesWhileParked = 64;
     size_t triggered = 0;
@@ -13003,10 +11714,7 @@ TEST_F(DriverAidlSessionTest, AFrameArrivingWhileTheQueueIsFullIsReleasedRatherT
     {
         StdoutCapture capture;
 
-        // Sampled HERE, before anything reads the capture, because StdoutCapture::read() calls
-        // restore() and a restored capture reports itself invalid from then on. Asking isValid()
-        // after read() therefore always answers false and says nothing about whether the
-        // redirection ever worked - a trap this case fell into and the guest caught.
+        // Sampled before read(), which restores fd 1 and leaves the capture reporting invalid.
         captureWasValid = capture.isValid();
 
         for (size_t index = 0; index < deliveriesWhileParked; index++) {
@@ -13033,11 +11741,8 @@ TEST_F(DriverAidlSessionTest, AFrameArrivingWhileTheQueueIsFullIsReleasedRatherT
         << " deliveries reached the middleware's callback, so the listener was lost part way "
            "through and the queue was not driven to its refusal point";
 
-    // Two substrings of the production line rather than one token, and neither is a function
-    // name: the line names the CONDITION and the DISPOSITION, and both are what a log reader
-    // acts on. Asserting the refusal alone would pass on a line that reported a refusal and said
-    // nothing about the frame, which is the defect that matters - a refused frame the callback
-    // did not release is a leak per event, and the log is the only trace it leaves.
+    // The line must name both the condition (refused) and the disposition (released), since an
+    // unreleased refused frame is a leak per event.
     EXPECT_THAT(logged, ::testing::HasSubstr("refused the frame at its"))
         << "none of " << deliveriesWhileParked
         << " frames delivered onto a queue nothing was draining was refused. Either the queue "
@@ -13066,35 +11771,13 @@ TEST_F(DriverAidlSessionTest, AFrameArrivingWhileTheQueueIsFullIsReleasedRatherT
            "wedged rather than merely dropping the frames it could not take";
 }
 
-// THE SLOW-CALL DIAGNOSTIC, WHICH IS A THRESHOLD AND NOT A TIMEOUT, and the distinction is the
-// whole point of the case.
-//
-// Crossing it abandons nothing, raises nothing and changes no return value: it leaves one
-// LOG_WARN line where a stall would otherwise be completely silent. B4 records that the
-// underlying synchronous binder call cannot be bounded at all on the pinned libbinder, so this
-// line is the entire mitigation that is in scope, and a mitigation nothing exercises is a
-// mitigation nobody knows works.
-//
-// It cannot be reached by any canned result or status, because none of them takes time. Only a
-// call that is genuinely slow reaches it, which is why the fake gained a delay knob rather than a
-// flag - and why this case pays real wall-clock time. The delay is set just past the threshold
-// rather than comfortably past it, so the case costs the least it can while still crossing.
-//
-// What is asserted, and what deliberately is not. The warning must appear, and the call must
-// still succeed unchanged - a diagnostic that altered the outcome it describes would be a defect
-// far worse than a missing log line. The elapsed figure in the line is NOT asserted: it is a real
-// measurement on a shared machine and pinning it would make the case flaky without testing
-// anything the presence of the line does not already establish.
 /**
- * @brief A synchronous AIDL call that outlives the slow-call threshold is reported, and its
- *        result is unaffected.
- * @pre Invocation B, with the AIDL back-end resolved and a session open. Costs real wall-clock
- *      time, just past the production threshold.
- * @note A threshold and not a timeout: nothing is abandoned and nothing raises. The line is the
- *       whole of the in-scope mitigation for an unbounded synchronous call, so it is asserted
- *       directly rather than inferred.
- * @note The elapsed figure in the line is deliberately not asserted - it is a real measurement on
- *       a shared machine, and pinning it would buy flakiness rather than evidence.
+ * @brief A synchronous AIDL call slower than the slow-call threshold is logged as slow, and its
+ *        result is unchanged.
+ * @pre Invocation B, with a session open holding address 4. Costs real wall-clock time, just past
+ *      the threshold.
+ * @note Adds PLAYBACK_DEVICE_2 so the timed call is a real HAL add rather than the same-address
+ *       no-op; the elapsed figure is not asserted because it is a real measurement.
  * @see DriverAidlImpl::addLogicalAddress()
  * @see FakeHdmiCecController::setAddLogicalAddressesDelayMs()
  */
@@ -13105,12 +11788,8 @@ TEST_F(DriverAidlSessionTest, ASynchronousCallPastTheSlowThresholdIsReportedWith
         << "the controller fake is not reachable, so no delay can be installed and this case "
            "cannot make a call slow";
 
-    // Just past the production threshold. The production constant lives in the anonymous
-    // namespace at DriverAidlImpl.cpp:185 and has no dynamic symbol, so it cannot be read from
-    // here and is restated in kSlowHalCallWarnMs instead. That restatement is safe in the only
-    // direction that matters: if production ever raised its threshold above this value, the
-    // delay would fall short, no line would be emitted and the assertion below would FAIL - a
-    // loud wrong answer rather than a case that had quietly stopped testing the arm.
+    // Just past the threshold restated in kSlowHalCallWarnMs; a raised production threshold
+    // makes the delay fall short and the assertion below fail loudly.
     const int32_t delayMs = static_cast<int32_t>(kSlowHalCallWarnMs) + 150;
 
     controllerFake->setAddLogicalAddressesDelayMs(delayMs);
@@ -13123,13 +11802,11 @@ TEST_F(DriverAidlSessionTest, ASynchronousCallPastTheSlowThresholdIsReportedWith
     {
         StdoutCapture capture;
 
-        // Sampled before the read, for the reason recorded in the queue-refusal case above:
-        // StdoutCapture::read() restores fd 1 and the capture reports itself invalid afterwards,
-        // so an isValid() asked after read() answers false whatever the redirection did.
+        // Sampled before read(), which restores fd 1 and invalidates the capture.
         captureWasValid = capture.isValid();
 
         addResult = Driver::getInstance().addLogicalAddress(
-            LogicalAddress(LogicalAddress::PLAYBACK_DEVICE_1));
+            LogicalAddress(LogicalAddress::PLAYBACK_DEVICE_2));
 
         logged = capture.read();
     }
@@ -13161,48 +11838,12 @@ TEST_F(DriverAidlSessionTest, ASynchronousCallPastTheSlowThresholdIsReportedWith
            "on: a reader learns that something stalled but not what";
 }
 
-// The closing-state rejection, which is the arm that stops a frame leaking per rejected
-// message - and the arm that stops a frame arriving too late being delivered to an application
-// that has torn its session down.
-//
-// A frame arriving while the driver is not OPENED must be refused and released, not queued. The
-// adapter reaches the queue through a state-guarded accessor that raises when the state is not
-// OPENED, exactly as the legacy receive callback does, and the listener catches that and frees
-// the allocation. Offering directly to the queue member instead would accept frames the legacy
-// path rejects and would leave them in a queue nothing will ever drain until the next open.
-//
-// Three things are asserted, and the third is what makes this more than a smoke test:
-//
-//   1. nothing escapes into the binder callback. A oneway callback has no caller to receive a
-//      fault, so letting an exception reach onTransact would be worse than dropping one frame -
-//      which is the disposition the legacy callback already takes.
-//
-//   2. the frame is not delivered while the driver is closed, waited for and not merely
-//      assumed. A bounded non-delivery window rather than an instantaneous check, because
-//      "it had not arrived yet" and "it will never arrive" are different claims.
-//
-//   3. The frame does not surface after a later re-open. This is the assertion that separates
-//      "rejected and released" from "quietly queued": a frame wrongly offered during the closed
-//      window would sit in the queue behind the close sentinel, and re-opening re-arms the Bus
-//      reader, which would then drain and deliver it - to a listener whose application believes
-//      the session was down when it arrived. Nothing about a closed-state check alone can
-//      detect that, which is why the re-open is here.
-//
-// The release itself is observed in the middleware's own log, at a level the default
-// configuration prints, because a released allocation has no other externally visible trace -
-// asserting on the absence of a leak would need a heap harness this suite does not have.
 /**
- * @brief A frame arriving while the driver is not open is refused and released rather than
- *        queued, and does not surface after a later re-open.
- * @pre Invocation B. The release is observed in the middleware's own log, because a released
- *      allocation has no other externally visible trace.
- * @note Three things are asserted and the third is what makes this more than a smoke test:
- *       nothing escapes into the oneway callback; the frame is not delivered during a bounded
- *       window rather than at one instant, because "it had not arrived yet" and "it will never
- *       arrive" are different claims; and it does not surface after a re-open, which is what
- *       separates "rejected and released" from "quietly queued".
- * @note The re-open also carries a positive control, so a run where the delivery chain was dead
- *       throughout cannot be read as a correct rejection.
+ * @brief A frame arriving while the driver is closed is refused and released, is not delivered,
+ *        and does not surface after a re-open.
+ * @pre Invocation B. The release is observed in the middleware's log, its only visible trace.
+ * @note The re-open check separates "released" from "quietly queued", and its positive control
+ *       rules out a dead delivery chain.
  */
 TEST_F(DriverAidlSessionTest, MessageArrivingWhileClosedIsRejectedAndReleased) {
     RecordingFrameListener applicationListener;
@@ -13217,9 +11858,8 @@ TEST_F(DriverAidlSessionTest, MessageArrivingWhileClosedIsRejectedAndReleased) {
     // cannot be a frame left over from anywhere else.
     const std::vector<uint8_t> message{ 0x4F, REPORT_PHYSICAL_ADDRESS, 0x31, 0x00, 0x04 };
 
-    // The listener is still registered with the fake - close() withdraws the middleware's own
-    // attachment but the fake retains the binder reference, which is exactly the real hazard
-    // being modelled: a HAL that calls back after the session went down.
+    // The fake still holds the listener after close(), modelling a HAL that calls back after the
+    // session went down.
     ASSERT_NE(fake->getListener(), nullptr)
         << "the fake no longer holds a listener after close(), so this trigger cannot reach the "
            "adapter and the rejection path would not be exercised at all";
@@ -13236,10 +11876,8 @@ TEST_F(DriverAidlSessionTest, MessageArrivingWhileClosedIsRejectedAndReleased) {
         captured = capture.read();
     }
 
-    // The rejection is visible in one of exactly two forms, and both are correct outcomes of the
-    // same design: the accessor raised and the listener released the frame, or the listener had
-    // already been detached by close() and dropped it before allocating anything at all. What
-    // must not happen is silence, which would mean the frame went into the queue.
+    // Either logged disposition is correct (guard raised and frame released, or detached listener
+    // dropped it); silence would mean the frame was queued.
     const bool releasedAfterGuardRaised =
         captured.find("Exception during frame offer...discarding") != std::string::npos;
     const bool droppedBecauseDetached =
@@ -13274,9 +11912,7 @@ TEST_F(DriverAidlSessionTest, MessageArrivingWhileClosedIsRejectedAndReleased) {
         << "the application listener received " << applicationListener.frameCount()
         << " frames across the closed window and the re-open, and it must receive none";
 
-    // A positive control, so that a green result cannot be explained by the delivery chain being
-    // dead for some unrelated reason - a withdrawn listener, a stopped Bus reader, a filter that
-    // rejects everything. The re-opened session must still deliver.
+    // Positive control: the re-opened session must still deliver.
     const std::vector<uint8_t> afterReopen{ 0x4F, REPORT_PHYSICAL_ADDRESS, 0x41, 0x00, 0x04 };
     ASSERT_TRUE(fake->fireOnMessageReceived(afterReopen))
         << "no listener was captured by the re-open, so the positive control cannot run";
@@ -13294,86 +11930,13 @@ TEST_F(DriverAidlSessionTest, MessageArrivingWhileClosedIsRejectedAndReleased) {
     // TearDown restores the opened baseline; nothing here is left closed for a sibling suite.
 }
 
-// The two diagnostic callbacks report what they were told and do nothing more, which is a
-// behavioural claim in two halves - what is logged, and what is not done.
-//
-// onStateChanged and onMessageSent are logged and acted on in no other way, deliberately: there
-// is no legacy counterpart to either, so acting on them would be new behaviour. In particular a
-// transition to CLOSED does not offer the close sentinel onto the incoming queue - an in-process
-// HAL cannot vanish, so the legacy path has no such notion - and no death recipient is installed
-// for the same reason.
-//
-// "does nothing" is not the same as "is not implemented", and asserting only that a later
-// transmit still works cannot tell the two apart: an empty callback body, or one that logged
-// nothing, would satisfy it. The diagnostic is the behaviour here, so the diagnostic is what is
-// asserted, from the middleware's own captured output.
-//
-// What each callback reports, and at which level, stated precisely because it decides what has
-// to be arranged before anything can be observed:
-//
-//   DriverAidlImpl::EventListener::onStateChanged() logs at LOG_INFO, and cec_log_level defaults to
-//   LOG_INFO, so its line prints on every run. Both state names go through the generated
-//   toString(), so "started" and "CLOSED" are the literal text - and both are asserted.
-//
-//   DriverAidlImpl::EventListener::onMessageSent() logs at LOG_DEBUG, which the default level
-//   suppresses, and its line carries three fields: the SendMessageStatus name through
-//   toString(), the message length, and the message bytes. All three are asserted, because each
-//   answers a different question a reader of a field log has - which outcome the bus reported,
-//   and which of several in-flight messages it was about.
-//
-// The bytes are observable, and how they are rendered is worth stating because the expectation
-// below has to reproduce it. Production renders them as lowercase hex, two digits per byte and no
-// separator, into a stack buffer sized from CECFrame::MAX_LENGTH, with "..." appended when the
-// message is longer than that buffer can hold - a bound rather than an allocation, because the
-// callback runs on a binder thread. lowercaseHexOf() in this file reproduces exactly that
-// rendering for the four-byte message used here, which is well inside the bound, so the
-// assertion compares against one rendering rather than a hand-typed literal.
-//
-// So the level is raised here, through production's own reader. ScopedCecLogLevel writes a level
-// name to /tmp/cec_log_enabled - the path check_cec_log_status() hardcodes - and calls that
-// reader, which is the only seam the middleware offers; there is no setter for cec_log_level.
-// That path is fixed by production and shared by every process on the host, so it is taken under
-// the custody protocol the guard documents: an exclusive lock before anything is captured,
-// classification that refuses a symlink or a foreign owner, and an atomic replace rather than a
-// truncating write. The guard refuses rather than forces whenever the path is not safely this
-// run's to modify.
-//
-// And the restoration is asserted too, which is the other half of taking custody of a shared
-// path. restoreAndVerify() runs below on this case's normal path, while the lock is still held,
-// and it proves three things instead of assuming them: that putting the level and the file back
-// actually succeeded, every syscall result taken rather than discarded; that the bytes at the
-// path are the captured original again, re-read without following a link, or that the path is
-// absent again where the guard created it; and that the process-wide level is the one this case
-// found, re-observed through the same probe that observed it on the way in. The third does not
-// follow from the second - check_cec_log_status() silently leaves the level alone when the file's
-// first line matches nothing in production's table - so "the file is back" would not have
-// established it. The guard's destructor remains a backstop for the fatal assertion that unwinds
-// past the call, and a backstop cannot substitute for it: a destructor cannot fail a test, so a
-// failed write, rename or unlink there would leave DEBUG in force process-wide, or the shared
-// file altered or missing, while every case in this binary still passed.
-//
-// And the raise is asserted, not reported. A refusal makes onMessageSent's line invisible, so if
-// this case merely noted it and skipped the three assertions, a run that never obtained the
-// evidence would be indistinguishable from a run in which the evidence held - which is the
-// swallowed-failure shape this file exists to avoid. ASSERT_TRUE on the raise, with the guard's
-// own reason streamed, is what keeps missing evidence from passing as evidence.
-//
-// The level-independent half is asserted as well, and it is the half that matters most: that
-// neither callback puts anything on the receive path, and that the session survives both.
 /**
- * @brief The two diagnostic callbacks report what they were told and do nothing more.
- * @pre Invocation B. The transmit report is emitted below the default level, so the level is
- *      raised through production's own reader under the log guard's custody protocol.
- * @note The claim is in two halves - what is logged, and what is not done - and asserting only
- *       that a later transmit still works cannot tell an implemented callback from an empty one.
- *       The diagnostic is the behaviour here, so the diagnostic is what is asserted, from the
- *       middleware's own captured output.
- * @note Acting on either callback would be new behaviour, since neither has a legacy
- *       counterpart: in particular a transition to closed does not offer the close sentinel, and
- *       no death recipient is installed.
- * @note All three transmit fields are asserted - status, length and bytes - because each answers
- *       a different question a reader of a field log has, and the length is matched with its
- *       label rather than as a bare digit, which a timestamped capture would satisfy trivially.
+ * @brief The state-change and message-sent callbacks log what they were told and do nothing
+ *        else: no frame is delivered and the session still transmits.
+ * @pre Invocation B. The message-sent line is DEBUG-level, so the level is raised with
+ *      ScopedCecLogLevel and its restoration asserted.
+ * @note Asserted from captured output: both state names, and the sent message's status, length
+ *       and bytes.
  */
 TEST_F(DriverAidlSessionTest, DiagnosticCallbacksAreReportedWithoutDisturbingTheSession) {
     RecordingFrameListener applicationListener;
@@ -13387,23 +11950,14 @@ TEST_F(DriverAidlSessionTest, DiagnosticCallbacksAreReportedWithoutDisturbingThe
     bool levelWasRaised = false;
     std::string levelRefusal;
     {
-        // Raised before the capture opens, so neither the guard's own custody work nor the
-        // level probe it runs can land inside the captured text and be mistaken for output
-        // from a callback.
-        //
-        // The verdict and its reason are copied out here, while the guard is still alive: the
-        // guard releases custody at the end of this block, so its own diagnosis has to be
-        // taken before that happens if the assertion below is to name it.
+        // Raised before the capture opens, so the guard's output stays out of it; its verdict
+        // and reason are copied while the guard is alive.
         ScopedCecLogLevel debugLevel("DEBUG");
         levelWasRaised = debugLevel.isRaised();
         levelRefusal = debugLevel.failureReason();
 
-        // The capture lives in its own, inner scope, and that is not tidiness. The restoration
-        // below re-probes the effective level, which means emitting log lines through
-        // production's own CCEC_LOG; with the capture still open those emissions would be
-        // appended to the very text the assertions after this block read, and a probe marker
-        // sitting in `captured` would be indistinguishable from something a callback reported.
-        // Closing the capture first is what keeps the captured text the callbacks' own.
+        // The capture closes before restoreAndVerify(), whose level probe logs and would
+        // otherwise land in the captured text.
         {
             StdoutCapture capture;
             ASSERT_TRUE(capture.isValid())
@@ -13421,19 +11975,8 @@ TEST_F(DriverAidlSessionTest, DiagnosticCallbacksAreReportedWithoutDisturbingThe
             captured = capture.read();
         }
 
-        // Restoration is performed here, checked, and asserted - while the custody lock is
-        // still held, and on the case's normal path rather than in a destructor.
-        //
-        // The guard's destructor is a backstop for the fatal assertion that unwinds past this
-        // line, and it cannot report to the test: a destructor has no way to fail a case, so a
-        // failed write, rename or unlink there would leave this host with DEBUG logging still
-        // in force, or with the shared configuration file altered or missing, while every case
-        // in this binary still reported success. That is the shape this call closes. What it
-        // returns covers all three: that publishing the level and the file succeeded, that the
-        // path holds the captured bytes again (or is absent again where the guard created it),
-        // and that the process-wide level is the one this case found - the last of which a
-        // restored file does not imply, because check_cec_log_status() leaves the level alone
-        // when the file's first line matches nothing in production's table.
+        // Restoration is asserted here, under the custody lock; the destructor is only a
+        // backstop and cannot fail a test.
         std::string restoreDetail;
         ASSERT_TRUE(debugLevel.restoreAndVerify(restoreDetail)) << restoreDetail;
     }
@@ -13467,12 +12010,7 @@ TEST_F(DriverAidlSessionTest, DiagnosticCallbacksAreReportedWithoutDisturbingThe
         << "the new state was not named in the state-change report, so the report carries no "
            "information about what the HAL actually did. Captured output was: [" << captured << "]";
 
-    // Unconditional, because the raise above was asserted rather than reported: with the level at
-    // DEBUG, the transmit report must name the status, the length and the message bytes. All
-    // three are asserted rather than any one of them, because each answers a different question a
-    // reader of a field log has: which outcome the bus reported, and which of several in-flight
-    // messages it was about. Asserting only the presence of the line would pass against a report
-    // that named none of them.
+    // With DEBUG asserted above, the transmit report must name the status, length and bytes.
     EXPECT_NE(captured.find("onMessageSent received"), std::string::npos)
         << "onMessageSent reported nothing at all with the level raised to DEBUG, although "
            "reporting is this callback's whole behaviour. An empty body would leave a transmit "
@@ -13487,11 +12025,8 @@ TEST_F(DriverAidlSessionTest, DiagnosticCallbacksAreReportedWithoutDisturbingThe
            "the only thing this callback exists to tell anybody. Captured output was: [" << captured
         << "]";
 
-    // The length is matched with its label, composed from the message this case sent, because a
-    // bare std::to_string(sentMessage.size()) is a single digit and every captured CCEC_LOG line
-    // carries a timestamp - so that form was satisfied by any non-empty capture and could not
-    // fail. The label is transcribed from the producer's format string, which reads
-    // "... Result: %s, message length: %zu, message bytes: %s".
+    // Matched with its label from the producer's format ("message length: %zu"), since a bare
+    // digit would match any timestamped line.
     const std::string expectedLengthReport =
         std::string("message length: ") + std::to_string(sentMessage.size());
 
@@ -13505,9 +12040,7 @@ TEST_F(DriverAidlSessionTest, DiagnosticCallbacksAreReportedWithoutDisturbingThe
            "length are indistinguishable, and with several transmits in flight the reader cannot "
            "tell which one the bus outcome belongs to. Captured output was: [" << captured << "]";
 
-    // Level-independent, and the strongest half: neither callback put anything on the receive
-    // path. A transition to CLOSED must not offer the sentinel, and a transmit report must not be
-    // mistaken for an inbound frame - either would deliver to an application listener.
+    // Level-independent: neither callback may put anything on the receive path.
     EXPECT_FALSE(applicationListener.waitForFrames(1, kNonDeliveryWindowMs))
         << "one of the two diagnostic callbacks delivered a frame to an application listener. "
            "Neither carries an inbound message: onStateChanged must not offer the close sentinel - "
@@ -13522,78 +12055,17 @@ TEST_F(DriverAidlSessionTest, DiagnosticCallbacksAreReportedWithoutDisturbingThe
            "behaviour with no legacy counterpart";
 }
 
-// The threadpool obligation is discharged idempotently, including when a pool was already
-// started elsewhere in the process - which is the case a naive back-end-local flag would break.
-//
-// DriverAidlImpl::open() calls ProcessState::self()->startThreadPool() unconditionally
-// in DriverAidlImpl::open(). That is deliberately the whole of the obligation: the call is
-// idempotent, and setThreadPoolMaxThreadCount is not called because no back-end-local flag can
-// detect a pool started by another component and lowering an already-established maximum can
-// abort the process.
-//
-// By the time this case runs, a pool has certainly been started - SetUp's open() did it, and so
-// did the original open during LibCCEC::init - so the already-started condition is the one being
-// exercised, and a second open must still succeed and callbacks must still arrive. The
-// never-started condition is covered by the process's first open, inside LibCCEC::init: a
-// failure there would abort initialization and no case in this binary would run at all.
-//
-// What this case cannot establish from the frames alone, and how it establishes it instead. Every
-// other assertion here would hold against a back-end that never called startThreadPool() at all,
-// because an in-process fake resolves to the local BBinder and its trigger runs the callback on
-// the calling thread - so frames arrive whether or not a pool was ever started, and the omission
-// would only surface on a real device, where nothing would ever be received. The pool's existence
-// therefore needs an observation from outside the frames, and of the two that inspect the process
-// from the OUTSIDE, neither is sound on this SDK:
-//
-//   - By thread name. ProcessState::makeBinderThreadName() composes "binder:PID_N", but
-//     androidCreateRawThreadEtc() discards it - its threadName parameter is `__android_unused`
-//     and the block that would apply it, along with the only androidSetThreadName() call site for
-//     a spawned thread, is `#if defined(__ANDROID__)`, which the SDK's CMake build never defines.
-//     Measured: every thread of this runner, and every thread of the fake service host, carries
-//     its own process name. So the name cannot be looked for.
-//   - By thread count. The runner's count moves during a run as cases start and join their own
-//     workers - measured going 1 to 5 to 6, with different thread ids at equal counts - so
-//     inferring the pool from a count, or from a count that does not grow when startThreadPool()
-//     is called redundantly, would be unsound.
-//
-// So neither of those is what the assertion looks at: it asks libbinder itself.
-// getThreadPoolMaxThreadCount() returns the configured maximum once mThreadPoolStarted is set and
-// zero while it is not - exactly the flag startThreadPool() sets - read through a public API and
-// behaving identically on both platforms. The thread-name probe is kept and PRINTED rather than
-// asserted, with the reason, because it is still corroboration on a build that applies the name.
-// The real-thread evidence is invocation E's: it receives a `oneway` callback on a pool thread over
-// real out-of-process IPC, which no in-process fake can produce. The two tiers together discharge
-// the obligation - a pool with no callback and a callback with no pool are both consistent with a
-// broken receive path on a device - and this case owns the idempotency half.
 /**
- * @brief open() succeeds and keeps delivering when a binder threadpool has already been started
- *        in the process.
- * @pre Invocation B. The pool is observed before anything here touches the session, so the
- *      evidence is about production's own open during LibCCEC::init rather than about a pool this
- *      case caused.
- * @note This is the case a naive local flag would break: no back-end-local state can detect a
- *       pool another component started, and lowering an already-established maximum can abort the
- *       process, which is why startThreadPool() is the whole of the obligation.
- * @note The pool is observed through ProcessState::getThreadPoolMaxThreadCount(), which reads
- *       the flag startThreadPool() sets and is portable; the "binder:*" thread name is reported
- *       as corroboration only, because the pinned SDK's libutils applies it solely on an Android
- *       build. The real-thread evidence is invocation E's.
- * @note Counting threads is NOT the substitute, and was measured and rejected rather than
- *       assumed: the runner's count moves during a run as cases start and join their own workers
- *       - 1 to 5 to 6, with different thread ids at equal counts - so inferring the pool from a
- *       count, or from a count that does not grow when startThreadPool() is called redundantly,
- *       would be unsound. The idempotency assertions below are unaffected either way.
+ * @brief With a binder threadpool already started, a close/open cycle succeeds, the fake can
+ *        invoke the listener the second open registered, and a directed write succeeds.
+ * @pre Invocation B. The pool is observed via ProcessState::getThreadPoolMaxThreadCount() before
+ *      the session is touched.
+ * @note The "binder:*" thread-name probe is printed, not asserted, because this SDK applies the
+ *       name only on Android builds; pool-thread delivery is covered by invocation E.
  */
 TEST_F(DriverAidlSessionTest, OpenSucceedsAndDeliversWhenAThreadPoolWasAlreadyStarted) {
-    // The pool the process's first open was obliged to start, observed before anything here
-    // touches the session - so this is evidence about production's own open during
-    // LibCCEC::init, not about a pool this case might have caused.
-    //
-    // ASKED OF libbinder ITSELF RATHER THAN OF THE THREAD LIST. getThreadPoolMaxThreadCount()
-    // returns the configured maximum once mThreadPoolStarted is set and zero while it is not,
-    // so a non-zero answer IS the observation that startThreadPool() ran - the same flag, read
-    // through a public API, on both platforms. selfOrNull() is used rather than self() so that
-    // this line cannot create a ProcessState, and a null answer means no pool can exist.
+    // A non-zero maximum means startThreadPool() ran during LibCCEC::init; selfOrNull() cannot
+    // create a ProcessState, so null means no pool exists.
     const ::android::sp<::android::ProcessState> processState =
         ::android::ProcessState::selfOrNull();
     const size_t poolMaxThreads =
@@ -13612,12 +12084,8 @@ TEST_F(DriverAidlSessionTest, OpenSucceedsAndDeliversWhenAThreadPoolWasAlreadySt
                   "libbinder, not merely that it skipped the pool"
                 : "");
 
-    // CORROBORATION ONLY, reported and not asserted: on this port a running pool produces threads
-    // that carry the process's own name, so a false result here is the ordinary case and asserting
-    // on it would fail against a correct back-end. The line is printed either way, so that a build
-    // which does apply the name is visible in the log rather than silently indistinguishable. The
-    // assertion above rests on the reported maximum; the real-thread evidence is invocation E's,
-    // in hdmicec/tests/L2Tests/ccec/test_DualPathIntegration.cpp.
+    // Corroboration only, printed and not asserted: on this port pool threads carry the process's
+    // own name, so a miss is the ordinary case.
     bool procIsReadable = false;
     const bool poolExists = processHasABinderThread(&procIsReadable);
 
@@ -13650,10 +12118,7 @@ TEST_F(DriverAidlSessionTest, OpenSucceedsAndDeliversWhenAThreadPoolWasAlreadySt
     ASSERT_NO_THROW({ Driver::getInstance().close(); });
     ASSERT_EQ(fake->getCloseCallCount(), 1) << "the close did not reach the HAL";
 
-    // The successful-close arm: the controller handed back to the HAL is the one open()
-    // returned. Asserted on the success path here, and on both failure paths in the two close
-    // cases above, because a close that names the wrong session would leave the real one open
-    // HAL-side while the middleware believed it had gone.
+    // The successful close names the controller open() returned.
     {
         const ::android::sp<cechal::IHdmiCecController> closedController =
             fake->getLastClosedController();
@@ -13686,42 +12151,12 @@ TEST_F(DriverAidlSessionTest, OpenSucceedsAndDeliversWhenAThreadPoolWasAlreadySt
         << "the re-opened session cannot transmit, so open() did not restore the controller";
 }
 
-// The duplicate-open guard, asserted as the silent no-op it is rather than inferred from the
-// absence of an exception.
-//
-// open() on an already-OPENED driver returns without doing anything. That is deliberate and it is
-// the legacy behaviour being preserved: DriverImpl::open()'s throw for this case is compiled out,
-// so the observable legacy behaviour is a silent return and this back-end has to match it.
-//
-// "returns silently" and "RE-OPENED the session" are indistinguishable from the outside unless
-// the HAL is asked, which is the gap this case closes. Three things must be unchanged, and each
-// would be a distinct defect on its own:
-//
-//   The open count. A second IHdmiCec::open() on a session that is already held fails with
-//   EX_ILLEGAL_STATE on a real HAL - the interface is single-instance - so a duplicate open that
-//   reached the HAL would raise IOException on a device while passing against a fake that
-//   tolerates it. This fake does tolerate it, deliberately, so that the guard is testable at all;
-//   which is exactly why the assertion is on the counter and not on the exception.
-//
-//   The controller. Replacing it would invalidate the session the middleware has been
-//   transmitting on, and the old one would be leaked HAL-side with nothing able to close it.
-//
-//   The listener. Replacing it would leave the HAL holding a listener whose owner had moved on -
-//   and re-registering is the one thing the fixture's own close/reset/open cycle depends on not
-//   happening implicitly.
-//
-// This also pins the behaviour the fixture itself relies on: its TearDown restores the opened
-// baseline by calling open() unconditionally, which is only harmless because of this guard.
 /**
- * @brief Opening an already-open driver returns silently and touches nothing - not the HAL, not
- *        the controller, not the listener.
- * @pre Invocation B, with SetUp having left exactly one open behind it so the counter can
- *      distinguish a no-op from a re-open.
- * @note Asserted on the fake's counter rather than on an exception, because this fake tolerates
- *       duplicate opens deliberately - a real HAL is single-instance and would fail the second
- *       call, so a duplicate that reached the HAL would raise on a device while passing here.
- * @note It also pins the behaviour the fixture itself relies on: TearDown restores the opened
- *       baseline by calling open() unconditionally, which is only harmless because of this guard.
+ * @brief open() on an already-open driver returns silently without reaching the HAL or replacing
+ *        the controller or listener.
+ * @pre Invocation B, with SetUp having left exactly one open behind it.
+ * @note Asserted on the fake's open counter, because this fake tolerates duplicate opens a
+ *       single-instance real HAL would fail.
  */
 TEST_F(DriverAidlSessionTest, OpeningAnAlreadyOpenDriverIsASilentNoOpThatTouchesNothing) {
     // SetUp left exactly one open behind it, and the session it established is the baseline.
@@ -13771,49 +12206,13 @@ TEST_F(DriverAidlSessionTest, OpeningAnAlreadyOpenDriverIsASilentNoOpThatTouches
            "nothing at all";
 }
 
-// The use-after-free regression: a callback that arrives after a failed close, and again after
-// its owner has ceased to exist, must be dropped and must touch nothing.
-//
-// The hazard, stated concretely, because it is not obvious from either side alone. The event
-// listener is a binder object and the HAL holds its own strong reference to it, so its lifetime
-// is not the middleware's to end. It reaches its owner through a back pointer to a
-// DriverAidlImpl. Those two facts together mean that a listener still registered when its owner's
-// storage goes away is a live binder object holding a dangling pointer, and the next callback -
-// which arrives on the HAL's schedule, not the middleware's - dereferences it. That is CWE-416,
-// and the two ways in are exactly the two this case drives: a close that failed, where a
-// detachment placed after the error check would be skipped, and a destructor.
-//
-// The fix it guards is that detachment happens on both arms of close() - before the result is
-// evaluated, not after - and unconditionally in the destructor. What makes the guard possible to
-// assert at all is that the drop is reported: the detached listener logs a specific line and
-// returns ok, which is the only externally visible trace a dropped oneway callback can leave.
-// The line is matched verbatim, deliberately - a paraphrase would keep passing after the message
-// changed, and the message is the evidence here.
-//
-// And the run surviving is part of the assertion, not the absence of one. If the back pointer
-// were stale, this case would corrupt memory or fault rather than fail: the log assertion is
-// what turns that into a diagnosis instead of a crash somewhere later.
-//
-// Requires invocation b, as the whole fixture does. On a host with no binder driver these lines
-// are compiled and type-checked but never executed - which is stated rather than left implicit,
-// because a case whose evidence only exists on another runner must not be read as evidence here.
 /**
- * @brief A callback arriving after a failed close, and again after its owner has ceased to exist,
- *        is dropped and touches nothing.
- * @pre Invocation B. The listener is retained by this case so it outlives its owner, which is
- *      what the HAL's own strong reference does on a device; without that the hazard would be
- *      unreachable and unasserted.
- * @note The hazard is a use-after-free. The listener is a binder object whose lifetime is not the
- *       middleware's to end, and it reaches its owner through a back pointer, so a listener still
- *       registered when its owner's storage goes away is a live object holding a dangling pointer
- *       that the next callback dereferences. The two ways in are the two arms driven here.
- * @note The invariant is that detachment happens on both arms of close, before the result is
- *       evaluated, and unconditionally in the destructor. The drop line is matched verbatim
- *       because it is the only externally visible trace a dropped oneway callback leaves, and a
- *       paraphrase would keep passing after the message changed.
- * @warning The run surviving is part of the assertion. A stale back pointer would corrupt memory
- *          or fault rather than fail, and the log assertion is what turns that into a diagnosis
- *          instead of a crash somewhere later.
+ * @brief A callback arriving after a failed close, and after its owner is destroyed, is dropped
+ *        with the logged drop line and reaches no application listener.
+ * @pre Invocation B. The case retains the listener so it outlives its owner, as the HAL's strong
+ *      reference does on a device.
+ * @note Guards a use-after-free through the listener's back pointer, so it must detach on both
+ *       close arms and in the destructor; the drop line is matched verbatim.
  */
 TEST_F(DriverAidlSessionTest, ACallbackAfterAFailedCloseOrOwnerDestructionIsDroppedNotDelivered) {
     RecordingFrameListener applicationListener;
@@ -13824,9 +12223,7 @@ TEST_F(DriverAidlSessionTest, ACallbackAfterAFailedCloseOrOwnerDestructionIsDrop
     const char *const expectedDropLine =
         "DriverAidlImpl::EventListener: message received after detach, dropping it";
 
-    // Held so the listener outlives its owner, which is what the HAL's own strong reference does
-    // on a real device. Without it the listener would be collected with the driver and the
-    // hazard would be unreachable - and unasserted.
+    // Held so the listener outlives its owner, as the HAL's strong reference does on a device.
     ::android::sp<cechal::IHdmiCecEventListener> retainedListener;
 
     const std::vector<uint8_t> afterFailedClose{ 0x4F, REPORT_PHYSICAL_ADDRESS, 0x61, 0x00, 0x04 };
@@ -13921,21 +12318,12 @@ TEST_F(DriverAidlSessionTest, ACallbackAfterAFailedCloseOrOwnerDestructionIsDrop
     fake->setCloseResult(true);
 }
 
-// open() reporting a NULL controller is a failure, even when the transaction itself succeeded.
-//
-// Two conditions converge on one guard - `if (!txn.isOk() || (controller == 0))`
-// in DriverAidlImpl::open() - and this is the arm that is easy to omit, because a status of
-// ok reads as success. Accepting a null controller would leave the state OPENED with no
-// session, and every subsequent transmit would then fail on the controller check instead, far
-// from the cause.
 /**
- * @brief open() rejects a null controller even when the transaction itself reported success.
- * @pre Invocation B, with the session closed first and the fake configured to report a null
- *      controller.
- * @note Two conditions converge on one guard, and this is the arm easy to omit because a status
- *       of ok reads as success. Accepting a null controller would leave the state open with no
- *       session, and every later transmit would fail on the controller check instead, far from
- *       the cause - so the state is asserted not to have moved.
+ * @brief open() raises IOException on a null controller even when the transaction succeeded, and
+ *        leaves the driver closed.
+ * @pre Invocation B, with the session closed and the fake reporting a null controller.
+ * @note This is the easily omitted arm of a two-condition guard, because an ok status reads as
+ *       success.
  */
 TEST_F(DriverAidlSessionTest, OpenRejectsANullControllerEvenWhenTheStatusIsOk) {
     ASSERT_NO_THROW({ Driver::getInstance().close(); });
@@ -13957,34 +12345,12 @@ TEST_F(DriverAidlSessionTest, OpenRejectsANullControllerEvenWhenTheStatusIsOk) {
         << "the session could not be restored after the null-controller case";
 }
 
-// A non-ok binder status on open is the other arm of the same guard, and it is asserted
-// separately for the same reason: one condition, two independent ways to satisfy it.
-//
-// The recovery is not a tidy-up, it is half the evidence. Two things have to hold after a failed
-// open, and neither follows from the IOException alone:
-//
-//   The state must not have moved. open() sets OPENED only after both halves of its guard pass,
-//   so a failed open must leave a CLOSED driver - observed here through a guarded operation,
-//   because the state is private and no introspection exists. An implementation that set the
-//   state first and raised afterwards would leave the driver believing it holds a session that
-//   the HAL refused, and every later transmit would fail on the controller check instead, far
-//   from the cause.
-//
-//   The failure must not be sticky. The recovery open has to genuinely reach the HAL, which is
-//   asserted on the fake's own open counter rather than on the absence of an exception: a driver
-//   that had wrongly kept the OPENED state would return silently from open() - that is the
-//   documented behaviour in that state - and the recovery would look identical while nothing
-//   whatsoever had been re-established.
 /**
- * @brief A non-ok transaction on open raises, leaves the state closed, and is not sticky.
- * @pre Invocation B, with the session closed first and a failing open status installed.
- * @note The other arm of the same guard, asserted separately because one condition has two
- *       independent ways to be satisfied.
- * @note The recovery is half the evidence rather than a tidy-up. The failing open is asserted to
- *       have reached the HAL, so the exception is the guard's and not something before the
- *       transaction; and the recovery open is asserted on the fake's counter, because a driver
- *       that had wrongly kept the open state would return silently and look identical while
- *       nothing had been re-established.
+ * @brief A failed open transaction raises IOException, leaves the driver closed, and does not
+ *        stop a later open from re-establishing the session.
+ * @pre Invocation B, with the session closed and a failing open status installed.
+ * @note The recovery is asserted on the fake's open counter, because a driver wrongly left open
+ *       would return silently and look the same.
  */
 TEST_F(DriverAidlSessionTest, OpenRejectsANonOkBinderStatus) {
     ASSERT_NO_THROW({ Driver::getInstance().close(); });
@@ -14025,21 +12391,11 @@ TEST_F(DriverAidlSessionTest, OpenRejectsANonOkBinderStatus) {
            "was not actually re-established";
 }
 
-// A non-ok status on getLogicalAddresses reports 0 and does not raise, which is the arm that
-// keeps the AIDL back-end's failure signalling identical to the legacy back-end's.
-//
-// getLogicalAddress never throws on either back-end: the legacy implementation ignores its
-// HAL's return value entirely and yields whatever the call left in a zero-initialised local.
-// Raising here would be a new exception on a path LibCCEC does not guard, and it would bypass
-// the InvalidStateException that LibCCEC raises for a zero - the signal callers already
-// handle.
 /**
- * @brief A transport failure on the address query reports 0 and does not raise.
+ * @brief A transport failure on the address query reports 0 without raising.
  * @pre Invocation B, with a failing query status installed.
- * @note This is the arm that keeps the AIDL back-end's failure signalling identical to the
- *       legacy back-end's, which ignores its HAL's return value entirely. Raising here would be
- *       a new exception on a path LibCCEC does not guard, and it would bypass the zero-means-no-
- *       address signal callers already handle.
+ * @note Zero is the no-address signal LibCCEC already turns into InvalidStateException, and the
+ *       legacy back-end does not raise here either.
  */
 TEST_F(DriverAidlSessionTest, GetLogicalAddressReportsZeroOnTransportFailureWithoutRaising) {
     fake->setGetLogicalAddressesBinderStatus(
@@ -14055,20 +12411,11 @@ TEST_F(DriverAidlSessionTest, GetLogicalAddressReportsZeroOnTransportFailureWith
         << "a failed query did not report 0, so LibCCEC's zero-means-no-address signal is bypassed";
 }
 
-// A non-ok status on removeLogicalAddresses is ignored, matching the legacy disposition of
-// discarding the HAL return - and the local removal still stands, because it precedes the call.
-//
-// This is the transport arm of the remove disposition; the refusal arm is asserted above. Both
-// are needed: they are separate branches of DriverAidlImpl::removeLogicalAddress() and either
-// one raising
-// would be an unregistered difference.
 /**
  * @brief A transport failure on the removal is ignored, and the local removal still stands
- *        because it precedes the call.
+ *        because it precedes the HAL call.
  * @pre Invocation B, with an address added first and a failing removal status installed.
- * @note The transport arm of the remove disposition; the refusal arm is asserted above. Both are
- *       needed because they are separate branches and either one raising would be an unregistered
- *       difference.
+ * @note Matches the legacy back-end, which discards its HAL's removal result.
  */
 TEST_F(DriverAidlSessionTest, RemoveLogicalAddressIgnoresTransportFailureAndStillRemovesLocally) {
     const LogicalAddress address(LogicalAddress::PLAYBACK_DEVICE_1);
@@ -14086,29 +12433,12 @@ TEST_F(DriverAidlSessionTest, RemoveLogicalAddressIgnoresTransportFailureAndStil
            "removal precedes the HAL call and is not rolled back";
 }
 
-// The four AIDL methods that are deliberately not consumed stay unconsumed.
-//
-// getState, getProperty, registerEventListener and unregisterEventListener are each excluded
-// for a stated reason: the middleware keeps its own CLOSED/CLOSING/OPENED state machine and a
-// second source of truth would be worse than none; the HAL properties have no legacy
-// counterpart, so reading them would be new behaviour; and the listener registration methods
-// exist for non-controlling diagnostic clients, whereas this back-end is the controlling client
-// and receives events through the listener it hands to open().
-//
-// This is asserted rather than commented because an absence is exactly the kind of decision
-// that erodes silently. A future change that started consulting getState - the most tempting of
-// the four, since it looks like a cheap way to answer "is the HAL up" - would fail here and be
-// a visible decision rather than a quiet second state machine. The whole session lifecycle has
-// run by the time this case executes: SetUp closed, reset and re-opened.
 /**
- * @brief The four AIDL methods deliberately not consumed stay unconsumed.
- * @pre Invocation B, after a full session cycle so that anything the back-end does at open or
- *      close time has had its chance to call them.
- * @note Asserted rather than commented because an absence erodes silently. Each exclusion has a
- *       stated reason: the middleware keeps its own state machine and a second source of truth
- *       would be worse than none; the HAL properties have no legacy counterpart; and the listener
- *       registration methods exist for non-controlling diagnostic clients, whereas this back-end
- *       is the controlling client and receives events through the listener it hands to open().
+ * @brief The AIDL back-end never calls getState, getProperty, registerEventListener or
+ *        unregisterEventListener.
+ * @pre Invocation B, after SetUp's session cycle and a representative add, write, poll and
+ *      address query.
+ * @note Asserted because a deliberate absence otherwise erodes silently.
  */
 TEST_F(DriverAidlSessionTest, TheFourUnconsumedAidlMethodsAreNeverCalled) {
     // A representative slice of the surface the middleware does drive, so that the zeros below
@@ -14137,15 +12467,45 @@ TEST_F(DriverAidlSessionTest, TheFourUnconsumedAidlMethodsAreNeverCalled) {
 }
 
 /**
- * @brief Transmit-status translation and the frame-length guard on the AIDL back-end.
+ * @brief LibCCEC::getPhysicalAddress reports 1.0.0.0 through the resolved AIDL back-end without
+ *        calling any method of the fake service or its controller.
+ * @pre Invocation B, with the session open and the fake reset by SetUp.
+ */
+TEST_F(DriverAidlSessionTest, LibCCECReportsTheFixedPhysicalAddressWithoutAnyAidlCall) {
+    ASSERT_NE(fake->getController(), nullptr);
+
+    /**
+     * @brief Snapshots the fake service and controller call counters this case compares.
+     * @return std::vector<int32_t> - The counters in a fixed order, for a before/after comparison.
+     */
+    const auto halCallCounts = [this]() {
+        return std::vector<int32_t>{
+            fake->getOpenCallCount(), fake->getCloseCallCount(), fake->getGetLogicalAddressesCallCount(),
+            fake->getGetStateCallCount(), fake->getGetPropertyCallCount(),
+            fake->getRegisterEventListenerCallCount(), fake->getUnregisterEventListenerCallCount(),
+            fake->getController()->getAddLogicalAddressesCallCount(),
+            fake->getController()->getRemoveLogicalAddressesCallCount(),
+            fake->getController()->getTotalSendMessageCallCount() };
+    };
+    const std::vector<int32_t> countsBefore = halCallCounts();
+
+    unsigned int physicalAddress = kPluginUnsetPhysicalAddress;
+    ASSERT_NO_THROW({ LibCCEC::getInstance().getPhysicalAddress(&physicalAddress); });
+
+    EXPECT_EQ(physicalAddress, kFixedPhysicalAddress)
+        << "LibCCEC did not report the fixed 1.0.0.0 encoding 0x01000000 on the AIDL back-end";
+    EXPECT_EQ(decodeAsThePluginsDo(physicalAddress), "1.0.0.0");
+    EXPECT_EQ(halCallCounts(), countsBefore)
+        << "the physical-address query reached the fake HDMI CEC service or its controller";
+}
+
+/**
+ * @brief Transmit, poll and writeAsync behaviour on an open AIDL back-end.
  *
- * Requires invocation B. See DriverAidlSessionFixture for the precondition and for why the
- * session is cycled in SetUp.
- *
- * Separated from the session fixture because the subject is different: everything here is one
- * call - write() - and what varies is the status the HAL reports and the destination nibble
- * the frame carries. Keeping the matrix in a fixture of its own keeps each case's body to the
- * one thing it varies.
+ * Requires invocation B; see DriverAidlSessionFixture for the precondition and SetUp's session
+ * cycle. Cases cover send-status translation on directed and broadcast frames, a failed send
+ * transaction, the 16-byte frame limit, poll() framing and acknowledgement, and writeAsync's
+ * refusal.
  */
 class DriverAidlTransmitTest : public DriverAidlSessionFixture {
 protected:
@@ -14165,9 +12525,7 @@ protected:
      *
      * @param [in] length - Frame size in bytes the fake is required to have captured.
      *
-     * @note Both the count and the size are checked, because "the call happened" is never the
-     *       claim here: a truncated or padded frame reaches the bus as a different CEC
-     *       message.
+     * @note A truncated or padded frame would reach the bus as a different CEC message.
      */
     void expectExactlyOneFrameOfLength(size_t length) {
         EXPECT_EQ(fake->getController()->getSendMessageCallCount(), 1)
@@ -14178,20 +12536,11 @@ protected:
     }
 };
 
-// A directed frame reported ACK_STATE_0 succeeded: the addressed follower acknowledged it.
-//
-// This is the arm where the inverted sense bites hardest, because the same status value means
-// the opposite thing on a broadcast (asserted below). The frame is also checked on the way
-// through: transmit success is not merely "no exception", it is "these exact bytes reached the
-// HAL".
 /**
- * @brief A directed frame the addressed follower acknowledged succeeds, and the exact bytes
- *        reach the HAL.
- * @pre Invocation B, with the session open and the fake reset by SetUp.
- * @note This is the arm where the inverted status sense bites hardest, because the same value
- *       means the opposite thing on a broadcast. Success is asserted as "these bytes arrived"
- *       rather than as "no exception", so a transmit that dropped or rewrote the frame cannot
- *       pass.
+ * @brief A directed frame reported ACK_STATE_0 (acknowledged) succeeds, and its exact bytes reach
+ *        the HAL.
+ * @pre Invocation B.
+ * @note The same status means rejected on a broadcast, so this is where the inverted sense bites.
  */
 TEST_F(DriverAidlTransmitTest, DirectedFrameAcknowledgedByTheFollowerSucceeds) {
     CECFrame frame = directedFrame();
@@ -14209,21 +12558,11 @@ TEST_F(DriverAidlTransmitTest, DirectedFrameAcknowledgedByTheFollowerSucceeds) {
     EXPECT_EQ(sent[1], GIVE_DEVICE_POWER_STATUS) << "the opcode was altered on the way to the HAL";
 }
 
-// A directed frame reported ACK_STATE_1 was not acknowledged, and raises CECNoAckException -
-// reproducing DriverImpl.cpp:276-278, where the legacy SENT_BUT_NOT_ACKD does the same.
-//
-// The exception type is the substance: Connection and the plugins above it distinguish "no
-// device answered" from "the transmit failed", and collapsing the two into IOException would
-// make an absent peer indistinguishable from a broken HAL.
 /**
- * @brief A directed frame reported as not acknowledged raises CECNoAckException, and was still
- *        sent.
+ * @brief A directed frame reported ACK_STATE_1 (not acknowledged) raises CECNoAckException, and
+ *        was still sent.
  * @pre Invocation B.
- * @note The exception type is the substance: Connection and the plugins above it distinguish "no
- *       device answered" from "the transmit failed", and collapsing the two into IOException
- *       would make an absent peer indistinguishable from a broken HAL.
- * @note The frame is asserted to have reached the HAL, because the exception describes the bus
- *       outcome rather than a refusal to transmit.
+ * @note The exception type lets callers tell an absent peer from a broken HAL.
  */
 TEST_F(DriverAidlTransmitTest, DirectedFrameNotAcknowledgedRaisesNoAck) {
     CECFrame frame = directedFrame();
@@ -14238,22 +12577,11 @@ TEST_F(DriverAidlTransmitTest, DirectedFrameNotAcknowledgedRaisesNoAck) {
     expectExactlyOneFrameOfLength(2u);
 }
 
-// A broadcast frame reported ACK_STATE_1 succeeded, which is the mirror image of the directed
-// case above and the single fact that makes the translation non-trivial.
-//
-// A broadcast has no addressed follower, so nothing acknowledges it; ACK_STATE_1 there means
-// "sent and not rejected". An implementation that mapped ACK_STATE_1 to CECNoAckException
-// unconditionally would compile, would pass every directed case, and would fail every
-// broadcast the middleware sends - which is most of what the Sink emits during discovery.
 /**
- * @brief A broadcast frame reported with the directed not-acknowledged value succeeds, which is
- *        the mirror image of the directed case.
+ * @brief A broadcast frame reported ACK_STATE_1 (sent, not rejected) succeeds, the mirror image of
+ *        the directed case.
  * @pre Invocation B.
- * @note This is the single fact that makes the translation non-trivial. A broadcast has no
- *       addressed follower, so nothing acknowledges it and that value means sent and not
- *       rejected. An implementation mapping it to CECNoAckException unconditionally would
- *       compile, pass every directed case, and fail every broadcast the middleware sends - which
- *       is most of what the Sink emits during discovery.
+ * @note Mapping ACK_STATE_1 to CECNoAckException unconditionally would fail every broadcast.
  */
 TEST_F(DriverAidlTransmitTest, BroadcastFrameNotRejectedSucceeds) {
     CECFrame frame = broadcastFrame(GIVE_DEVICE_POWER_STATUS);
@@ -14266,18 +12594,11 @@ TEST_F(DriverAidlTransmitTest, BroadcastFrameNotRejectedSucceeds) {
     expectExactlyOneFrameOfLength(2u);
 }
 
-// A broadcast frame reported ACK_STATE_0 was rejected by some follower, and for most opcodes
-// that returns normally - matching the legacy implementation, which throws only on the CEC CTS
-// arm.
-//
-// This case is the negative control for the CTS case below: without it, an implementation that
-// raised on every rejected broadcast would pass the CTS case and be wrong everywhere else.
 /**
- * @brief A rejected broadcast carrying an opcode outside the conformance arm returns normally.
+ * @brief A rejected broadcast (ACK_STATE_0) carrying an opcode other than Report Physical Address
+ *        returns normally, as on the legacy back-end.
  * @pre Invocation B.
- * @note The negative control for the conformance case below: without it, an implementation that
- *       raised on every rejected broadcast would pass that case and be wrong everywhere else.
- *       The legacy implementation raises only on the one opcode, which is what this matches.
+ * @note The negative control for the CEC CTS 9-3-3 case that follows.
  */
 TEST_F(DriverAidlTransmitTest, RejectedBroadcastReturnsNormallyForOpcodesOutsideTheCtsArm) {
     CECFrame frame = broadcastFrame(GIVE_DEVICE_POWER_STATUS);
@@ -14290,23 +12611,12 @@ TEST_F(DriverAidlTransmitTest, RejectedBroadcastReturnsNormallyForOpcodesOutside
     expectExactlyOneFrameOfLength(2u);
 }
 
-// The CEC CTS 9-3-3 arm: a rejected broadcast REPORT_PHYSICAL_ADDRESS does raise, so that the
-// caller retries at least once - which is what the conformance test requires.
-//
-// This is the one opcode-specific arm in the whole translation (the broadcast branch of
-// DriverAidlImpl::write(), mirroring DriverImpl.cpp:279-284), and it is the reason
-// REPORT_PHYSICAL_ADDRESS is pinned by
-// a static assertion at the top of this file: if that constant drifted, this case and the
-// negative control above would silently be testing the same opcode and the distinction between
-// them would vanish.
 /**
- * @brief The CEC CTS 9-3-3 arm: a rejected broadcast Report Physical Address raises, so the
- *        caller retries at least once.
+ * @brief The CEC CTS 9-3-3 arm: a rejected broadcast Report Physical Address raises
+ *        CECNoAckException, so the caller retries.
  * @pre Invocation B.
- * @note The one opcode-specific arm in the whole translation, which is why the opcode constant
- *       is pinned by a static assertion at the top of this file: were it to drift, this case and
- *       its negative control would silently test the same opcode and the distinction between
- *       them would vanish.
+ * @note The opcode is pinned by a static_assert at the top of this file, so this case and its
+ *       negative control cannot drift onto the same opcode.
  */
 TEST_F(DriverAidlTransmitTest, RejectedBroadcastReportPhysicalAddressRaisesForTheCtsRetry) {
     CECFrame frame = broadcastFrame(REPORT_PHYSICAL_ADDRESS);
@@ -14319,22 +12629,12 @@ TEST_F(DriverAidlTransmitTest, RejectedBroadcastReportPhysicalAddressRaisesForTh
     expectExactlyOneFrameOfLength(2u);
 }
 
-// A one-byte broadcast reported ACK_STATE_0 returns normally, because the CTS arm requires an
-// opcode to inspect and a one-byte frame has none.
-//
-// The guard is `(length > 1) && ((frame.at(1) & 0xFF) == REPORT_PHYSICAL_ADDRESS)`, and the
-// length conjunct is not decoration: poll() transmits exactly such a one-byte frame
-// in DriverAidlImpl::poll(), so an implementation that read frame.at(1) without the length
-// check would raise std::out_of_range out of every poll - and poll is how the Sink discovers
-// the bus.
 /**
- * @brief A one-byte broadcast returns normally, because the conformance arm needs an opcode byte
- *        to inspect and a one-byte frame has none.
- * @pre Invocation B, with a frame built to exactly one byte.
- * @note The length conjunct in that guard is not decoration: poll() transmits exactly such a
- *       one-byte frame, so an implementation reading the opcode byte without the length check
- *       would raise std::out_of_range out of every poll - and poll is how the Sink discovers the
- *       bus.
+ * @brief A one-byte broadcast reported ACK_STATE_0 returns normally, because the CTS arm needs an
+ *        opcode byte to inspect.
+ * @pre Invocation B, with a frame of exactly one byte.
+ * @note poll() sends exactly such a frame, so reading the opcode without the length check would
+ *       raise std::out_of_range out of every poll.
  */
 TEST_F(DriverAidlTransmitTest, OneByteBroadcastDoesNotReachTheCtsArm) {
     CECFrame pollFrame;
@@ -14349,27 +12649,12 @@ TEST_F(DriverAidlTransmitTest, OneByteBroadcastDoesNotReachTheCtsArm) {
     expectExactlyOneFrameOfLength(1u);
 }
 
-// BUSY means arbitration failed after two attempts and the message was not sent, which is the
-// legacy send-failed family and therefore an IOException - on both destinations, because
-// nothing reached the bus for the ACK sense to apply to.
-//
-// Both destinations are asserted in one case precisely because the answer must not depend on
-// the destination here: BUSY is checked before the nibble is ever read
-// ahead of the acknowledgement matrix in DriverAidlImpl::write(), and an implementation that
-// folded it into that matrix
-// would give two different answers for the same failure.
 /**
- * @brief A busy result is a transmit failure on both destinations, because nothing reached the
- *        bus for the acknowledgement sense to apply to.
- * @pre Invocation B. Both destinations are driven in one case precisely because the answer must
- *      not depend on the destination.
- * @note Busy means arbitration failed and the message was not sent, which is the legacy
- *       send-failed family. It is decided before the destination nibble is read, so an
- *       implementation that folded it into the acknowledgement matrix would give two different
- *       answers for one failure.
- * @note The broadcast half deliberately uses the conformance opcode, whose rejected arm raises a
- *       different exception - so a wrong exception type there means busy fell through into the
- *       matrix.
+ * @brief A BUSY result raises IOException on both a directed and a broadcast frame, because
+ *        nothing reached the bus.
+ * @pre Invocation B.
+ * @note BUSY is decided before the destination nibble; the broadcast half uses the CTS opcode, so
+ *       a CECNoAckException there would mean BUSY fell into the acknowledgement matrix.
  */
 TEST_F(DriverAidlTransmitTest, BusyIsATransmitFailureOnBothDestinations) {
     CECFrame directed = directedFrame();
@@ -14390,22 +12675,12 @@ TEST_F(DriverAidlTransmitTest, BusyIsATransmitFailureOnBothDestinations) {
            "ACK matrix";
 }
 
-// A non-ok binder status is a transport failure and raises IOException, reproducing
-// DriverImpl.cpp:261-263, where a HAL error return does the same.
-//
-// It is checked ahead of the reported send status in DriverAidlImpl::write(), which matters:
-// the out-parameter is meaningless when the transaction did not complete, so a translation that
-// consulted it first would classify a dead binder by whatever happened to be in that variable.
-// The canned status here is deliberately one whose own arm would succeed, so a pass proves the
-// transport check ran first.
 /**
- * @brief A non-ok transaction on send is a transport failure and raises IOException.
- * @pre Invocation B, with a canned send status whose own arm would succeed - so a pass proves
- *      the transport check ran first.
- * @note The transport check is ahead of the reported send status, which matters: the
- *       out-parameter is meaningless when the transaction did not complete, so a translation
- *       consulting it first would classify a dead binder by whatever happened to be in that
- *       variable.
+ * @brief A failed send transaction raises IOException even when the canned send status would
+ *        succeed.
+ * @pre Invocation B, with the send status set to ACK_STATE_0 and a failing transaction status.
+ * @note The status out-parameter is meaningless when the transaction did not complete, so the
+ *       transport check must run first.
  */
 TEST_F(DriverAidlTransmitTest, NonOkBinderStatusOnSendRaisesIoException) {
     CECFrame frame = directedFrame();
@@ -14420,29 +12695,12 @@ TEST_F(DriverAidlTransmitTest, NonOkBinderStatusOnSendRaisesIoException) {
            "status out-parameter was consulted despite the transaction never completing";
 }
 
-// Authorized difference 1, AIDL half: a frame over the AIDL contract length is refused, and -
-// the half that matters more - nothing is sent.
-//
-// 16 bytes is accepted, matching the legacy back-end, which confines the difference to the
-// disputed 17-to-20 band rather than to the guard's existence. 17 and 20 are refused with
-// IOException.
-//
-// The nothing-was-sent assertion is the point. An IOException raised after a truncated frame
-// reached the bus would be strictly worse than either outcome alone: the caller sees a failure
-// while a corrupt CEC frame is already on the wire, and a corrupt frame can be interpreted by a
-// peer as a different message entirely. So the send counter is asserted to be zero, not merely
-// the exception to have been raised. The guard runs ahead of the transmit
-// in DriverAidlImpl::write(), which is what makes that true.
 /**
- * @brief Authorized difference 1, AIDL half: a frame over the AIDL contract length is refused,
- *        and nothing is sent.
- * @pre Invocation B. The frame at exactly the limit is the control that both back-ends accept,
- *      which confines the difference to the disputed band rather than to the guard's existence.
- * @note The nothing-was-sent assertion is the point. An IOException raised after a truncated
- *       frame reached the bus would be worse than either outcome alone - the caller sees a
- *       failure while a corrupt CEC frame is already on the wire, and a peer can interpret a
- *       corrupt frame as a different message entirely. So the send counter is asserted to be
- *       zero, not merely the exception to have been raised.
+ * @brief A frame at the 16-byte AIDL limit is sent whole, while 17- and 20-byte frames raise
+ *        IOException and nothing is sent.
+ * @pre Invocation B.
+ * @note A refusal after a truncated frame reached the bus would be worse than either outcome, so
+ *       the send counter is asserted to be zero.
  */
 TEST_F(DriverAidlTransmitTest, FramesOverTheAidlLimitAreRefusedWithoutBeingSentOrTruncated) {
     // The control: exactly at the limit, accepted, whole.
@@ -14481,29 +12739,12 @@ TEST_F(DriverAidlTransmitTest, FramesOverTheAidlLimitAreRefusedWithoutBeingSentO
     }
 }
 
-// Authorized difference 2, AIDL half: writeAsync raises OperationNotSupportedException on an
-// open driver, after the prelude and the state guard have both passed.
-//
-// Asynchronous transmit is not migrated and is deliberately not emulated - no threads, no work
-// queue, no deferred callback, no wrapper - and that is safe because no production call site
-// reaches it: every plugin transmit goes through Connection::sendToAsync and
-// Connection::sendAsync onto the Bus writer thread, which then calls the synchronous write.
-//
-// Nothing may be transmitted, which is asserted rather than assumed: an implementation that
-// quietly forwarded the frame to sendMessage before raising would emulate asynchrony badly -
-// the frame would go out while the caller was told the operation is unsupported.
 /**
- * @brief Authorized difference 2, AIDL half: writeAsync raises OperationNotSupportedException on
- *        an open driver, once prelude and state guard have both passed.
- * @pre Invocation B, with the session open - this is the one arm that needs an open driver,
- *      which is why it cannot live with the prelude cases.
- * @note Asynchronous transmit is not migrated and deliberately not emulated - no threads, no
- *       work queue, no deferred callback, no wrapper - which is safe because no production call
- *       site reaches it: every plugin transmit goes through Connection's asynchronous entry
- *       points onto the Bus writer thread, which then calls the synchronous write.
- * @note Nothing may be transmitted, asserted rather than assumed: an implementation that quietly
- *       forwarded the frame before raising would put it on the bus while telling the caller the
- *       operation is unsupported.
+ * @brief writeAsync on an open AIDL driver raises OperationNotSupportedException after the
+ *        prelude and state guard, and sends nothing.
+ * @pre Invocation B, with the session open.
+ * @note Asynchronous transmit is deliberately neither migrated nor emulated; no production call
+ *       site reaches it.
  */
 TEST_F(DriverAidlTransmitTest, WriteAsyncRaisesOperationNotSupportedOnAnOpenDriver) {
     CECFrame frame = directedFrame();
@@ -14519,24 +12760,12 @@ TEST_F(DriverAidlTransmitTest, WriteAsyncRaisesOperationNotSupportedOnAnOpenDriv
            "the frame is on the bus and the caller was told the operation is unsupported";
 }
 
-// poll() reaches the bus as a one-byte CEC ping built from the two addresses, and it reaches it
-// through this back-end's own write() rather than through any state query.
-//
-// The byte layout is asserted, not just the call: initiator in the high nibble, destination in
-// the low one, composed in DriverAidlImpl::poll(). getState() is deliberately not used for
-// this - a poll
-// is a transmit that either gets acknowledged or does not, and answering it from the HAL's
-// state would answer a different question entirely, which is why the unconsumed-methods case
-// above checks the state counter stays at zero.
 /**
- * @brief poll() reaches the bus as a one-byte CEC ping built from both addresses, through this
- *        back-end's own write() rather than through any state query.
+ * @brief poll() sends one byte, initiator in the high nibble and destination in the low, through
+ *        this back-end's own write().
  * @pre Invocation B, with the fake acknowledging the ping.
- * @note The byte layout is asserted rather than only the call - initiator in the high nibble,
- *       destination in the low one - so a ping a peer would see as addressed to the wrong device
- *       cannot pass.
- * @see The unconsumed-methods case, which checks the HAL state counter stays at zero: answering a
- *      poll from the HAL's state would answer a different question entirely.
+ * @see DriverAidlSessionTest::TheFourUnconsumedAidlMethodsAreNeverCalled, which keeps getState()
+ *      out of poll().
  */
 TEST_F(DriverAidlTransmitTest, PollTransmitsAOneByteFrameCarryingBothAddresses) {
     const LogicalAddress from(LogicalAddress::PLAYBACK_DEVICE_1);
@@ -14559,19 +12788,12 @@ TEST_F(DriverAidlTransmitTest, PollTransmitsAOneByteFrameCarryingBothAddresses) 
            "one, so a peer would see the ping as addressed to the wrong device";
 }
 
-// A poll the addressed device does not answer raises CECNoAckException, which is how "no device
-// there" is reported all the way up to Bus.
-//
-// A poll is a directed one-byte frame, so ACK_STATE_1 means not acknowledged and the directed
-// arm applies. This is the arm bus discovery actually depends on: a poll that reported success
-// for an absent device would populate the device list with devices that are not there.
 /**
- * @brief A poll the addressed device does not answer raises CECNoAckException, which is how "no
- *        device there" is reported up to Bus.
- * @pre Invocation B, with the fake reporting the directed not-acknowledged value.
- * @note A poll is a directed one-byte frame, so the directed arm applies. This is the arm bus
- *       discovery depends on: a poll reporting success for an absent device would populate the
- *       device list with devices that are not there.
+ * @brief A poll reported ACK_STATE_1 raises CECNoAckException, which is how an absent device is
+ *        reported up to Bus.
+ * @pre Invocation B.
+ * @note Bus discovery depends on this arm: a successful poll of an absent device would list a
+ *       device that is not there.
  */
 TEST_F(DriverAidlTransmitTest, UnansweredPollRaisesNoAck) {
     const LogicalAddress from(LogicalAddress::PLAYBACK_DEVICE_1);

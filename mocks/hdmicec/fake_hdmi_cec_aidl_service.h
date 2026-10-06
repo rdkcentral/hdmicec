@@ -30,6 +30,7 @@
 #include <com/rdk/hal/hdmicec/SendMessageStatus.h>
 #include <com/rdk/hal/hdmicec/State.h>
 #include <cstdint>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -40,11 +41,9 @@
  * @defgroup HDMI_CEC_MOCKS HDMI CEC Middleware Test Doubles
  * @{
  * @par Test Double Specification
- * The doubles in this directory stand in for a HAL while the CCEC middleware is under test.
- * Two transports are covered: the legacy in-process C ABI, stood in for by the GoogleMock double
- * declared in hdmi_cec_driver_mock.h, and the out-of-process com.rdk.hal.hdmicec AIDL HAL, stood in
- * for by the fake declared here.  Nothing in this directory is referenced by a production source
- * list, so nothing here can reach the shipped middleware library.
+ * Doubles that stand in for a HAL while the CCEC middleware is under test: the GoogleMock double of
+ * the legacy C ABI in hdmi_cec_driver_mock.h, and the com.rdk.hal.hdmicec AIDL fake declared here.
+ * No production source list references this directory.
  *
  */
 
@@ -52,34 +51,11 @@
  * @defgroup HDMI_CEC_FAKE_AIDL_SERVICE HDMI CEC Fake AIDL Service
  * @{
  * @par Fake Service Specification
- * A pair of hand-written fakes implementing the existing com.rdk.hal.hdmicec AIDL interface exactly
- * as the frozen 0.1.0.0 snapshot declares it.  No .aidl is authored here, no interface is added and
- * no method is added to an interface: both classes derive from the generated server bases and
- * implement the interface methods those bases leave pure virtual - the seven declared by IHdmiCec
- * and the three declared by IHdmiCecController.@n
- * Two further methods are overridden that the bases do not leave pure virtual, and the distinction
- * matters.  getInterfaceVersion() and getInterfaceHash() are pure virtual on the two interfaces but
- * concrete on BnHdmiCec and BnHdmiCecController, which answer them from the snapshot's compiled-in
- * version and hash; deriving from a generated base is therefore already enough to satisfy them.
- * This fake overrides that concrete pair deliberately, because overriding it is the only way to make
- * a fake report metadata the middleware has to refuse, and that in turn is the only way to reach the
- * present-but-incompatible arm of the middleware's back-end selection.  The mode in which the
- * override takes effect, and the reason a served fake cannot report divergent metadata at all, are
- * below.@n
- * The fakes are registered under the production service name published by
- * ::com::rdk::hal::hdmicec::IHdmiCec::serviceName(), which is what makes the middleware's own
- * service lookup - and therefore its runtime back-end selection - reach them.
- *
- * Two dispatch modes matter and behave differently:
- * - In-process: libbinder resolves a name registered in the calling process to the local BBinder, so
- *   interface_cast hands back this object and every call, including getInterfaceVersion() and
- *   getInterfaceHash(), dispatches virtually here.  This is the only mode in which the four settable
- *   metadata values - each class's interface hash and interface version - take effect, and of those
- *   four only the service's hash can change a selection outcome, because the middleware's
- *   compatibility check reads the service interface's metadata alone.
- * - Out-of-process: the client holds a real proxy, transactions cross the binder driver and event
- *   callbacks arrive on the client's binder threadpool.  The generated onTransact() answers the
- *   metadata transactions from the compiled-in constants, so the metadata overrides are inert here.
+ * Hand-written fakes of the frozen com.rdk.hal.hdmicec 0.1.0.0 IHdmiCec and IHdmiCecController
+ * interfaces, derived from the generated Bn* server bases and published under
+ * ::com::rdk::hal::hdmicec::IHdmiCec::serviceName().@n
+ * In process every call, metadata included, dispatches virtually to the fake; out of process the
+ * generated onTransact() answers the metadata transactions from the compiled-in constants.
  *
  */
 
@@ -88,58 +64,27 @@
  *
  * @brief Declaration of the test-scope fake com.rdk.hal.hdmicec AIDL HdmiCec service.
  *
- * Declares FakeHdmiCecController, FakeHdmiCecService, the address-free trace label by which every
- * diagnostic here identifies an object, and the registration entry point that publishes the service
- * under the production service name.  Every class here is a hand-written fake with plain settable
- * canned responses and plain virtual overrides: there is deliberately no GoogleMock and no
- * GoogleTest dependency, because the implementation of this header is also compiled into the
- * separate fake-service host binary, which links only the AIDL stub and binder libraries.
+ * Declares FakeHdmiCecController, FakeHdmiCecService, fakeHdmiCecTraceLabel() and
+ * registerFakeHdmiCecService().  There is no GoogleMock or GoogleTest dependency, because the
+ * fake-service host binary also compiles the implementation and links only AIDL and binder libraries.
  *
- * @warning Test scope only.  This header is built for test targets exclusively and must never be
- *          referenced from a production source list, from ccec/src, or from any installed header.
+ * @warning Test scope only.  Never reference this header from a production source list, from
+ *          ccec/src, or from any installed header.
  *
  * @see hdmi_cec_driver_mock.h
  */
 
 /**
- * @brief Reports one traced object as a stable, address-free label.
+ * @brief Reports one traced object as a stable, address-free label for diagnostics.
  *
- * The single spelling of object identity in every diagnostic this fake and its host binary print.
- * A raw pointer value answers none of the questions a reader of these lines actually has - is an
- * object held at all, is it the same one as the line above, how many of them have there been - while
- * changing on every run, so it turns a diff of two captured logs into noise and discloses the
- * process's address layout for no diagnostic gain.  A label answers all three and does neither.@n
- * Presence is reported as a word.  Identity is reported as an ordinal minted from one process-wide
- * sequence on first sight of an object and reported for that object thereafter, so "listener #1" and
- * "listener #2" tell a re-registration from a repeat, a number denotes exactly one object for the
- * life of the process whatever kind of object it is, and no two objects ever share one.
- *
- * @param [in] object                     - Object to label, or nullptr.  Used as an identity key
- *                                          only; its value is never printed and never returned
+ * @param [in] object                     - Object to label, or nullptr; used only as an identity key
  *
  * @return ::std::string                          - The label
  * @retval "absent"                               - The object was nullptr
  * @retval "#N"                                   - N is this object's ordinal, minted on first sight
  *
- * @post A non-null object has an ordinal for the rest of the process, and a later call for the same
- *       object returns the same label.
- *
- * @warning Diagnostics only.  Nothing may parse a label or assert on one: the ordinals a run mints
- *          depend on the order in which that run traced its objects, so they are stable within a
- *          capture and deliberately not across captures.
- * @warning Identity is keyed on the address, which is never disclosed, and the registry is never
- *          pruned.  An object destroyed and another allocated at the same address are therefore
- *          reported under one ordinal.  The alternative - an ordinal carried as a member - would mean
- *          widening the generated server bases, which this fake may not do, and the objects traced
- *          here are a session's own and outlive the lines that name them.
- *
- * @note An ordinal belongs to a pointer value, so one object reached through two different base
- *       pointers of a multiply-inherited type can be minted two of them.  Every site in this fake and
- *       its host traces an object through a single static type - a listener always as
- *       ::com::rdk::hal::hdmicec::IHdmiCecEventListener, the service always as FakeHdmiCecService -
- *       which is what keeps one object under one ordinal across the lines that name it, and a new
- *       site has to do the same.
- *
+ * @post A non-null object keeps its ordinal, and so its label, for the rest of the process.
+ * @warning Diagnostics only: ordinals depend on trace order, so never parse or assert on a label.
  * @see FakeHdmiCecService, registerFakeHdmiCecService()
  */
 ::std::string fakeHdmiCecTraceLabel(const void* object);
@@ -147,119 +92,56 @@
 /**
  * @brief Test-scope fake of the com.rdk.hal.hdmicec IHdmiCecController AIDL interface.
  *
- * The controller half of the fake HAL: the object a client receives from
- * FakeHdmiCecService::open() and through which it adds and removes logical addresses and transmits
- * CEC messages.@n
- * It derives from the generated server base ::com::rdk::hal::hdmicec::BnHdmiCecController, and
- * deliberately not from IHdmiCecControllerDefault, because IHdmiCecControllerDefault::onAsBinder()
- * returns nullptr: an object derived from it can never be published to the service manager nor
- * reached through a proxy, so a fake built on it would silently never be called.
- *
- * The fake is intentionally dumb.  Each method records what it was given, increments its call
- * counter and answers with the canned response the test installed.  It performs no CEC reasoning of
- * any kind: it does not inspect a frame's destination nibble, does not classify a message as
- * directed or broadcast, and does not compute a SendMessageStatus.  That translation logic belongs
- * to the middleware adapter under test, and duplicating it here would make the test assert the
- * fake's opinion instead of the adapter's behaviour.
- *
- * Every canned response has a deterministic default, stated on its setter, so a test that
- * configures nothing at all still observes a fully functional controller.
+ * The controller FakeHdmiCecService::open() hands out: its add, remove and send methods count and
+ * capture calls, validate and track registrations, and answer from setters with fixed defaults.
+ * An allocation poll bypasses getSendMessageCallCount(), getLastSentMessage() and
+ * setSendMessageResult(): it is recorded in getAllocationPolls() and answers ACK_STATE_1 (free)
+ * unless setAllocationPollResult() or setLogicalAddressOccupied() says otherwise.
  *
  * @warning Test scope only - never reference this class from a production source list.
- *
  * @see FakeHdmiCecService
  */
 class FakeHdmiCecController : public ::com::rdk::hal::hdmicec::BnHdmiCecController {
 public:
     /**
-     * @brief Adds logical addresses on the fake HAL.
+     * @brief Adds logical addresses on the fake HAL, validating them as IHdmiCecController does.
      *
-     * Captures the vector for later inspection, increments the add call counter, writes the canned
-     * boolean result and returns the canned binder status.  The vector is never interpreted: its
-     * width is exactly what the caller marshalled, which is the property the single-element-array
-     * assertions rely on.
+     * @param [in]  logicalAddresses          - Addresses the client marshalled, captured verbatim
+     * @param [out] _aidl_return              - By default true only if all are in 0..14 and unregistered
      *
-     * @param [in]  logicalAddresses          - Addresses the client marshalled.  Captured verbatim and
-     *                                          retrievable through getLastAddedLogicalAddresses()
-     * @param [out] _aidl_return              - Receives the canned boolean result.  Left untouched
-     *                                          when the canned binder status is non-ok, and when the
-     *                                          pointer is null
-     *
-     * @return ::android::binder::Status              - The canned binder status, returned verbatim.
-     *                                                  A non-ok status the test installed is returned
-     *                                                  unchanged and before the out-parameter is
-     *                                                  written, and the adapter under test must map it
-     *                                                  to IOException
-     * @retval ok                                     - Default, or whatever ok status was installed
-     *
-     * @pre setAddLogicalAddressesResult() and setAddLogicalAddressesBinderStatus() select the
-     *      outcome; both have deterministic defaults, so neither call is required.
-     * @post getAddLogicalAddressesCallCount() has advanced by one and
-     *       getLastAddedLogicalAddresses() reports this call's vector, whatever the outcome.
-     *
-     * @see setAddLogicalAddressesResult(), setAddLogicalAddressesBinderStatus(),
-     *      getLastAddedLogicalAddresses(), getAddLogicalAddressesCallCount()
+     * @return ::android::binder::Status              - The canned binder status; non-ok writes nothing
+     * @post Only an ok status with a true result adds them to getRegisteredLogicalAddresses().
+     * @see setAddLogicalAddressesResult(), setAddLogicalAddressesBinderStatus()
      */
     ::android::binder::Status addLogicalAddresses(const ::std::vector<int32_t>& logicalAddresses,
                                                  bool* _aidl_return) override;
 
     /**
-     * @brief Removes logical addresses on the fake HAL.
+     * @brief Removes logical addresses on the fake HAL, validating them as IHdmiCecController does.
      *
-     * Captures the vector, increments the remove call counter, writes the canned boolean result and
-     * returns the canned binder status.
+     * @param [in]  logicalAddresses          - Addresses the client marshalled, captured verbatim
+     * @param [out] _aidl_return              - Receives the result, by default true only when every
+     *                                          address is in 0..14 and currently registered
      *
-     * @param [in]  logicalAddresses          - Addresses the client marshalled.  Captured verbatim and
-     *                                          retrievable through getLastRemovedLogicalAddresses()
-     * @param [out] _aidl_return              - Receives the canned boolean result.  Left untouched
-     *                                          when the canned binder status is non-ok, and when the
-     *                                          pointer is null
+     * @return ::android::binder::Status              - The canned binder status; a non-ok one leaves
+     *                                                  the out-parameter and registrations untouched
      *
-     * @return ::android::binder::Status              - The canned binder status, returned verbatim.
-     *                                                  A non-ok status the test installed is returned
-     *                                                  unchanged and before the out-parameter is
-     *                                                  written, and the adapter under test must log it
-     *                                                  and let nothing escape
-     * @retval ok                                     - Default, or whatever ok status was installed
-     *
-     * @post getRemoveLogicalAddressesCallCount() has advanced by one and
-     *       getLastRemovedLogicalAddresses() reports this call's vector, whatever the outcome.
-     *
-     * @see setRemoveLogicalAddressesResult(), setRemoveLogicalAddressesBinderStatus(),
-     *      getLastRemovedLogicalAddresses(), getRemoveLogicalAddressesCallCount()
+     * @post The call count and capture have advanced; only a true result deregisters the addresses.
+     * @see setRemoveLogicalAddressesResult(), setRemoveLogicalAddressesBinderStatus()
      */
     ::android::binder::Status removeLogicalAddresses(const ::std::vector<int32_t>& logicalAddresses,
                                                     bool* _aidl_return) override;
 
     /**
-     * @brief Transmits a CEC message through the fake HAL.
+     * @brief Transmits a CEC frame through the fake HAL, answering one-byte self-addressed polls itself.
      *
-     * Captures the byte vector, increments the send call counter, writes the canned
-     * SendMessageStatus and returns the canned binder status.  The message bytes are never examined:
-     * whether the frame is directed or broadcast, and what that implies about the meaning of
-     * ACK_STATE_0 and ACK_STATE_1, is entirely the adapter's concern.
+     * @param [in]  message                   - Raw frame; a poll is recorded in getAllocationPolls(), any
+     *                                          other frame is captured whole for getLastSentMessage()
+     * @param [out] _aidl_return              - Receives the poll answer or the canned send status;
+     *                                          untouched on a non-ok status
      *
-     * @param [in]  message                   - Raw CEC frame the client marshalled.  Captured verbatim
-     *                                          and retrievable through getLastSentMessage()
-     * @param [out] _aidl_return              - Receives the canned SendMessageStatus.  Left untouched
-     *                                          when the canned binder status is non-ok, and when the
-     *                                          pointer is null
-     *
-     * @return ::android::binder::Status              - The canned binder status, returned verbatim.
-     *                                                  A non-ok status the test installed is returned
-     *                                                  unchanged and before the out-parameter is
-     *                                                  written, and the adapter under test must map it
-     *                                                  to IOException whatever send status was also
-     *                                                  installed
-     * @retval ok                                     - Default, or whatever ok status was installed
-     *
-     * @post getSendMessageCallCount() has advanced by one and getLastSentMessage() reports this
-     *       frame, whatever the outcome.  No length limit is applied here, so a frame the adapter
-     *       under test was required to reject leaves both unchanged and is thereby distinguishable
-     *       from one it truncated.
-     *
-     * @see setSendMessageResult(), setSendMessageBinderStatus(), getLastSentMessage(),
-     *      getSendMessageCallCount()
+     * @return ::android::binder::Status              - The canned binder status, polls included
+     * @see setSendMessageResult(), setAllocationPollResult(), getTotalSendMessageCallCount()
      */
     ::android::binder::Status sendMessage(const ::std::vector<uint8_t>& message,
                                           ::com::rdk::hal::hdmicec::SendMessageStatus* _aidl_return) override;
@@ -267,23 +149,11 @@ public:
     /**
      * @brief Reports the interface version this fake claims.
      *
-     * BnHdmiCecController already implements this method concretely, from the same compiled-in
-     * ::com::rdk::hal::hdmicec::IHdmiCecController::VERSION, so the interface's pure-virtual
-     * declaration is satisfied without an override and this one is not required.  It is kept so that
-     * both metadata methods on both fake classes answer from a member that setInterfaceVersion()
-     * installs and reset() restores, which gives the pair one shape and one place to restore.@n
-     * The value reported is whatever setInterfaceVersion() last installed, defaulting to the
-     * compiled-in constant.  What that value can and cannot decide is stated on the setter, and it is
-     * narrower than the service interface's version: the middleware's compatibility check reads the
-     * service interface's metadata alone.
-     *
-     * @return int32_t                                - The reported interface version.  The
-     *                                                  compiled-in constant until
-     *                                                  setInterfaceVersion() installs another
+     * @return int32_t                                - The version setInterfaceVersion() last
+     *                                                  installed; IHdmiCecController::VERSION by default
      *
      * @warning Effective under local (in-process) dispatch only.  Across a binder transaction the
      *          generated onTransact() answers from the compiled-in constant instead.
-     *
      * @see setInterfaceVersion(), reset()
      */
     int32_t getInterfaceVersion() override;
@@ -291,53 +161,64 @@ public:
     /**
      * @brief Reports the interface hash this fake claims.
      *
-     * Overrides the concrete implementation BnHdmiCecController supplies, answering the hash
-     * setInterfaceHash() last installed and defaulting to the same compiled-in
-     * ::com::rdk::hal::hdmicec::IHdmiCecController::HASHVALUE.  It is no more required than the
-     * version override is, and is settable on exactly the same terms.
-     *
-     * @return std::string                            - The reported interface hash.  The compiled-in
-     *                                                  constant until setInterfaceHash() installs
-     *                                                  another
+     * @return std::string                            - The hash setInterfaceHash() last installed;
+     *                                                  IHdmiCecController::HASHVALUE by default
      *
      * @warning Effective under local (in-process) dispatch only, exactly as for
      *          getInterfaceVersion().
-     *
      * @see setInterfaceHash(), reset()
      */
     std::string getInterfaceHash() override;
 
+    /**
+     * @brief Counts one incoming binder transaction by code, then dispatches it as generated.
+     *
+     * @param [in]  code                      - Transaction code, TRANSACTION_* for an interface method
+     * @param [in]  data                      - Marshalled request, passed through unread
+     * @param [out] reply                     - Reply parcel the generated dispatch writes
+     * @param [in]  flags                     - Transaction flags, passed through
+     *
+     * @return ::android::status_t                    - What BnHdmiCecController::onTransact() returns
+     *
+     * @post getTransactionCounts() reports one more transaction under code.
+     * @see getTransactionCounts()
+     */
+    ::android::status_t onTransact(uint32_t code, const ::android::Parcel& data, ::android::Parcel* reply,
+                                   uint32_t flags) override;
+
+    /**
+     * @brief Returns the incoming binder transactions by code since construction or reset().
+     *
+     * @return ::std::map<uint32_t, int32_t>          - Count per code; a code never received is absent
+     *
+     * @note Transactions BBinder::transact() answers itself, PING_TRANSACTION among them, are never
+     *       counted, and local (in-process) dispatch bypasses onTransact(), so nothing is counted there.
+     * @see onTransact(), reset()
+     */
+    ::std::map<uint32_t, int32_t> getTransactionCounts() const;
+
     // Canned responses for test access
 
     /**
-     * @brief Selects the boolean addLogicalAddresses() reports.
+     * @brief Forces the boolean addLogicalAddresses() reports, in place of its contract validation.
      *
-     * Exists to reach the address-unavailable arm: the AIDL HAL collapses the legacy HAL's
-     * distinction between "logical address unavailable" and "general error" into one boolean, and
-     * false is the value the adapter under test must translate into
-     * AddressNotAvailableException - the caller-visible difference the migration registers and
-     * exercises through both real Sink call paths.
+     * Reaches the address-unavailable arm, where the adapter must raise AddressNotAvailableException.
      *
      * @param [in] result                     - Value addLogicalAddresses() writes to its out-parameter
      *
-     * @post Default is true, so an unconfigured fake reports a successful address acquisition.
-     *
+     * @post false registers nothing and true registers every address not yet registered, until reset().
      * @see addLogicalAddresses()
      */
     void setAddLogicalAddressesResult(bool result);
 
     /**
-     * @brief Selects the boolean removeLogicalAddresses() reports.
+     * @brief Forces the boolean removeLogicalAddresses() reports, in place of its contract validation.
      *
-     * Exists to reach the ignored-failure arm: the legacy back-end discards the HAL's removal return
-     * value and returns silently, so the adapter under test must log a false result and let nothing
-     * escape.  Raising there would be an unregistered behaviour difference, and false is how a test
-     * proves it does not.
+     * Reaches the ignored-failure arm, where the adapter must log a false result and raise nothing.
      *
      * @param [in] result                     - Value removeLogicalAddresses() writes to its out-parameter
      *
-     * @post Default is true.
-     *
+     * @post false deregisters nothing and true deregisters every address given, until reset().
      * @see removeLogicalAddresses()
      */
     void setRemoveLogicalAddressesResult(bool result);
@@ -345,62 +226,37 @@ public:
     /**
      * @brief Makes addLogicalAddresses() take at least @p delayMs milliseconds to answer.
      *
-     * Exists to reach the middleware's slow-HAL-call diagnostic, which is a THRESHOLD and not a
-     * timeout: DriverAidlImpl brackets every synchronous AIDL call with a monotonic clock read and
-     * emits one LOG_WARN line when the call outlives its threshold, abandoning nothing and raising
-     * nothing.  That warning arm cannot be reached by any canned result or status, because none of
-     * them takes time; only a call that is genuinely slow reaches it.  A test that asserted the
-     * warning without making a call slow would be asserting nothing.
-     *
-     * addLogicalAddresses() rather than another method because it is the shortest complete round
-     * trip a test can drive through the public Driver interface, so the delay is paid once and no
-     * session state changes around it.
+     * Reaches the middleware's slow-HAL-call warning, a threshold rather than a timeout.
      *
      * @param [in] delayMs                    - Milliseconds to sleep before answering.  Zero or
      *                                          negative disables the delay
      *
      * @post Default is 0, so every other case pays nothing.  Cleared by reset().
-     *
-     * @warning The sleep is taken with NO LOCK HELD, deliberately: the instance mutex guards the
-     *          canned responses and the captures, and holding it across a sleep would stall a
-     *          concurrent capture read on a remote fake answering on binder threads.  The delay
-     *          value is read under the lock and the lock is dropped before sleeping.
-     * @warning Real wall-clock time, so a caller pays it in test duration.  Keep it just above the
-     *          middleware's threshold rather than comfortably above it.
-     *
+     * @warning Real wall-clock time, slept with no lock held; keep it just above the threshold.
      * @see addLogicalAddresses()
      */
     void setAddLogicalAddressesDelayMs(int32_t delayMs);
 
     /**
-     * @brief Selects the SendMessageStatus sendMessage() reports.
+     * @brief Selects the SendMessageStatus sendMessage() reports for an application frame.
      *
-     * Exists to reach every arm of the adapter's status translation, whose sense inverts between a
-     * directed and a broadcast destination: ACK_STATE_0 means acknowledged for a directed message but
-     * rejected for a broadcast, ACK_STATE_1 is the mirror of that, and BUSY means arbitration failed
-     * and nothing was sent.  The fake reports the value verbatim and forms no opinion about which
-     * reading applies.
+     * Reaches every arm of the adapter's status translation, whose sense inverts for broadcasts.
      *
-     * @param [in] status                     - Value sendMessage() writes to its out-parameter
+     * @param [in] status                     - Value sendMessage() writes for every non-poll frame
      *
-     * @post Default is ::com::rdk::hal::hdmicec::SendMessageStatus::ACK_STATE_0, which for a directed
-     *       message is the acknowledged case.
-     *
-     * @see sendMessage()
+     * @post Default is ACK_STATE_0, acknowledged for a directed frame; polls default to ACK_STATE_1.
+     * @see sendMessage(), setAllocationPollResult()
      */
     void setSendMessageResult(::com::rdk::hal::hdmicec::SendMessageStatus status);
 
     /**
      * @brief Installs the binder status addLogicalAddresses() returns.
      *
-     * Exists to reach the transport-failure arm: a non-ok binder status must be translated by the
-     * adapter into IOException.  Independent of the statuses installed for the other two methods, so
-     * a test can fail one call without disturbing the rest.
+     * Reaches the add transport-failure arm, which the adapter must translate into IOException.
      *
      * @param [in] status                     - Status to return, ok or non-ok
      *
      * @post Default is an ok status.
-     *
      * @see addLogicalAddresses()
      */
     void setAddLogicalAddressesBinderStatus(const ::android::binder::Status& status);
@@ -408,78 +264,78 @@ public:
     /**
      * @brief Installs the binder status removeLogicalAddresses() returns.
      *
-     * Exists to reach the removal transport-failure arm, which - unlike the add case - the adapter
-     * must log and swallow rather than raise, mirroring the legacy back-end's silent return.
+     * Reaches the removal transport-failure arm, which the adapter must log and swallow.
      *
      * @param [in] status                     - Status to return, ok or non-ok
      *
      * @post Default is an ok status.
-     *
      * @see removeLogicalAddresses()
      */
     void setRemoveLogicalAddressesBinderStatus(const ::android::binder::Status& status);
 
     /**
-     * @brief Installs the binder status sendMessage() returns.
+     * @brief Installs the binder status sendMessage() returns, allocation polls included.
      *
-     * Exists to reach the transmit transport-failure arm, which the adapter must translate into
-     * IOException regardless of any SendMessageStatus value.
+     * Reaches the transmit transport-failure arm (IOException whatever SendMessageStatus is set)
+     * and the failed-poll arm of the middleware's allocation.
      *
      * @param [in] status                     - Status to return, ok or non-ok
      *
      * @post Default is an ok status.
-     *
      * @see sendMessage()
      */
     void setSendMessageBinderStatus(const ::android::binder::Status& status);
 
     /**
+     * @brief Marks a logical address as taken, or free, for allocation polls.
+     *
+     * @param [in] address                    - Logical address whose allocation poll is answered
+     * @param [in] occupied                   - true answers ACK_STATE_0 (taken); false restores the
+     *                                          default ACK_STATE_1 (free)
+     *
+     * @post Cleared by reset().
+     *
+     * @see sendMessage(), setAllocationPollResult()
+     */
+    void setLogicalAddressOccupied(int32_t address, bool occupied);
+
+    /**
+     * @brief Selects the send status an allocation poll of @p address reports.
+     *
+     * Reaches the failed-poll arm of the middleware's allocation, for example with BUSY.
+     *
+     * @param [in] address                    - Logical address whose allocation poll is answered
+     * @param [in] status                     - Send status that poll reports
+     *
+     * @post That poll reports @p status, not the default ACK_STATE_1 (free), until reset().
+     *
+     * @see sendMessage(), setLogicalAddressOccupied()
+     */
+    void setAllocationPollResult(int32_t address, ::com::rdk::hal::hdmicec::SendMessageStatus status);
+
+    /**
      * @brief Overrides the interface hash this fake controller claims.
      *
-     * The controller half of the metadata pair, and its reach is narrower than the service's, which
-     * is the first thing to know about it.  The middleware's compatibility check reads the service
-     * interface's metadata alone - IHdmiCec - so a hash installed here decides no selection outcome
-     * and must not be read as a second route to the present-but-incompatible arm; what it does is
-     * make the value this class reports observable and changeable, so the divergence trace on
-     * getInterfaceHash() is reached by a test rather than left as an unreachable defensive branch.
-     * The parameter is an arbitrary string, exactly as on the service's setter, because no value is
-     * privileged here.
+     * Reaches the divergence trace on getInterfaceHash(); no selection outcome reads it.
      *
      * @param [in] hash                       - Hash string to report
      *
-     * @post Default is ::com::rdk::hal::hdmicec::IHdmiCecController::HASHVALUE, the real frozen hash
-     *       compiled into the snapshot, so an unconfigured controller reports the compatible value.
-     *       reset() restores that default, so an override cannot leak into the next case.
-     *
-     * @warning Effective under local (in-process) dispatch only.  A remotely served fake cannot
-     *          report divergent metadata at all, because the generated onTransact() answers the
-     *          metadata transactions from the compiled-in constants, so this setter has no effect on
-     *          the out-of-process invocation and must not be judged redundant on the evidence of a
-     *          remote run ignoring it.
-     *
-     * @see getInterfaceHash(), setInterfaceVersion(), reset(), FakeHdmiCecService::setInterfaceHash()
+     * @post Default is IHdmiCecController::HASHVALUE, the frozen hash; reset() restores it.
+     * @warning Effective under local (in-process) dispatch only.
+     * @see getInterfaceHash(), FakeHdmiCecService::setInterfaceHash()
      */
     void setInterfaceHash(std::string hash);
 
     /**
      * @brief Overrides the interface version this fake controller claims.
      *
-     * The version half of the same pair, on the same terms and with the same reach: the compatibility
-     * check never reads it, so it decides no selection outcome, and its job is to make the divergence
-     * trace on getInterfaceVersion() reachable and reached.  No validation is applied - any int32_t
-     * is installed as given - because the whole point of the control is to report a value the
-     * snapshot would not.
+     * Reaches the divergence trace on getInterfaceVersion(); no selection outcome reads it.
      *
-     * @param [in] version                    - Interface version to report
+     * @param [in] version                    - Interface version to report, installed unvalidated
      *
-     * @post Default is ::com::rdk::hal::hdmicec::IHdmiCecController::VERSION, the version compiled
-     *       into the snapshot, so an unconfigured controller reports the compatible value.  reset()
-     *       restores that default.
-     *
+     * @post Default is IHdmiCecController::VERSION, the frozen version; reset() restores it.
      * @warning Effective under local (in-process) dispatch only, exactly as for setInterfaceHash().
-     *
-     * @see getInterfaceVersion(), setInterfaceHash(), reset(),
-     *      FakeHdmiCecService::setInterfaceVersion()
+     * @see getInterfaceVersion(), FakeHdmiCecService::setInterfaceVersion()
      */
     void setInterfaceVersion(int32_t version);
 
@@ -488,9 +344,7 @@ public:
     /**
      * @brief Returns the address vector the last addLogicalAddresses() call carried.
      *
-     * The assertion target for single-element array marshalling: the middleware's address operations
-     * are single-valued, so a correct adapter marshals exactly one entry carrying exactly the
-     * requested address.  Without this capture that assertion cannot be written at all.
+     * The assertion target for single-element marshalling: one entry, the requested address.
      *
      * @return ::std::vector<int32_t>                 - The captured vector, empty if never called
      *
@@ -501,8 +355,7 @@ public:
     /**
      * @brief Returns the address vector the last removeLogicalAddresses() call carried.
      *
-     * The removal-side counterpart of getLastAddedLogicalAddresses(), asserting the same
-     * single-element marshalling contract.
+     * The removal-side counterpart of getLastAddedLogicalAddresses().
      *
      * @return ::std::vector<int32_t>                 - The captured vector, empty if never called
      *
@@ -511,16 +364,14 @@ public:
     ::std::vector<int32_t> getLastRemovedLogicalAddresses() const;
 
     /**
-     * @brief Returns the message bytes the last sendMessage() call carried.
+     * @brief Returns the last application frame sendMessage() was given, allocation polls excluded.
      *
-     * The assertion target for frame marshalling and for the frame-length boundary cases, where a
-     * frame at the contract limit must arrive byte for byte and an over-length frame must never
-     * arrive at all - truncation would silently put a corrupt CEC frame on the bus, so the test
-     * distinguishes "rejected" from "trimmed" by reading this capture.
+     * The assertion target for frame marshalling and the length boundary: a frame at the limit
+     * arrives byte for byte, and an over-length frame never arrives, truncated or otherwise.
      *
-     * @return ::std::vector<uint8_t>                 - The captured frame, empty if never called
+     * @return ::std::vector<uint8_t>                 - The captured frame, empty when none was captured
      *
-     * @see sendMessage(), getSendMessageCallCount()
+     * @see sendMessage(), getSendMessageCallCount(), getAllocationPolls()
      */
     ::std::vector<uint8_t> getLastSentMessage() const;
 
@@ -543,58 +394,88 @@ public:
     int32_t getRemoveLogicalAddressesCallCount() const;
 
     /**
-     * @brief Returns how many times sendMessage() has been called.
+     * @brief Returns how many application frames sendMessage() has been given, allocation polls excluded.
      *
-     * The assertion target for "the adapter rejected this frame without transmitting": a guard that
-     * fires before the HAL call leaves this counter unchanged, which is the only way to tell a
-     * rejection apart from a failed transmit.
+     * A frame the adapter rejects before the HAL call leaves it unchanged, unlike a failed transmit.
      *
-     * @return int32_t                                - Call count since construction or the last reset()
+     * @return int32_t                                - Frame count since construction or the last reset()
      *
-     * @see sendMessage(), reset()
+     * @see sendMessage(), getTotalSendMessageCallCount(), getAllocationPolls()
      */
     int32_t getSendMessageCallCount() const;
 
     /**
+     * @brief Returns how many times sendMessage() has been called, allocation polls included.
+     *
+     * @return int32_t                                - Call count since construction or the last reset()
+     *
+     * @see sendMessage(), getSendMessageCallCount(), getAllocationPolls()
+     */
+    int32_t getTotalSendMessageCallCount() const;
+
+    /**
+     * @brief Returns the addresses allocation polls asked about, in the order they arrived.
+     *
+     * @return ::std::vector<int32_t>                 - Polled addresses since construction or reset()
+     *
+     * @see sendMessage(), reset()
+     */
+    ::std::vector<int32_t> getAllocationPolls() const;
+
+    /**
+     * @brief Returns the logical addresses currently registered through this controller.
+     *
+     * @return ::std::vector<int32_t>                 - Addresses added and not since removed, in the
+     *                                                  order they were added
+     *
+     * @see addLogicalAddresses(), removeLogicalAddresses(), clearRegisteredLogicalAddresses()
+     */
+    ::std::vector<int32_t> getRegisteredLogicalAddresses() const;
+
+    /**
+     * @brief Drops every registered logical address, as a successful IHdmiCec close does.
+     *
+     * @post getRegisteredLogicalAddresses() is empty.
+     *
+     * @see FakeHdmiCecService::close()
+     */
+    void clearRegisteredLogicalAddresses();
+
+    /**
      * @brief Restores every canned response to its default and clears every capture and counter.
      *
-     * Called from a fixture's set-up so that one long-lived registered fake - the service resolves
-     * once per process, so the fake cannot be re-registered per case - does not leak configuration or
-     * observations from one case into the next.
+     * Called from fixture set-up, so the one long-lived registered fake leaks nothing between cases.
      *
-     * @post Canned responses hold their documented defaults; captures are empty; counters are zero.
-     *
+     * @post Canned responses hold their documented defaults and no add or remove result is forced;
+     *       captures, allocation-poll answers and registrations are empty; counters are zero.
      * @see FakeHdmiCecService::reset()
      */
     void reset();
 
 private:
-    /** @brief Guards every canned response and capture below; all critical sections are short and
-     *         hold no lock across a callback, because a remote fake answers on binder threads while a
-     *         test thread may be reading a capture or installing a canned response. */
+    /** @brief Guards every canned response and capture below; held only for short sections. */
     mutable ::std::mutex mutex;
 
-    /** @brief Canned addLogicalAddresses() result.  Default: address acquired. */
-    bool addLogicalAddressesResult = true;
+    /** @brief Forced addLogicalAddresses() result; ::std::nullopt (default) validates each request. */
+    ::std::optional<bool> addLogicalAddressesResult;
 
-    /** @brief Canned removeLogicalAddresses() result.  Default: address removed. */
-    bool removeLogicalAddressesResult = true;
+    /** @brief Forced removeLogicalAddresses() result; ::std::nullopt (default) validates each request. */
+    ::std::optional<bool> removeLogicalAddressesResult;
 
-    /** @brief Milliseconds addLogicalAddresses() sleeps before answering, with no lock held.
-     *         Default: 0, so no case pays for it unless it asks. */
+    /** @brief Milliseconds addLogicalAddresses() sleeps, unlocked, before answering (default 0). */
     int32_t addLogicalAddressesDelayMs = 0;
 
-    /** @brief Canned sendMessage() status.  Default: ACK_STATE_0, acknowledged for a directed frame. */
+    /** @brief Canned application-frame send status (default ACK_STATE_0, acknowledged when directed). */
     ::com::rdk::hal::hdmicec::SendMessageStatus sendMessageResult =
         ::com::rdk::hal::hdmicec::SendMessageStatus::ACK_STATE_0;
 
-    /** @brief Canned addLogicalAddresses() binder status.  Default: ok. */
+    /** @brief Canned addLogicalAddresses() binder status (default ok). */
     ::android::binder::Status addLogicalAddressesBinderStatus;
 
-    /** @brief Canned removeLogicalAddresses() binder status.  Default: ok. */
+    /** @brief Canned removeLogicalAddresses() binder status (default ok). */
     ::android::binder::Status removeLogicalAddressesBinderStatus;
 
-    /** @brief Canned sendMessage() binder status.  Default: ok. */
+    /** @brief Canned sendMessage() binder status, allocation polls included (default ok). */
     ::android::binder::Status sendMessageBinderStatus;
 
     ::std::vector<int32_t> lastAddedLogicalAddresses;
@@ -605,75 +486,52 @@ private:
     int32_t removeLogicalAddressesCallCount = 0;
     int32_t sendMessageCallCount = 0;
 
-    /** @brief Interface version getInterfaceVersion() reports.  Written by this initialiser, by
-     *         setInterfaceVersion() and by reset(); it is a member rather than a literal in the
-     *         getter so that reset() has one place to restore and the getter has one value to
-     *         return.  Default: the frozen version. */
+    /** @brief Count of every sendMessage() call, allocation polls included. */
+    int32_t sendMessageTotalCallCount = 0;
+
+    /** @brief Allocation-poll answers by address; an absent address answers ACK_STATE_1 (free). */
+    ::std::map<int32_t, ::com::rdk::hal::hdmicec::SendMessageStatus> allocationPollResults;
+
+    /** @brief Addresses allocation polls asked about, in arrival order. */
+    ::std::vector<int32_t> allocationPolls;
+
+    /** @brief Incoming binder transactions by code, counted by onTransact(). */
+    ::std::map<uint32_t, int32_t> transactionCounts;
+
+    /** @brief Addresses registered through this controller and not since removed. */
+    ::std::vector<int32_t> registeredLogicalAddresses;
+
+    /** @brief Interface version getInterfaceVersion() reports (default the frozen version). */
     int32_t interfaceVersionResult = ::com::rdk::hal::hdmicec::IHdmiCecController::VERSION;
 
-    /** @brief Interface hash getInterfaceHash() reports.  Written by this initialiser, by
-     *         setInterfaceHash() and by reset(), exactly as the version is.  Default: the frozen
-     *         hash. */
+    /** @brief Interface hash getInterfaceHash() reports (default the frozen hash). */
     ::std::string interfaceHashResult = ::com::rdk::hal::hdmicec::IHdmiCecController::HASHVALUE;
 };
 
 /**
  * @brief Test-scope fake of the com.rdk.hal.hdmicec IHdmiCec AIDL service.
  *
- * The service half of the fake HAL: the object published under the production service name, found by
- * the middleware's own service lookup, and from which a client obtains a controller session.@n
- * It derives from the generated server base ::com::rdk::hal::hdmicec::BnHdmiCec, and deliberately not
- * from IHdmiCecDefault, because IHdmiCecDefault::onAsBinder() returns nullptr and an object derived
- * from it cannot be published to the service manager at all.
- *
- * Like its controller, this fake is dumb by design: it records what it was given, counts its calls
- * and answers with canned responses.  It runs no state machine of its own - the middleware tracks its
- * own open and closed states, and a second source of truth here would let a test pass against the
- * fake's opinion rather than the adapter's behaviour.
- *
- * The service owns a FakeHdmiCecController, hands it out from open() and never replaces it, so a test
- * may configure the controller before or after the middleware opens the session.  It also captures the
- * event listener passed to open() and invokes callbacks on it only when a trigger is called
- * explicitly; nothing here fires spontaneously.
- *
- * All seven interface methods are declared because the generated interface declares them pure
- * virtual.  Four of them - getState(), getProperty(), registerEventListener() and
- * unregisterEventListener() - are deliberately not consumed by the middleware, and their call
- * counters exist so a test can assert exactly that.
+ * Published under the production service name, it owns the one FakeHdmiCecController open() hands
+ * out and invokes the captured listener only when a trigger is called.  getLogicalAddresses()
+ * reports that controller's registrations unless a test installs a result.  It derives from
+ * BnHdmiCec, never IHdmiCecDefault, which cannot be published.
  *
  * @warning Test scope only - never reference this class from a production source list.
- *
  * @see FakeHdmiCecController, registerFakeHdmiCecService()
  */
 class FakeHdmiCecService : public ::com::rdk::hal::hdmicec::BnHdmiCec {
 public:
-    /** @brief Default logical address reported by getLogicalAddresses().  Default: Playback device. */
-    static constexpr int32_t DEFAULT_LOGICAL_ADDRESS = 4;
-
-    /**
-     * @brief The one state getState() reports, fixed rather than settable.
-     *
-     * A started service, which is the only state consistent with a fake that is published and
-     * answering.  It is a constant and not a canned response because the middleware never calls
-     * getState(), so a setter for it could not change any behaviour under test.@n
-     * Note that this two-valued AIDL enum is a different thing from the middleware's own closed,
-     * closing and opened machine, and says nothing about it.
-     *
-     * @see getState()
-     */
+    /** @brief The one state getState() reports, fixed at State::STARTED. */
     static constexpr ::com::rdk::hal::hdmicec::State DEFAULT_STATE =
         ::com::rdk::hal::hdmicec::State::STARTED;
 
     /**
-     * @brief Releases the fake service.
+     * @brief Releases the fake service and clears the static instance when it refers to this object.
      *
-     * Clears the static instance pointer when it still refers to this object, so a destroyed fake can
-     * never be handed out by getInstance().  The published binder registration is not withdrawn,
-     * because the pinned C++ service manager exposes no service-removal API; a test therefore keeps
-     * its registered fake alive for the life of the process and reuses it through reset().
+     * The binder registration is not withdrawn, because the pinned C++ service manager has no
+     * removal API; a test keeps its registered fake for the process and reuses it through reset().
      *
      * @post getInstance() no longer returns this object.
-     *
      * @see setInstance(), getInstance()
      */
     virtual ~FakeHdmiCecService();
@@ -681,48 +539,27 @@ public:
     /**
      * @brief Reports the HAL state of the fake service.
      *
-     * @param [out] _aidl_return              - Receives DEFAULT_STATE, the one state this fake
-     *                                          reports.  Left untouched when the pointer is null
+     * @param [out] _aidl_return              - Receives DEFAULT_STATE; untouched on a null pointer
      *
      * @return ::android::binder::Status              - Status
-     * @retval ok                                     - Always; this method has no failure arm to
-     *                                                  configure, because nothing under test calls it
+     * @retval ok                                     - Always
      *
-     * @post getGetStateCallCount() has advanced by one, which is what makes the expectation below
-     *       assertable.
-     *
-     * @warning The middleware deliberately does not consume this method: it tracks its own closed,
-     *          closing and opened states, and consulting the HAL's would create a second source of
-     *          truth.  The method exists here to satisfy the pure-virtual interface, it answers a
-     *          fixed state with a fixed status, and its call counter exists so a test can assert the
-     *          adapter never calls it.
-     *
-     * @see DEFAULT_STATE, getGetStateCallCount()
+     * @warning Not consumed by the middleware, which tracks its own state.  It exists for the
+     *          pure-virtual interface, and getGetStateCallCount() lets a test assert it is unused.
      */
     ::android::binder::Status getState(::com::rdk::hal::hdmicec::State* _aidl_return) override;
 
     /**
-     * @brief Reads a property from the fake service.
+     * @brief Reads a property from the fake service; always reports an empty optional.
      *
-     * Always reports an empty optional, which is a valid "property not available" answer, because no
-     * property this interface publishes has a legacy counterpart and therefore none is consumed.
-     *
-     * @param [in]  property                  - Property requested.  Recorded only as a call count
-     * @param [out] _aidl_return              - Receives an empty optional.  Left untouched when the
-     *                                          pointer is null
+     * @param [in]  property                  - Property requested; counted only
+     * @param [out] _aidl_return              - Receives an empty optional; untouched on a null pointer
      *
      * @return ::android::binder::Status              - Status
-     * @retval ok                                     - Always; this method has no failure arm to
-     *                                                  configure, because nothing under test calls it
+     * @retval ok                                     - Always
      *
-     * @post getGetPropertyCallCount() has advanced by one.
-     *
-     * @warning The middleware deliberately does not consume this method: reading the HAL's CEC version
-     *          or its transmit metrics would be new behaviour with no legacy counterpart.  It exists
-     *          here to satisfy the pure-virtual interface, and its call counter exists so a test can
-     *          assert the adapter never calls it.
-     *
-     * @see getGetPropertyCallCount()
+     * @warning Not consumed by the middleware: no property has a legacy counterpart.  It exists for
+     *          the pure-virtual interface, and getGetPropertyCallCount() lets a test assert that.
      */
     ::android::binder::Status getProperty(::com::rdk::hal::hdmicec::Property property,
                                           ::std::optional<::com::rdk::hal::PropertyValue>* _aidl_return) override;
@@ -730,132 +567,81 @@ public:
     /**
      * @brief Reports the logical addresses the fake HAL holds.
      *
-     * @param [out] _aidl_return              - Receives a copy of the canned address vector.  Left
-     *                                          untouched when the canned binder status is non-ok, and
-     *                                          when the pointer is null
+     * @param [out] _aidl_return              - Receives the installed vector or, by default, the
+     *                                          owned controller's registrations; untouched on a
+     *                                          non-ok status or a null pointer
      *
-     * @return ::android::binder::Status              - The canned binder status, returned verbatim.
-     *                                                  A non-ok status the test installed is returned
-     *                                                  unchanged and before the out-parameter is
-     *                                                  written, and the adapter under test must report
-     *                                                  it as no address available
+     * @return ::android::binder::Status              - The canned binder status, returned verbatim;
+     *                                                  the adapter must treat non-ok as no address
      * @retval ok                                     - Default, or whatever ok status was installed
      *
      * @post getGetLogicalAddressesCallCount() has advanced by one.
-     *
-     * @see setLogicalAddressesResult(), setGetLogicalAddressesBinderStatus(),
-     *      getGetLogicalAddressesCallCount()
+     * @see setLogicalAddressesResult(), setGetLogicalAddressesBinderStatus()
      */
     ::android::binder::Status getLogicalAddresses(::std::vector<int32_t>* _aidl_return) override;
 
     /**
      * @brief Opens a controller session on the fake HAL and captures the event listener.
      *
-     * Captures the listener - which is what makes the three triggers deliver - and writes the owned
-     * controller to the out-parameter, or nullptr when the null-controller flag is set.
-     *
-     * @param [in]  cecControllerListener     - Event listener the client supplies.  Captured and
-     *                                          retrievable through getListener().  The parameter name
-     *                                          is the generated one; its type is
-     *                                          IHdmiCecEventListener
+     * @param [in]  cecControllerListener     - Event listener the client supplies; captured
      * @param [out] _aidl_return              - Receives the owned controller, or nullptr when the
-     *                                          null-controller flag is set.  Left untouched when the
-     *                                          canned binder status is non-ok, and when the pointer is
-     *                                          null
+     *                                          null-controller flag is set; untouched on a non-ok
+     *                                          status or a null pointer
      *
-     * @return ::android::binder::Status              - The canned binder status, returned verbatim.
-     *                                                  A non-ok status the test installed is returned
-     *                                                  unchanged and before the out-parameter is
-     *                                                  written; this is also how the EX_ILLEGAL_STATE
-     *                                                  the interface documents for an already-open
-     *                                                  service is expressed, the fake running no state
-     *                                                  machine that could raise it by itself
+     * @return ::android::binder::Status              - The canned binder status, returned verbatim
      * @retval ok                                     - Default, or whatever ok status was installed
      *
-     * @post getListener() returns the supplied listener and getOpenCallCount() has advanced by one.
-     *       The listener is captured even when a null controller or a non-ok status is reported, so the
-     *       receive path can be exercised against a session the adapter rejected, and the triggers
-     *       stop being no-ops from this point on.
-     *
-     * @see setOpenReturnsNullController(), setOpenBinderStatus(), getListener(), getController(),
-     *      getOpenCallCount()
+     * @post getOpenCallCount() has advanced and getListener() returns the listener, even when a
+     *       null controller or a non-ok status is reported.
+     * @see setOpenReturnsNullController(), setOpenBinderStatus(), getListener()
      */
     ::android::binder::Status open(const ::android::sp<::com::rdk::hal::hdmicec::IHdmiCecEventListener>& cecControllerListener,
                                    ::android::sp<::com::rdk::hal::hdmicec::IHdmiCecController>* _aidl_return) override;
 
     /**
-     * @brief Closes a controller session on the fake HAL.
+     * @brief Closes a controller session on the fake HAL, keeping the captured listener.
      *
-     * Captures the controller it was handed, writes the canned boolean result and returns the canned
-     * binder status.  The captured listener is left in place, so a trigger fired after a close still
-     * reaches the adapter's listener - which is exactly what the "callback arriving during or after a
-     * close is rejected by the state guard" case needs.
+     * @param [in]  hdmiCecController         - Controller the client is closing, captured verbatim
+     * @param [out] _aidl_return              - Receives the canned result; untouched on a non-ok
+     *                                          status or a null pointer
      *
-     * @param [in]  hdmiCecController         - Controller the client is closing.  Captured and
-     *                                          retrievable through getLastClosedController()
-     * @param [out] _aidl_return              - Receives the canned boolean result.  Left untouched
-     *                                          when the canned binder status is non-ok, and when the
-     *                                          pointer is null
-     *
-     * @return ::android::binder::Status              - The canned binder status, returned verbatim.
-     *                                                  A non-ok status the test installed is returned
-     *                                                  unchanged and before the out-parameter is
-     *                                                  written, and the adapter under test must still
-     *                                                  reach its own closed state before raising
+     * @return ::android::binder::Status              - The canned binder status, returned verbatim
      * @retval ok                                     - Default, or whatever ok status was installed
      *
-     * @post getLastClosedController() reports the supplied controller, getCloseCallCount() has
-     *       advanced by one, and getListener() still reports the listener captured by open().
-     *
-     * @see setCloseResult(), setCloseBinderStatus(), getLastClosedController(), getCloseCallCount()
+     * @post getLastClosedController() reports the controller and getCloseCallCount() has advanced;
+     *       a successful close drops the controller's registrations.  getListener() is unchanged, so a
+     *       trigger fired after close still reaches the adapter.
+     * @see setCloseResult(), setCloseBinderStatus()
      */
     ::android::binder::Status close(const ::android::sp<::com::rdk::hal::hdmicec::IHdmiCecController>& hdmiCecController,
                                     bool* _aidl_return) override;
 
     /**
-     * @brief Registers an additional event listener on the fake HAL.
+     * @brief Registers an additional event listener; counts the call and reports true.
      *
-     * Counts the call and reports true; the listener is not retained, because this fake delivers
-     * events only to the listener captured by open().
-     *
-     * @param [in]  cecEventListener          - Listener offered by a non-controlling client.  Counted
-     *                                          only
-     * @param [out] _aidl_return              - Receives true.  Left untouched when the pointer is null
+     * @param [in]  cecEventListener          - Listener a non-controlling client offers; counted only
+     * @param [out] _aidl_return              - Receives true; untouched on a null pointer
      *
      * @return ::android::binder::Status              - Status
-     * @retval ok                                     - Always; this method has no failure arm to
-     *                                                  configure, because nothing under test calls it
+     * @retval ok                                     - Always
      *
-     * @post getRegisterEventListenerCallCount() has advanced by one.
-     *
-     * @warning The middleware deliberately does not consume this method: it is the controlling client
-     *          and receives events through the listener it passes to open().  This method exists here
-     *          to satisfy the pure-virtual interface, and its call counter exists so a test can assert
-     *          the adapter never calls it.
-     *
-     * @see getRegisterEventListenerCallCount()
+     * @warning Not consumed by the middleware, which receives events through the listener it passes
+     *          to open(); getRegisterEventListenerCallCount() lets a test assert that.
      */
     ::android::binder::Status registerEventListener(const ::android::sp<::com::rdk::hal::hdmicec::IHdmiCecEventListener>& cecEventListener,
                                                     bool* _aidl_return) override;
 
     /**
-     * @brief Unregisters an additional event listener on the fake HAL.
+     * @brief Unregisters an additional event listener; counts the call and reports true.
      *
-     * Counts the call and reports true.
-     *
-     * @param [in]  cecEventListener          - Listener being withdrawn.  Counted only
-     * @param [out] _aidl_return              - Receives true.  Left untouched when the pointer is null
+     * @param [in]  cecEventListener          - Listener being withdrawn; counted only
+     * @param [out] _aidl_return              - Receives true; untouched on a null pointer
      *
      * @return ::android::binder::Status              - Status
-     * @retval ok                                     - Always; this method has no failure arm to
-     *                                                  configure, because nothing under test calls it
+     * @retval ok                                     - Always
      *
-     * @post getUnregisterEventListenerCallCount() has advanced by one.
-     *
-     * @warning The middleware deliberately does not consume this method, for the same reason as
-     *          registerEventListener().  Its call counter exists so a test can assert that.
-     *
-     * @see getUnregisterEventListenerCallCount()
+     * @warning Not consumed by the middleware, as for registerEventListener();
+     *          getUnregisterEventListenerCallCount() lets a test assert that.
      */
     ::android::binder::Status unregisterEventListener(const ::android::sp<::com::rdk::hal::hdmicec::IHdmiCecEventListener>& cecEventListener,
                                                       bool* _aidl_return) override;
@@ -863,22 +649,11 @@ public:
     /**
      * @brief Reports the interface version this fake claims.
      *
-     * BnHdmiCec already implements this method concretely, from the same compiled-in
-     * ::com::rdk::hal::hdmicec::IHdmiCec::VERSION, so the override is not what satisfies the
-     * interface's pure-virtual declaration; it exists so that the version is answered from a member
-     * alongside the hash, both installable and both restored together.@n
-     * The value reported is whatever setInterfaceVersion() last installed, defaulting to the
-     * compiled-in constant.  Which arms of the middleware's compatibility check this control can and
-     * cannot reach is stated on that setter: the harness's incompatible mode drives the hash, and the
-     * version arms of the check are covered at unit level by locally constructed doubles.
-     *
-     * @return int32_t                                - The reported interface version.  The
-     *                                                  compiled-in constant until
-     *                                                  setInterfaceVersion() installs another
+     * @return int32_t                                - The version setInterfaceVersion() last
+     *                                                  installed; IHdmiCec::VERSION by default
      *
      * @warning Effective under local (in-process) dispatch only.  Across a binder transaction the
      *          generated onTransact() answers from the compiled-in constant instead.
-     *
      * @see setInterfaceVersion(), reset(), setInterfaceHash()
      */
     int32_t getInterfaceVersion() override;
@@ -886,51 +661,66 @@ public:
     /**
      * @brief Reports the interface hash this fake claims.
      *
-     * Answers the hash the harness installed, which defaults to the compiled-in
-     * ::com::rdk::hal::hdmicec::IHdmiCec::HASHVALUE.  This is the metadata answer the suite has the
-     * strongest reason to divert - it is what the harness's incompatible mode installs - and
-     * overriding the concrete BnHdmiCec implementation is the only way to divert it.
-     *
-     * @return std::string                            - The reported interface hash
+     * @return std::string                            - The hash setInterfaceHash() last installed;
+     *                                                  IHdmiCec::HASHVALUE by default
      *
      * @warning Effective under local (in-process) dispatch only, exactly as for
      *          getInterfaceVersion().
-     *
      * @see setInterfaceHash(), reset()
      */
     std::string getInterfaceHash() override;
+
+    /**
+     * @brief Counts one incoming binder transaction by code, then dispatches it as generated.
+     *
+     * @param [in]  code                      - Transaction code, TRANSACTION_* for an interface method
+     * @param [in]  data                      - Marshalled request, passed through unread
+     * @param [out] reply                     - Reply parcel the generated dispatch writes
+     * @param [in]  flags                     - Transaction flags, passed through
+     *
+     * @return ::android::status_t                    - What BnHdmiCec::onTransact() returns
+     *
+     * @post getTransactionCounts() reports one more transaction under code.
+     * @see getTransactionCounts()
+     */
+    ::android::status_t onTransact(uint32_t code, const ::android::Parcel& data, ::android::Parcel* reply,
+                                   uint32_t flags) override;
+
+    /**
+     * @brief Returns the incoming binder transactions by code since construction or reset().
+     *
+     * @return ::std::map<uint32_t, int32_t>          - Count per code; a code never received is absent
+     *
+     * @note Transactions BBinder::transact() answers itself, PING_TRANSACTION among them, are never
+     *       counted, and local (in-process) dispatch bypasses onTransact(), so nothing is counted there.
+     * @see onTransact(), reset(), FakeHdmiCecController::getTransactionCounts()
+     */
+    ::std::map<uint32_t, int32_t> getTransactionCounts() const;
 
     // Canned responses for test access
 
     /**
      * @brief Selects the address vector getLogicalAddresses() reports.
      *
-     * Exists to reach three distinct adapter arms, which is why the parameter is a whole vector rather
-     * than a single address:
-     * - empty, where the adapter must report no address, matching the legacy back-end whose query
-     *   leaves its zero-initialised local untouched;
-     * - exactly one entry, the ordinary case;
-     * - more than one entry, where the adapter must log the count and operate on the first entry only,
-     *   adding no multi-address state, no iteration and no dispatch fan-out.
+     * A whole vector, to reach three adapter arms: empty (no address), one entry (the ordinary case)
+     * and more than one (log the count and use the first entry).
      *
      * @param [in] logicalAddresses           - Addresses to report
      *
-     * @post Default is a one-entry vector holding DEFAULT_LOGICAL_ADDRESS.
-     *
-     * @see getLogicalAddresses(), DEFAULT_LOGICAL_ADDRESS
+     * @post Overrides the default, which reports the owned controller's registrations; reset()
+     *       restores that default.
+     * @see getLogicalAddresses(), FakeHdmiCecController::getRegisteredLogicalAddresses()
      */
     void setLogicalAddressesResult(const ::std::vector<int32_t>& logicalAddresses);
 
     /**
      * @brief Selects the boolean close() reports.
      *
-     * Exists to reach the failed-close arm, where the adapter must still complete its own transition
-     * to closed before raising, so a subsequent open is not blocked by a half-closed session.
+     * Reaches the failed-close arm, where the adapter must still reach its own closed state first.
      *
      * @param [in] result                     - Value close() writes to its out-parameter
      *
      * @post Default is true.
-     *
      * @see close()
      */
     void setCloseResult(bool result);
@@ -938,16 +728,11 @@ public:
     /**
      * @brief Selects whether open() reports a null controller alongside an ok status.
      *
-     * Exists to reach the null-controller arm: an ok status with no controller is a HAL that answered
-     * successfully and returned nothing usable, and the adapter must raise IOException rather than
-     * store a null session and fail later on first use.  The combination is only producible by
-     * asking for it here.
+     * Reaches the null-controller arm, which the adapter must raise as IOException.
      *
-     * @param [in] returnsNull                - true to report a null controller, false to report the
-     *                                          owned controller
+     * @param [in] returnsNull                - true to report a null controller, false for the owned one
      *
      * @post Default is false, so open() reports a valid non-null controller.
-     *
      * @see open(), getController()
      */
     void setOpenReturnsNullController(bool returnsNull);
@@ -955,15 +740,11 @@ public:
     /**
      * @brief Installs the binder status open() returns.
      *
-     * Exists to reach the open transport-failure arm, which the adapter must translate into
-     * IOException.  This is also where the EX_ILLEGAL_STATE the interface documents for an
-     * already-open service is expressed, since the fake runs no state machine that could raise it by
-     * itself.
+     * Reaches the open transport-failure arm, including an already-open service's EX_ILLEGAL_STATE.
      *
      * @param [in] status                     - Status to return, ok or non-ok
      *
      * @post Default is an ok status.
-     *
      * @see open()
      */
     void setOpenBinderStatus(const ::android::binder::Status& status);
@@ -971,13 +752,11 @@ public:
     /**
      * @brief Installs the binder status close() returns.
      *
-     * Exists to reach the close transport-failure arm, where the adapter must still reach its own
-     * closed state before raising.
+     * Reaches the close transport-failure arm, where the adapter must still reach its closed state.
      *
      * @param [in] status                     - Status to return, ok or non-ok
      *
      * @post Default is an ok status.
-     *
      * @see close()
      */
     void setCloseBinderStatus(const ::android::binder::Status& status);
@@ -985,58 +764,27 @@ public:
     /**
      * @brief Installs the binder status getLogicalAddresses() returns.
      *
-     * Exists to reach the failed-query arm, which the adapter must report as no address available -
-     * the same observable outcome as a successful but empty query, distinguished in the log rather
-     * than in the return value.
+     * Reaches the failed-query arm, which the adapter must report as no address available.
      *
      * @param [in] status                     - Status to return, ok or non-ok
      *
      * @post Default is an ok status.
-     *
      * @see getLogicalAddresses(), setLogicalAddressesResult()
      */
     void setGetLogicalAddressesBinderStatus(const ::android::binder::Status& status);
 
-    /*
-     * There is deliberately no response or status setter for getState(), getProperty(),
-     * registerEventListener() or unregisterEventListener().  The middleware never calls any of the
-     * four, so a control that varied what they answer could not change any behaviour under test: its
-     * only effect would be to suggest coverage that does not exist.  What those four methods do carry
-     * is an invocation counter each, because "the adapter never called this" is a real assertion and
-     * a counter that must stay zero is how it is written.
-     */
+    // getState(), getProperty() and the listener registration pair have no setters: the middleware
+    // never calls them, so their call counters are the only controls that matter.
 
     /**
      * @brief Overrides the interface hash this fake claims.
      *
-     * The metadata control with a production-path consumer, and it exists for one job: to publish a
-     * service the middleware must find and then refuse, so that the factory-level fallback from a
-     * present but incompatible service can be observed.  The parameter is an arbitrary string,
-     * because the value that produces that outcome belongs to the harness rather than to this fake.
+     * Lets the harness publish a service the middleware must find and then refuse as incompatible.
      *
      * @param [in] hash                       - Hash string to report
      *
-     * @post Default is ::com::rdk::hal::hdmicec::IHdmiCec::HASHVALUE, the real frozen hash compiled
-     *       into the snapshot, so an unconfigured fake is the compatible case.  reset() restores that
-     *       default, so an override cannot leak into the next case.
-     *
-     * @warning Effective under local (in-process) dispatch only.  A remotely served fake cannot report
-     *          divergent metadata at all, because the generated onTransact() answers the metadata
-     *          transactions from the compiled-in constants, so this setter has no effect on the
-     *          out-of-process invocation and must not be judged redundant on the evidence of a remote
-     *          run ignoring it.
-     *
-     * @note The one consumer that changes a selection outcome is the L1 harness in
-     *       tests/L1Tests/test_main.cpp, whose `incompatible` mode installs the broken hash "-1" here
-     *       before the middleware's selection resolves, which is what makes the factory-level
-     *       fallback observable.  The other rejection arms - the empty hash, the "notfrozen"
-     *       development hash and every version arm - are covered at unit level by locally constructed
-     *       doubles in tests/L1Tests/ccec/test_DriverAidl.cpp, precisely because a served Bn* object
-     *       cannot report bad metadata; nothing reaches those arms through this setter, and this note
-     *       must not be widened to claim otherwise.  The same file additionally drives this setter and
-     *       the three below it directly, on locally constructed and never registered fakes, which is
-     *       what makes each getter's divergence trace a reached branch rather than a reachable one.
-     *
+     * @post Default is IHdmiCec::HASHVALUE, the frozen hash; reset() restores it.
+     * @warning Effective under local (in-process) dispatch only; a served fake reports the constant.
      * @see getInterfaceHash(), setInterfaceVersion(), reset()
      */
     void setInterfaceHash(std::string hash);
@@ -1044,26 +792,13 @@ public:
     /**
      * @brief Overrides the interface version this fake claims.
      *
-     * The version half of the service's metadata pair, and its reach is deliberately smaller than the
-     * hash's: it decides no selection outcome under test.  The middleware's compatibility check does
-     * read this interface's version - the check reads the service interface's metadata and nothing
-     * else - but every version arm of it is exercised at unit level by locally constructed doubles
-     * rather than through the registered fake, so no harness mode installs a version here.  What this
-     * control does is make the value this class reports observable and changeable, which is what makes
-     * the divergence trace on getInterfaceVersion() a branch a test reaches rather than a defensive
-     * one nothing can drive.  No validation is applied - any int32_t is installed as given - because
-     * the whole point of the control is to report a version the snapshot would not.
+     * Reaches the divergence trace on getInterfaceVersion(); no harness mode installs a version.
      *
-     * @param [in] version                    - Interface version to report
+     * @param [in] version                    - Interface version to report, installed unvalidated
      *
-     * @post Default is ::com::rdk::hal::hdmicec::IHdmiCec::VERSION, the version compiled into the
-     *       snapshot, so an unconfigured fake is the compatible case.  reset() restores that default,
-     *       so an override cannot leak into the next case.
-     *
+     * @post Default is IHdmiCec::VERSION, the frozen version; reset() restores it.
      * @warning Effective under local (in-process) dispatch only, exactly as for setInterfaceHash().
-     *
-     * @see getInterfaceVersion(), setInterfaceHash(), reset(),
-     *      FakeHdmiCecController::setInterfaceVersion()
+     * @see getInterfaceVersion(), FakeHdmiCecController::setInterfaceVersion()
      */
     void setInterfaceVersion(int32_t version);
 
@@ -1072,9 +807,7 @@ public:
     /**
      * @brief Returns the controller this service owns and hands out from open().
      *
-     * The route by which a test configures the controller's canned responses and reads its captures,
-     * whether or not a session has been opened yet: the controller is created with the service and
-     * never replaced, so a reference taken before open() stays valid afterwards.
+     * Created with the service and never replaced, so a test may configure it before or after open().
      *
      * @return ::android::sp<FakeHdmiCecController>   - The owned controller, never null
      *
@@ -1085,12 +818,10 @@ public:
     /**
      * @brief Returns the event listener captured by the last open() call.
      *
-     * Lets a test confirm the adapter actually supplied a listener before asserting anything about
-     * the receive path, so a silent no-op trigger is not mistaken for a delivery failure.
+     * Lets a test confirm the adapter supplied a listener before asserting on the receive path.
      *
      * @return ::android::sp<::com::rdk::hal::hdmicec::IHdmiCecEventListener> - The captured listener,
-     *                                                                          null if open() has not
-     *                                                                          been called
+     *                                                                          null before open()
      *
      * @see open(), fireOnMessageReceived()
      */
@@ -1099,21 +830,12 @@ public:
     /**
      * @brief Returns the controller captured by the last close() call.
      *
-     * The assertion target for "the session was closed with the controller that open() handed out",
-     * which is what proves the adapter kept the two paired rather than closing something else.  A
-     * driver that closed a null or a stale controller would still receive this fake's canned result,
-     * so without this capture that mistake is invisible.
+     * The assertion target for "the session was closed with the controller open() handed out".
      *
      * @return ::android::sp<::com::rdk::hal::hdmicec::IHdmiCecController> - The captured controller,
-     *                                                                       null if close() has not
-     *                                                                       been called
+     *                                                                       null before close()
      *
-     * @note Consumed by the close-contract cases of the AIDL back-end's L1 suite, which assert this
-     *       equals the exact controller open() reported, on the successful close, the false-result
-     *       close and the non-ok-status close alike.  It is a live control with a named consumer, not
-     *       a capture kept for its own sake.
-     *
-     * @see close(), getController(), setCloseResult(), setCloseBinderStatus()
+     * @see close(), getController()
      */
     ::android::sp<::com::rdk::hal::hdmicec::IHdmiCecController> getLastClosedController() const;
 
@@ -1129,8 +851,7 @@ public:
     /**
      * @brief Returns how many times close() has been called.
      *
-     * The assertion target for "a second close on an already-closed session never reaches the HAL",
-     * which the adapter's own guard is required to prevent.
+     * The assertion target for "a second close on an already-closed session never reaches the HAL".
      *
      * @return int32_t                                - Call count since construction or the last reset()
      *
@@ -1150,8 +871,7 @@ public:
     /**
      * @brief Returns how many times getState() has been called.
      *
-     * The assertion target for "the adapter never consults the HAL's state machine": this counter must
-     * stay zero across a full open, transmit, receive and close cycle.
+     * Must stay zero across a full session: the adapter never consults the HAL's state machine.
      *
      * @return int32_t                                - Call count since construction or the last reset()
      *
@@ -1162,8 +882,7 @@ public:
     /**
      * @brief Returns how many times getProperty() has been called.
      *
-     * The assertion target for "the adapter never reads HAL properties": this counter must stay zero
-     * across a full session, since no property has a legacy counterpart.
+     * Must stay zero across a full session: the adapter never reads HAL properties.
      *
      * @return int32_t                                - Call count since construction or the last reset()
      *
@@ -1174,9 +893,7 @@ public:
     /**
      * @brief Returns how many times registerEventListener() has been called.
      *
-     * The assertion target for "the adapter receives events through the listener it passed to open()":
-     * this counter must stay zero, because the middleware is the controlling client and never
-     * registers a diagnostic listener.
+     * Must stay zero: the adapter receives events only through the listener it passes to open().
      *
      * @return int32_t                                - Call count since construction or the last reset()
      *
@@ -1187,8 +904,7 @@ public:
     /**
      * @brief Returns how many times unregisterEventListener() has been called.
      *
-     * The assertion target for the same expectation as getRegisterEventListenerCallCount(): this
-     * counter must stay zero.
+     * Must stay zero, for the same reason as getRegisterEventListenerCallCount().
      *
      * @return int32_t                                - Call count since construction or the last reset()
      *
@@ -1199,17 +915,11 @@ public:
     /**
      * @brief Restores every canned response to its default and clears every capture and counter.
      *
-     * Called from a fixture's set-up so that one long-lived registered fake - the middleware resolves
-     * its back-end once per process, so the fake cannot be re-registered per case - does not leak
-     * configuration or observations from one case into the next.  The captured listener is cleared
-     * too, which returns the triggers to their pre-open no-op behaviour.
+     * Called from fixture set-up.  Clearing the captured listener returns the triggers to no-ops.
      *
-     * @post Canned responses hold their documented defaults; captures are null or empty; counters are
-     *       zero; the owned controller is unchanged and is not itself reset.
-     *
-     * @warning This resets the service only.  Reset the controller through
-     *          getController()->reset() when a case also configured it.
-     *
+     * @post Canned responses hold their documented defaults; captures are null or empty; counters
+     *       are zero; the owned controller is not itself reset.
+     * @warning Reset the controller through getController()->reset() when a case also configured it.
      * @see FakeHdmiCecController::reset()
      */
     void reset();
@@ -1219,37 +929,16 @@ public:
     /**
      * @brief Delivers a received CEC message to the captured event listener.
      *
-     * The entry point for the receive path: the caller supplies the exact bytes, so the fake forms no
-     * frame of its own.  Out of process this call crosses the binder driver and the listener runs on
-     * the client's binder threadpool, which is the only arrangement in which the client's threadpool
-     * is genuinely exercised.
-     *
      * @param [in] message                    - Raw CEC frame bytes to deliver
      *
      * @return bool                                   - Whether the callback was invoked on a listener
-     * @retval true                                   - A listener was captured and the callback was
-     *                                                  invoked on it
+     * @retval true                                   - A listener was captured and invoked
      * @retval false                                  - No listener captured, so nothing was delivered
      *
      * @pre open() must have captured a listener, otherwise this is a silent no-op.
-     *
-     * @warning What true establishes depends on where the captured listener lives, and the two cases
-     *          must not be conflated.  A local listener is reached by direct virtual dispatch, so true
-     *          means the callback ran to completion and the status it reported is the callback's own.
-     *          A remote listener is reached through a proxy, and IHdmiCecEventListener is declared
-     *          oneway, so true means only that the transaction was submitted and accepted by the
-     *          driver: the remote callback need not have run yet, and its own outcome is not carried
-     *          back on this path at all.  Completion against a remote listener is established
-     *          independently, by observing what the middleware did in response - this fake's own
-     *          counters and captures, which the separate host's observation commands read through its
-     *          accessors.
-     * @warning Fired before open(), or after reset() cleared the captured listener, this does nothing
-     *          and reports false.  A test that ignores the return value cannot tell a genuine delivery
-     *          from a no-op.
-     * @warning No lock of this fake is held across the invocation - the captured listener is copied out
-     *          first - so a callback may re-enter this fake without deadlocking.  A callback that does
-     *          re-enter observes whatever state the fake holds at that moment.
-     *
+     * @warning true means only that the captured listener was invoked, whatever Status it returned,
+     *          not that a transport accepted the call or the callback completed.  No lock is held
+     *          across the call, so the callback may re-enter.
      * @see open(), getListener()
      */
     bool fireOnMessageReceived(const ::std::vector<uint8_t>& message);
@@ -1257,34 +946,16 @@ public:
     /**
      * @brief Delivers a state-change notification to the captured event listener.
      *
-     * Covers the diagnostic callback the adapter is required to log and act on in no other way:
-     * an in-process HAL cannot vanish, so there is no legacy counterpart to a state transition and
-     * reacting to one would be new behaviour.
-     *
      * @param [in] oldState                   - State being left
      * @param [in] newState                   - State being entered
      *
      * @return bool                                   - Whether the callback was invoked on a listener
-     * @retval true                                   - A listener was captured and the callback was
-     *                                                  invoked on it
+     * @retval true                                   - A listener was captured and invoked
      * @retval false                                  - No listener captured, so nothing was delivered
      *
      * @pre open() must have captured a listener, otherwise this is a silent no-op.
-     *
-     * @warning What true establishes depends on where the captured listener lives, exactly as it does
-     *          for fireOnMessageReceived(): completion for a local listener, submission and acceptance
-     *          only for a remote one.
-     * @warning Fired before open(), or after reset(), this does nothing and reports false.
-     * @warning No lock of this fake is held across the invocation, exactly as for
-     *          fireOnMessageReceived().
-     *
-     * @note Called in process by
-     *       DriverAidlSessionTest.DiagnosticCallbacksAreReportedWithoutDisturbingTheSession, which
-     *       reads what the adapter logged for it.  The separate-process host deliberately exposes no
-     *       command for this trigger, because that assertion is already made here and an IPC variant
-     *       of it would prove nothing further.
-     *
-     * @see open()
+     * @warning What true means, and locking, are as for fireOnMessageReceived().
+     * @note Used in process only; the separate-process host exposes no command for this trigger.
      */
     bool fireOnStateChanged(::com::rdk::hal::hdmicec::State oldState,
                             ::com::rdk::hal::hdmicec::State newState);
@@ -1292,30 +963,16 @@ public:
     /**
      * @brief Delivers a transmit-completion notification to the captured event listener.
      *
-     * Covers the second diagnostic callback the adapter is required to log and act on in no other way:
-     * synchronous transmit already returns its own status, so nothing about the outcome depends on
-     * this notification arriving.
-     *
      * @param [in] message                    - Frame the notification refers to
      * @param [in] status                     - Send status reported for it
      *
      * @return bool                                   - Whether the callback was invoked on a listener
-     * @retval true                                   - A listener was captured and the callback was
-     *                                                  invoked on it
+     * @retval true                                   - A listener was captured and invoked
      * @retval false                                  - No listener captured, so nothing was delivered
      *
      * @pre open() must have captured a listener, otherwise this is a silent no-op.
-     *
-     * @warning What true establishes depends on where the captured listener lives, exactly as it does
-     *          for fireOnMessageReceived().
-     * @warning Fired before open(), or after reset(), this does nothing and reports false.
-     * @warning No lock of this fake is held across the invocation, exactly as for
-     *          fireOnMessageReceived().
-     *
-     * @note Called in process by the same case as fireOnStateChanged(), and exposed by no host
-     *       command for the same reason.
-     *
-     * @see open(), fireOnStateChanged()
+     * @warning What true means, and locking, are as for fireOnMessageReceived().
+     * @note Used in process only, exactly as fireOnStateChanged().
      */
     bool fireOnMessageSent(const ::std::vector<uint8_t>& message,
                            ::com::rdk::hal::hdmicec::SendMessageStatus status);
@@ -1325,18 +982,9 @@ public:
     /**
      * @brief Returns the fake a test harness published for this process.
      *
-     * The route by which a test reaches the registered fake in order to configure it, given that the
-     * harness registers the fake before initialising the middleware and the test bodies run later.
-     *
      * @return FakeHdmiCecService*                    - The published fake, or nullptr when none was set
      *
-     * @note This accessor deliberately traces nothing, recorded here so that nobody restores a trace
-     *       on the assumption it was overlooked.  It is called from the harness, from the fixtures and
-     *       from the fake's own paths, so a line per call would flood every captured log and dilute the
-     *       lines a case actually asserts on, while reporting only what setInstance() already reported
-     *       once.  A trace behind a quiet log level would be the same flood one configuration change
-     *       away.
-     *
+     * @note Deliberately traces nothing: it is called too often for a per-call line to help.
      * @see setInstance(), registerFakeHdmiCecService()
      */
     static FakeHdmiCecService* getInstance();
@@ -1344,51 +992,47 @@ public:
     /**
      * @brief Records the fake a test harness published for this process.
      *
-     * Called by the harness right after it constructs and registers the fake, and called with nullptr
-     * when it tears it down.  This is not a service registry and not a factory: it is a single
-     * pointer, at test scope, following the same two-function idiom the legacy driver double in this
-     * directory already uses.
+     * A single test-scope pointer, the same two-function idiom as the legacy driver double.
      *
      * @param [in] newFake                    - Fake to publish, or nullptr to clear
      *
      * @post getInstance() returns the supplied pointer.
-     *
      * @see getInstance()
      */
     static void setInstance(FakeHdmiCecService* newFake);
 
 private:
-    /** @brief Guards every canned response and capture below; all critical sections are short, and the
-     *         listener is copied out before a trigger invokes it so no callback runs under this lock.
-     *         Out of process the interface methods run on binder threads while a test thread may be
-     *         reading a capture or installing a canned response. */
+    /** @brief Guards every canned response and capture below; never held while a callback runs. */
     mutable ::std::mutex mutex;
+
+    /** @brief Incoming binder transactions by code, counted by onTransact(). */
+    ::std::map<uint32_t, int32_t> transactionCounts;
 
     /** @brief The controller handed out by open(), created with this service and never replaced. */
     ::android::sp<FakeHdmiCecController> controller = ::android::sp<FakeHdmiCecController>::make();
 
-    /** @brief Event listener captured by open().  Default: none, so the triggers are no-ops. */
+    /** @brief Event listener captured by open() (default none, so the triggers are no-ops). */
     ::android::sp<::com::rdk::hal::hdmicec::IHdmiCecEventListener> listener;
 
-    /** @brief Controller captured by close().  Default: none. */
+    /** @brief Controller captured by close() (default none). */
     ::android::sp<::com::rdk::hal::hdmicec::IHdmiCecController> lastClosedController;
 
-    /** @brief Canned getLogicalAddresses() result.  Default: one entry, DEFAULT_LOGICAL_ADDRESS. */
-    ::std::vector<int32_t> logicalAddressesResult { DEFAULT_LOGICAL_ADDRESS };
+    /** @brief Canned getLogicalAddresses() result (default none, so the registrations are reported). */
+    ::std::optional<::std::vector<int32_t>> logicalAddressesResult;
 
-    /** @brief Canned close() result.  Default: session closed. */
+    /** @brief Canned close() result (default true, session closed). */
     bool closeResult = true;
 
-    /** @brief Whether open() reports a null controller.  Default: false, a valid controller. */
+    /** @brief Whether open() reports a null controller (default false, a valid controller). */
     bool openReturnsNullController = false;
 
-    /** @brief Canned open() binder status.  Default: ok. */
+    /** @brief Canned open() binder status (default ok). */
     ::android::binder::Status openBinderStatus;
 
-    /** @brief Canned close() binder status.  Default: ok. */
+    /** @brief Canned close() binder status (default ok). */
     ::android::binder::Status closeBinderStatus;
 
-    /** @brief Canned getLogicalAddresses() binder status.  Default: ok. */
+    /** @brief Canned getLogicalAddresses() binder status (default ok). */
     ::android::binder::Status getLogicalAddressesBinderStatus;
 
     int32_t openCallCount = 0;
@@ -1407,68 +1051,29 @@ private:
     /** @brief unregisterEventListener() invocation count; expected to stay zero. */
     int32_t unregisterEventListenerCallCount = 0;
 
-    /** @brief Interface version getInterfaceVersion() reports.  Default: the compiled-in frozen
-     *         version; setInterfaceVersion() is the one control that changes it, and reset() restores
-     *         it. */
+    /** @brief Interface version getInterfaceVersion() reports (default the frozen version). */
     int32_t interfaceVersionResult = ::com::rdk::hal::hdmicec::IHdmiCec::VERSION;
 
-    /** @brief Interface hash getInterfaceHash() reports.  Default: the compiled-in frozen hash;
-     *         setInterfaceHash() is the one control that changes it, and reset() restores it. */
+    /** @brief Interface hash getInterfaceHash() reports (default the frozen hash). */
     ::std::string interfaceHashResult = ::com::rdk::hal::hdmicec::IHdmiCec::HASHVALUE;
 
-    /** @brief The fake published for this process, or nullptr.  Cleared by the destructor. */
+    /** @brief The fake published for this process, or nullptr; cleared when that fake is destroyed. */
     static FakeHdmiCecService* instance;
 };
 
 /**
- * @brief Publishes a fake HdmiCec service under the production service name.
- *
- * Registration is an explicit callable step rather than something the constructor does, because the
- * two callers need different things around it.  An in-process harness registers and stops there,
- * since a locally registered name resolves to this very object and no transaction crosses the driver.
- * The separate host binary needs a thread to serve real transactions, so it starts its service-side
- * binder threadpool first, then calls this function to publish the fake, and signals readiness to its
- * parent only after this function has reported success.@n
- * That order is load-bearing rather than incidental.  Publication makes the name resolvable
- * immediately, so a pool started after it leaves a window in which a client can look the name up and
- * transact against a service with no thread to serve it - a race the parent can win, and one that
- * presents as a hung or failed transaction rather than as a startup ordering mistake.  Folding a
- * threadpool into registration would both force one on the in-process caller and fix the order the
- * wrong way round.
- *
- * The name comes from ::com::rdk::hal::hdmicec::IHdmiCec::serviceName(), never from a literal, so
- * there is exactly one spelling of it in the build and this fake cannot drift from the name the
- * middleware looks up.  Only the service is published; a client obtains its controller from the
- * out-parameter of open(), so the controller is never registered separately.
+ * @brief Publishes a fake HdmiCec service under the production name, IHdmiCec::serviceName().
  *
  * @param [in] service                    - Fake to publish.  Must not be null
  *
  * @return bool                                   - Whether the service was published
  * @retval true                                   - The service manager accepted the registration
- * @retval false                                  - The service was null, the binder driver node was
- *                                                  absent or unopenable, no service manager could be
- *                                                  obtained, or the service manager refused the name
+ * @retval false                                  - Null service, absent or unopenable binder node,
+ *                                                  no service manager, or the name was refused
  *
- * @pre Nothing is already registered under the production name.  The pinned C++ service manager
- *      exposes no removal API, so a stale registration would decide the outcome of a run; the callers
- *      establish this before they call, and this function does not check it.
- * @post On success the middleware's own service lookup resolves to the supplied fake, which is what
- *       makes its runtime back-end selection choose the AIDL path.
- *
- * @warning Test scope only.  Nothing in a production source list may call this.
- * @warning This function's own guarantees are narrow, and no more than these should be read into a
- *          false return.  It reports false without touching libbinder at all when the supplied
- *          service is null, or when the binder driver node is absent or unopenable - the check that
- *          keeps a host with no kernel binder support from losing its whole run to the fatal
- *          driver-open path inside the linked libbinder.  It reports false when the service manager
- *          it obtained is null, and when that service manager refuses the name.  It does not bound
- *          the acquisition of the service manager itself: obtaining one retries until binder handle 0
- *          resolves, so a node that opens while no service manager is running blocks inside libbinder
- *          instead of returning here, and the pinned library's remaining failure modes are not all
- *          reducible to a return value.  The bound for those cases is the parent harness's readiness
- *          timeout, which fails the run when a host does not report itself ready in time.
- *
- * @see FakeHdmiCecService, FakeHdmiCecService::setInstance()
+ * @pre Nothing is registered under that name yet; a serving host has started its binder threadpool.
+ * @post On success the middleware's own service lookup resolves to the supplied fake.
+ * @warning Test scope only.  Acquiring the service manager is unbounded and can block.
  */
 bool registerFakeHdmiCecService(const ::android::sp<FakeHdmiCecService>& service);
 

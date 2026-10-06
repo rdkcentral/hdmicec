@@ -207,13 +207,13 @@ fake_hdmi_cec_aidl_host_SOURCES = \
     $(top_srcdir)/mocks/hdmicec/fake_hdmi_cec_aidl_service_host.cpp
 
 # The four AIDL/Binder edges follow the middleware libraries.  libRCEC.la already carries
-# them as its own dependencies, but the runner needs them named here in their own right:
-# test_main.cpp reaches the service manager directly and the integration case includes
-# DriverAidlImpl.hpp, so both reference the stub and Binder libraries from objects that are
-# not part of libRCEC.  @AIDL_LIBS@ names them in dependency order, and the pinned
-# libcommon-v0.2.0.0-cpp in it is required at exactly 0.2.0.0 - the ABI the hdmicec 0.1.0.0
-# snapshot was generated against - because a newer common release would put a different ABI
-# underneath pre-generated code compiled against the older headers.
+# them as its own dependencies; naming them here as well keeps the runner's link independent
+# of how libtool propagates libRCEC.la's dependency_libs.  No runner object references them
+# directly: test_main.cpp includes no binder header, and the integration case includes
+# DriverAidlImpl.hpp only as a dynamic_cast target.  @AIDL_LIBS@ names them in dependency
+# order, and the pinned libcommon-v0.2.0.0-cpp in it is required at exactly 0.2.0.0 - the
+# ABI the hdmicec 0.1.0.0 snapshot was generated against - because a newer common release
+# would put a different ABI underneath pre-generated code compiled against the older headers.
 #
 # -ltelemetry_msgsender is deliberately not restated here even though ccec/src/Makefile.am
 # carries it as AM_LDFLAGS: libtool resolves it through libRCEC.la's dependency_libs, which
