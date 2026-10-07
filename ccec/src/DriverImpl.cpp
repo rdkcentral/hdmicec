@@ -96,13 +96,10 @@ DriverImpl::~DriverImpl()
 			try{
                 this->close();
 	        }
-	        catch(InvalidStateException &e)
-	        {
-                CCEC_LOG( LOG_EXP, "DriverImpl: Caught InvalidStateException while calling ~DriverImpl::close()\r\n");
-            }
 	        catch(Exception &e)
 	        {
                 CCEC_LOG( LOG_EXP, "DriverImpl: Caught Exception while calling ~DriverImpl::close()\r\n");
+
             }
 		}
     }
