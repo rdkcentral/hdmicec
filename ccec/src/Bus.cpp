@@ -130,8 +130,19 @@ Bus::~Bus(void)
 {
 	Assert(!started);
 
-	reader.stop(true);
-	writer.stop(true);
+	try {
+		reader.stop(true);
+	}
+	catch (Exception &e) {
+		CCEC_LOG( LOG_EXP, "Bus::~Bus: Exception during reader.stop\r\n");
+	}
+
+	try {
+		writer.stop(true);
+	}
+	catch (Exception &e) {
+		CCEC_LOG( LOG_EXP, "Bus::~Bus: Exception during writer.stop\r\n");
+	}
 
 	CCEC_LOG( LOG_DEBUG, "Bus::Destroyed\r\n");
 
