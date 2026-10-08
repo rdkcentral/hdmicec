@@ -9299,8 +9299,8 @@ TEST_F(DriverAidlLocalInstanceTest, OccupiedCandidatesAreSkippedAndAFullSetRegis
 }
 
 /**
- * @brief A failed poll and a HAL refusal move allocation to the next candidate, while a non-ok
- *        add status stops it with nothing registered.
+ * @brief A failed poll registers its candidate, a HAL refusal moves allocation to the next
+ *        candidate, and a non-ok add status stops it with nothing registered.
  * @pre Runs under every invocation, on local instances with injected sessions.
  */
 TEST_F(DriverAidlLocalInstanceTest, AllocationTriesTheNextCandidateOnRefusalAndStopsOnTransportFailure) {
@@ -9313,9 +9313,13 @@ TEST_F(DriverAidlLocalInstanceTest, AllocationTriesTheNextCandidateOnRefusalAndS
         probe.injectOpenSession(service, controller);
         probe.registerAddress();
 
-        EXPECT_EQ(probe.heldAddresses(), std::vector<int>({ 8 }))
-            << "a poll that failed with BUSY was not treated as taken";
-        EXPECT_EQ(controller->getLastAddedLogicalAddresses(), std::vector<int32_t>({ 8 }));
+        EXPECT_EQ(probe.heldAddresses(), std::vector<int>({ 4 }))
+            << "a poll that failed with BUSY was not treated as free";
+        EXPECT_EQ(controller->getAddLogicalAddressesCallCount(), 1)
+            << "the candidate whose poll failed with BUSY was not offered to the HAL exactly once";
+        EXPECT_EQ(controller->getLastAddedLogicalAddresses(), std::vector<int32_t>({ 4 }));
+        EXPECT_EQ(controller->getAllocationPolls(), std::vector<int32_t>({ 4 }))
+            << "allocation polled another candidate after registering the one whose poll failed";
     }
     {
         const ::android::sp<FakeHdmiCecService> service = ::android::sp<FakeHdmiCecService>::make();
@@ -9356,8 +9360,8 @@ TEST_F(DriverAidlLocalInstanceTest, AllocationTriesTheNextCandidateOnRefusalAndS
 }
 
 /**
- * @brief A transport failure on every allocation poll leaves each candidate not free, so enabling
- *        polls all three, offers none to the HAL and leaves getLogicalAddress() at 0.
+ * @brief A transport failure on the first allocation poll marks that candidate free, so enabling
+ *        polls only it, registers it with one add and getLogicalAddress() reads it back.
  * @pre Runs under every invocation, on a local instance with an injected session over local fakes.
  */
 TEST_F(DriverAidlLocalInstanceTest, AllocationPollTransportFailuresRegisterNothing) {
@@ -9369,19 +9373,19 @@ TEST_F(DriverAidlLocalInstanceTest, AllocationPollTransportFailuresRegisterNothi
     probe.injectOpenSession(service, controller);
     ASSERT_NO_THROW({ probe.registerAddress(); }) << "a poll transport failure escaped the allocation";
 
-    EXPECT_EQ(controller->getAllocationPolls(), std::vector<int32_t>({ 4, 8, 11 }))
-        << "a failed poll did not move allocation on to the next candidate";
-    EXPECT_EQ(controller->getTotalSendMessageCallCount(), 3);
-    EXPECT_EQ(controller->getAddLogicalAddressesCallCount(), 0)
-        << "a candidate was offered to the HAL although its poll failed in transport";
-    EXPECT_TRUE(controller->getRegisteredLogicalAddresses().empty());
-    EXPECT_TRUE(probe.heldAddresses().empty());
-    EXPECT_EQ(probe.getLogicalAddress(DeviceType::PLAYBACK_DEVICE), 0);
+    EXPECT_EQ(controller->getAllocationPolls(), std::vector<int32_t>({ 4 }))
+        << "allocation polled another candidate after the poll of the first one failed in transport";
+    EXPECT_EQ(controller->getTotalSendMessageCallCount(), 1);
+    EXPECT_EQ(controller->getAddLogicalAddressesCallCount(), 1)
+        << "the candidate whose poll failed in transport was not offered to the HAL exactly once";
+    EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 4 }));
+    EXPECT_EQ(probe.heldAddresses(), std::vector<int>({ 4 }));
+    EXPECT_EQ(probe.getLogicalAddress(DeviceType::PLAYBACK_DEVICE), 4);
 }
 
 /**
- * @brief A poll that raises a standard or a non-standard exception marks its candidate taken, so
- *        allocation goes on to register the next one without raising.
+ * @brief A poll that raises a standard or a non-standard exception marks its candidate free, so
+ *        allocation registers that candidate without raising and polls no other.
  * @pre Runs under every invocation, on local instances with injected sessions.
  */
 TEST_F(DriverAidlLocalInstanceTest, AllocationTreatsANonCecPollExceptionAsTakenAndTriesTheNextCandidate) {
@@ -9397,14 +9401,14 @@ TEST_F(DriverAidlLocalInstanceTest, AllocationTreatsANonCecPollExceptionAsTakenA
             << "a raising poll escaped allocation (non-standard: " << nonStandard << ")";
 
         EXPECT_EQ(controller->raisedPolls, 1u) << "the poll of candidate 4 was not attempted once";
-        EXPECT_EQ(controller->getAllocationPolls(), std::vector<int32_t>({ 8 }))
-            << "allocation did not move on to Playback Device 2 after the raising poll";
+        EXPECT_TRUE(controller->getAllocationPolls().empty())
+            << "allocation polled another candidate after the raising poll";
         EXPECT_EQ(controller->getAddLogicalAddressesCallCount(), 1);
-        EXPECT_EQ(controller->getLastAddedLogicalAddresses(), std::vector<int32_t>({ 8 }));
-        EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 8 }))
-            << "the HAL does not hold exactly the next candidate";
-        EXPECT_EQ(probe.heldAddresses(), std::vector<int>({ 8 }))
-            << "a candidate whose poll raised was treated as free";
+        EXPECT_EQ(controller->getLastAddedLogicalAddresses(), std::vector<int32_t>({ 4 }));
+        EXPECT_EQ(controller->getRegisteredLogicalAddresses(), std::vector<int32_t>({ 4 }))
+            << "the HAL does not hold exactly the candidate whose poll raised";
+        EXPECT_EQ(probe.heldAddresses(), std::vector<int>({ 4 }))
+            << "a candidate whose poll raised was not treated as free";
     }
 }
 

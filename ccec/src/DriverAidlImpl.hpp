@@ -819,9 +819,10 @@ protected:
 	 * @brief Discovers and registers this device's logical address on an opened session
 	 *
 	 * Releases any address unconfirmedReleaseAddress records (adopted while the HAL still lists it),
-	 * then registers the first LOCAL_DEVICE_TYPE candidate poll(c, c) finds free (CECNoAckException)
-	 * with a one-element `addLogicalAddresses()` call. A taken or failed poll and a HAL refusal move
-	 * to the next candidate; a non-ok or raising add, or an unreadable HAL, stops allocation.
+	 * then registers the first LOCAL_DEVICE_TYPE candidate poll(c, c) finds free (its poll raised any
+	 * exception, CECNoAckException included) with a one-element `addLogicalAddresses()` call. A taken
+	 * poll and a HAL refusal move to the next candidate; a non-ok or raising add, or an unreadable
+	 * HAL, stops allocation.
 	 *
 	 * @pre The state is OPENED; the recursive instance lock is taken here.
 	 * @post The local list holds the one registered or adopted address, or nothing;

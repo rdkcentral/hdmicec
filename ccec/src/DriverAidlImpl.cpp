@@ -1174,16 +1174,19 @@ void DriverAidlImpl::registerDeviceLogicalAddress(void)
 					isFree = true;
 				}
 				catch (Exception &) {
-					CCEC_LOG( LOG_EXP, "DriverAidlImpl::registerDeviceLogicalAddress : the poll of logical address %d failed; trying the next candidate\r\n", candidate.toInt());
+					isFree = true;
+					CCEC_LOG( LOG_EXP, "DriverAidlImpl::registerDeviceLogicalAddress : the poll of logical address %d failed; treating the address as free\r\n", candidate.toInt());
 				}
 				catch (abi::__forced_unwind &) {
 					throw;
 				}
 				catch (const std::exception &) {
-					CCEC_LOG( LOG_EXP, "DriverAidlImpl::registerDeviceLogicalAddress : the poll of logical address %d raised a non-CEC exception; trying the next candidate\r\n", candidate.toInt());
+					isFree = true;
+					CCEC_LOG( LOG_EXP, "DriverAidlImpl::registerDeviceLogicalAddress : the poll of logical address %d raised a non-CEC exception; treating the address as free\r\n", candidate.toInt());
 				}
 				catch (...) {
-					CCEC_LOG( LOG_EXP, "DriverAidlImpl::registerDeviceLogicalAddress : the poll of logical address %d raised an unknown exception; trying the next candidate\r\n", candidate.toInt());
+					isFree = true;
+					CCEC_LOG( LOG_EXP, "DriverAidlImpl::registerDeviceLogicalAddress : the poll of logical address %d raised an unknown exception; treating the address as free\r\n", candidate.toInt());
 				}
 
 				if (!isFree) {
