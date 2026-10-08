@@ -130,8 +130,19 @@ Bus::~Bus(void)
 {
 	Assert(!started);
 
-	reader.stop(true);
-	writer.stop(true);
+	try {
+		reader.stop(true);
+	}
+	catch (Exception &e) {
+		CCEC_LOG( LOG_EXP, "Bus::~Bus: Exception during reader.stop\r\n");
+	}
+
+	try {
+		writer.stop(true);
+	}
+	catch (Exception &e) {
+		CCEC_LOG( LOG_EXP, "Bus::~Bus: Exception during writer.stop\r\n");
+	}
 
 	CCEC_LOG( LOG_DEBUG, "Bus::Destroyed\r\n");
 
@@ -190,7 +201,12 @@ void Bus::Reader::stop(bool block)
 		stopStarted();
 	}
 
-	Driver::getInstance().close();
+	try {
+		Driver::getInstance().close();
+	}
+	catch (Exception &e) {
+		CCEC_LOG( LOG_EXP, "Bus::Reader::stop: Exception during Driver::close\r\n");
+	}
 
 	if (block) {
 		/* coverity[sleep : FALSE] */
@@ -304,7 +320,12 @@ void Bus::Writer::stop(bool block)
 	{AutoLock lock_(bus.wMutex);
 		if (isRunning()) {
 			stopStarted();
-			bus.wQueue.offer(0);
+			try {
+				bus.wQueue.offer(0);
+			}
+			catch (CCEC_OSAL::InvalidStateException &) {
+				CCEC_LOG( LOG_DEBUG, "Write queue already signaled during stop\r\n");
+			}
 			CCEC_LOG( LOG_DEBUG, "Bus::Writer::stop::stop offer completed [%d]\r\n", isRunning());
 		}
 	}
