@@ -133,14 +133,14 @@ Bus::~Bus(void)
 	try {
 		reader.stop(true);
 	}
-	catch (Exception &e) {
+	catch (...) {
 		CCEC_LOG( LOG_EXP, "Bus::~Bus: Exception during reader.stop\r\n");
 	}
 
 	try {
 		writer.stop(true);
 	}
-	catch (Exception &e) {
+	catch (...) {
 		CCEC_LOG( LOG_EXP, "Bus::~Bus: Exception during writer.stop\r\n");
 	}
 
@@ -204,7 +204,7 @@ void Bus::Reader::stop(bool block)
 	try {
 		Driver::getInstance().close();
 	}
-	catch (Exception &e) {
+	catch (...) {
 		CCEC_LOG( LOG_EXP, "Bus::Reader::stop: Exception during Driver::close\r\n");
 	}
 
