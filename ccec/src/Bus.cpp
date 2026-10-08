@@ -37,7 +37,6 @@
 #include <stdio.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <exception>
 #include "ccec/CECFrame.hpp"
 #include "ccec/FrameListener.hpp"
 #include "ccec/Driver.hpp"
@@ -134,14 +133,14 @@ Bus::~Bus(void)
 	try {
 		reader.stop(true);
 	}
-	catch (std::exception &e) {
+	catch (Exception &e) {
 		CCEC_LOG( LOG_EXP, "Bus::~Bus: Exception during reader.stop\r\n");
 	}
 
 	try {
 		writer.stop(true);
 	}
-	catch (std::exception &e) {
+	catch (Exception &e) {
 		CCEC_LOG( LOG_EXP, "Bus::~Bus: Exception during writer.stop\r\n");
 	}
 
@@ -205,7 +204,7 @@ void Bus::Reader::stop(bool block)
 	try {
 		Driver::getInstance().close();
 	}
-	catch (std::exception &e) {
+	catch (Exception &e) {
 		CCEC_LOG( LOG_EXP, "Bus::Reader::stop: Exception during Driver::close\r\n");
 	}
 
@@ -324,7 +323,7 @@ void Bus::Writer::stop(bool block)
 			try {
 				bus.wQueue.offer(0);
 			}
-			catch (InvalidStateException &) {
+			catch (CCEC_OSAL::InvalidStateException &) {
 				CCEC_LOG( LOG_DEBUG, "Write queue already signaled during stop\r\n");
 			}
 			CCEC_LOG( LOG_DEBUG, "Bus::Writer::stop::stop offer completed [%d]\r\n", isRunning());

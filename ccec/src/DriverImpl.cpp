@@ -39,7 +39,6 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <stdlib.h>
-#include <exception>
 
 #include "osal/EventQueue.hpp"
 #include "osal/Exception.hpp"
@@ -97,7 +96,11 @@ DriverImpl::~DriverImpl()
 			try{
                 this->close();
 	        }
-	        catch(std::exception &e)
+	        catch(InvalidStateException &e)
+	        {
+                CCEC_LOG( LOG_EXP, "DriverImpl: Caught InvalidStateException while calling ~DriverImpl::close()\r\n");
+            }
+	        catch(Exception &e)
 	        {
                 CCEC_LOG( LOG_EXP, "DriverImpl: Caught Exception while calling ~DriverImpl::close()\r\n");
             }
@@ -144,7 +147,7 @@ void  DriverImpl::close(void) noexcept(false)
 		try {
 			rQueue.offer(0);
 		}
-		catch (InvalidStateException &) {
+		catch (CCEC_OSAL::InvalidStateException &) {
 			CCEC_LOG( LOG_DEBUG, "Receive queue already signaled during close\r\n");
 		}
 
