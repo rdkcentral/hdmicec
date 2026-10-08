@@ -39,6 +39,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <stdlib.h>
+#include <exception>
 
 #include "osal/EventQueue.hpp"
 #include "osal/Exception.hpp"
@@ -96,7 +97,7 @@ DriverImpl::~DriverImpl()
 			try{
                 this->close();
 	        }
-	        catch(...)
+	        catch(std::exception &e)
 	        {
                 CCEC_LOG( LOG_EXP, "DriverImpl: Caught Exception while calling ~DriverImpl::close()\r\n");
             }

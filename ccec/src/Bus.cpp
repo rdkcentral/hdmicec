@@ -37,6 +37,7 @@
 #include <stdio.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <exception>
 #include "ccec/CECFrame.hpp"
 #include "ccec/FrameListener.hpp"
 #include "ccec/Driver.hpp"
@@ -133,14 +134,14 @@ Bus::~Bus(void)
 	try {
 		reader.stop(true);
 	}
-	catch (...) {
+	catch (std::exception &e) {
 		CCEC_LOG( LOG_EXP, "Bus::~Bus: Exception during reader.stop\r\n");
 	}
 
 	try {
 		writer.stop(true);
 	}
-	catch (...) {
+	catch (std::exception &e) {
 		CCEC_LOG( LOG_EXP, "Bus::~Bus: Exception during writer.stop\r\n");
 	}
 
@@ -204,7 +205,7 @@ void Bus::Reader::stop(bool block)
 	try {
 		Driver::getInstance().close();
 	}
-	catch (...) {
+	catch (std::exception &e) {
 		CCEC_LOG( LOG_EXP, "Bus::Reader::stop: Exception during Driver::close\r\n");
 	}
 
