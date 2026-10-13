@@ -179,8 +179,11 @@ void  DriverImpl::read(CECFrame &frame)  noexcept(false)
 				/* Flush and return */
 				while (rQueue.size() > 0) {
 					inFrame = rQueue.poll();
-					frame = *inFrame;
-					delete inFrame;
+					// Queue may hold NULL close sentinels
+					if (inFrame != 0) {
+						frame = *inFrame;
+						delete inFrame;
+					}
 				}
 				throw InvalidStateException();
 			}
