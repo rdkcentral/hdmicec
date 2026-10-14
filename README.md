@@ -54,6 +54,8 @@ classDef VL stroke:#808080,fill:#F2F2F2,stroke-width:2px;
 
 - **Protocol Abstraction**: Encapsulates low-level protocol details including frame structure, header construction, operand handling, and timing requirements while providing clean object-oriented interfaces.
 
+- **CEC Key Event Handling**: Automatically maps incoming CEC user-control key press commands to Linux key codes and injects them into the system as uinput events through the org.rdk.Tools Thunder plugin. Key events are sent with 200 millisecond duration and the Tools plugin is lazily initialized on first key press.
+
 ---
 
 ## Design
@@ -162,6 +164,7 @@ The HDMI CEC component implements a multi-threaded architecture with explicit se
   - glib-2.0 (>= 0.10.28): Build-time dependency checked via pkg-config (no direct GLib API usage in this library today).
   - telemetry: Used for error event logging via t2_event_s() calls in Bus exception handling.
   - safec-common-wrapper or safec: Provides secure string operations when DISTRO_FEATURES includes 'safec', with SAFEC_DUMMY_API defined otherwise.
+     - org.rdk.Tools: Thunder plugin providing uinput key event injection via the ITools interface. Required for CEC key event handling feature.
 
 - **Device Services / HAL**: Requires vendor implementation of HDMI CEC HAL as defined in rdk-halif-hdmi_cec. The HAL must implement HdmiCecOpen, HdmiCecClose, HdmiCecTx, HdmiCecTxAsync, HdmiCecSetRxCallback, HdmiCecSetTxCallback, HdmiCecAddLogicalAddress, HdmiCecRemoveLogicalAddress, HdmiCecGetLogicalAddress, and HdmiCecGetPhysicalAddress functions.
 
