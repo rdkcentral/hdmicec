@@ -68,8 +68,9 @@ namespace {
                 mBackendType = BackendType::LEGACY;
                 return false;
             }
-
+            CCEC_LOG(LOG_ERROR, ">>>>Ishvar<<<<< Calling defaultServiceManager\r\n");
             android::sp<android::IServiceManager> serviceManager = android::defaultServiceManager();
+            CCEC_LOG(LOG_ERROR, ">>>>Ishvar<<<<< Return from defaultServiceManager\r\n");
             if (serviceManager == nullptr) {
                 CCEC_LOG(LOG_ERROR, "isAidlServiceAvailable failed: IServiceManager unavailable\r\n");
                 mBackendType = BackendType::LEGACY;
