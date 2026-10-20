@@ -24,7 +24,15 @@
 #include "ccec/Connection.hpp"
 #include "ccec/LibCCEC.hpp"
 #include "hdmi_cec_driver_mock.h"
+#include <atomic>
+#include <chrono>
+#include <list>
+#include <thread>
+
+// Test-only access to DriverImpl internals (status, rQueue).
+#define private public
 #include "../../../ccec/src/DriverImpl.hpp"
+#undef private
 
 using ::testing::_;
 using ::testing::Return;
@@ -564,6 +572,39 @@ TEST_F(DriverTest, ZZZ_CloseWithFailure) {
     }
     
 
+}
+
+// A private DriverImpl (no Bus reader competing) lets the test stage the queue exactly:
+// read() blocked in poll(), then closed with two NULL sentinels queued.
+TEST_F(DriverTest, ReadWithExtraCloseSentinelThrowsInvalidState) {
+    DriverImpl impl;
+    impl.status = DriverImpl::OPENED;
+
+    std::atomic<bool> threw{false};
+    std::atomic<bool> otherError{false};
+    std::thread reader([&]() {
+        CECFrame frame;
+        try {
+            impl.read(frame);
+        } catch (InvalidStateException &) {
+            threw = true;
+        } catch (...) {
+            otherError = true;
+        }
+    });
+
+    // Let read() pass its status check and block in poll().
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    impl.status = DriverImpl::CLOSED;
+    impl.rQueue.offer(0);
+    impl.rQueue.offer(0);
+
+    reader.join();
+
+    EXPECT_TRUE(threw);
+    EXPECT_FALSE(otherError);
+    EXPECT_EQ(impl.rQueue.size(), 0u);
 }
 
 // Test printFrameDetails with various frames
