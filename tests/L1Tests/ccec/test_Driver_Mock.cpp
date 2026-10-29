@@ -52,7 +52,7 @@ protected:
             // Restore default HdmiCecOpen behavior
             ON_CALL(*mock, HdmiCecOpen(::testing::_))
                 .WillByDefault(::testing::Invoke(
-                    [this](int* handle) {
+                    [mock](int* handle) {
                         if (handle) {
                             *handle = mock->currentHandle;
                             return HDMI_CEC_IO_SUCCESS;
