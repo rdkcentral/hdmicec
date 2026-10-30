@@ -49,12 +49,14 @@ protected:
         // CRITICAL: Restore default ON_CALL behaviors that may have been overridden
         // This is necessary because some tests use ON_CALL to change default behavior
         if (mock != nullptr) {
-            // Restore default HdmiCecOpen behavior
+            // Restore default HdmiCecOpen behavior. The mock outlives this fixture, so
+            // capture it by pointer; capturing 'this' would dangle once the fixture is destroyed.
+            HdmiCecDriverMock* driverMock = mock;
             ON_CALL(*mock, HdmiCecOpen(::testing::_))
                 .WillByDefault(::testing::Invoke(
-                    [mock](int* handle) {
+                    [driverMock](int* handle) {
                         if (handle) {
-                            *handle = mock->currentHandle;
+                            *handle = driverMock->currentHandle;
                             return HDMI_CEC_IO_SUCCESS;
                         }
                         return HDMI_CEC_IO_INVALID_ARGUMENT;
