@@ -53,12 +53,14 @@ tests/L1Tests/
 - **OpCode** (68 tests): Complete GetOpName() coverage for all CEC opcodes, OpCode class methods (constructor, serialize, print)
 - **Operands** (69 tests): All operand types including PhysicalAddress, LogicalAddress, DeviceType, Version, PowerStatus, AbortReason, OSDString, OSDName, Language, VendorID, UICommand, SystemAudioStatus, AudioStatus, RequestAudioFormat, ShortAudioDescriptor, AllDeviceTypes, RcProfile, DeviceFeatures, LatencyInfo
 - **Driver**: Mock driver tests, driver implementation tests
+  - Receive-length validation: valid frame lengths are accepted, while null, zero/negative-length, and oversized buffers are rejected and discarded without throwing at `DriverReceiveCallback`
 - **Bus**: Bus communication and threading tests
 
 ### OSAL Library Tests (3 test files, 10+ tests)
 - **Mutex**: Lock/unlock operations, concurrency protection, tryLock behavior
 - **Thread**: Thread creation, execution with Runnable interface, lifecycle management
 - **ConditionVariable**: Notify/wait synchronization patterns, timeout behavior
+- **EventQueue**: Saturation behavior (offering to a full queue throws `InvalidStateException` and existing entries are preserved)
 
 ## Installation Steps
 
