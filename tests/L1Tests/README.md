@@ -136,10 +136,11 @@ EXPECT_THROW({code}, ex)  // code throws exception ex
 - **test_MessageDecoder.cpp** (31 tests): Decoding all 60+ CEC opcodes, polling messages, edge cases
 - **test_OpCode.cpp** (68 tests): Complete GetOpName() coverage for all CEC opcodes, OpCode class methods
 - **test_Operands.cpp** (69 tests): All operand classes (PhysicalAddress, LogicalAddress, DeviceType, Version, PowerStatus, AbortReason, OSDString, OSDName, Language, VendorID, UICommand, SystemAudioStatus, AudioStatus, RequestAudioFormat, ShortAudioDescriptor, AllDeviceTypes, RcProfile, DeviceFeatures, LatencyInfo)
+- **test_Driver.cpp**: Driver implementation tests, including receive-length validation (valid length accepted; null buffer, zero/negative length, and oversized length rejected)
 
 ### OSAL Library Tests (10+ tests)
 
-- **test_ConditionVariable.cpp**: Notify/wait synchronization patterns
+- **test_ConditionVariable.cpp**: Notify/wait synchronization patterns, and EventQueue saturation tests (offering to a full queue throws `InvalidStateException` and existing entries remain intact)
 
 ## Known Issues and Notes
 
