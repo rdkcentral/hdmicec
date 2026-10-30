@@ -36,6 +36,7 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <iostream>
+#include <memory>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <stdlib.h>
@@ -55,24 +56,36 @@ CCEC_BEGIN_NAMESPACE
 
 size_t write(const unsigned char *buf, size_t len);
 
+bool DriverImpl::isValidReceiveFrame(const unsigned char *buf, int len)
+{
+	return buf != NULL && len > 0 && static_cast<size_t>(len) <= CECFrame::MAX_LENGTH;
+}
+
 void DriverImpl::DriverReceiveCallback(int handle, void *callbackData, unsigned char *buf, int len)
 {
-	CECFrame *frame = new CECFrame();
-	frame->append((unsigned char *)buf, (size_t)len);
+	if (!isValidReceiveFrame(buf, len)) {
+		CCEC_LOG( LOG_EXP, "Invalid frame received...discarding\r\n");
+		return;
+	}
 
-	CCEC_LOG( LOG_DEBUG, ">>>>>>> >>>>> >>>> >> >> >\r\n");
-
-        dump_buffer((unsigned char*)buf,len);
-
-	CCEC_LOG(LOG_DEBUG, "==========================\r\n");
-
+	CECFrame *frame = nullptr;
 	try {
+		frame = new CECFrame();
+		frame->append((unsigned char *)buf, (size_t)len);
+
+		CCEC_LOG( LOG_DEBUG, ">>>>>>> >>>>> >>>> >> >> >\r\n");
+
+		dump_buffer((unsigned char*)buf,len);
+
+		CCEC_LOG(LOG_DEBUG, "==========================\r\n");
+
 		static_cast<DriverImpl &>(Driver::getInstance()).getIncomingQueue(handle).offer(frame);
+		frame = nullptr;
 	}
 	catch(...) {
 		CCEC_LOG( LOG_EXP, "Exception during frame offer...discarding\r\n");
-		// Copilot fix: Delete frame to prevent memory leak when offer() throws exception
 		delete frame;
+		frame = nullptr;
 	}
 	CCEC_LOG( LOG_DEBUG, "frame offered\r\n");
 }
@@ -96,10 +109,13 @@ DriverImpl::~DriverImpl()
 			try{
                 this->close();
 	        }
+	        catch(InvalidStateException &e)
+	        {
+                CCEC_LOG( LOG_EXP, "DriverImpl: Caught InvalidStateException while calling ~DriverImpl::close()\r\n");
+            }
 	        catch(Exception &e)
 	        {
                 CCEC_LOG( LOG_EXP, "DriverImpl: Caught Exception while calling ~DriverImpl::close()\r\n");
-
             }
 		}
     }
@@ -141,7 +157,12 @@ void  DriverImpl::close(void) noexcept(false)
 		status = CLOSING;
 
 		/* Use NULL as sentinel */
-		rQueue.offer(0);
+		try {
+			rQueue.offer(0);
+		}
+		catch (CCEC_OSAL::InvalidStateException &) {
+			CCEC_LOG( LOG_DEBUG, "Receive queue already signaled during close\r\n");
+		}
 
 		int err = HdmiCecClose(nativeHandle);
 		if (err != HDMI_CEC_IO_SUCCESS) {
@@ -179,8 +200,11 @@ void  DriverImpl::read(CECFrame &frame)  noexcept(false)
 				/* Flush and return */
 				while (rQueue.size() > 0) {
 					inFrame = rQueue.poll();
-					frame = *inFrame;
-					delete inFrame;
+					// Queue may hold NULL close sentinels
+					if (inFrame != 0) {
+						frame = *inFrame;
+						delete inFrame;
+					}
 				}
 				throw InvalidStateException();
 			}

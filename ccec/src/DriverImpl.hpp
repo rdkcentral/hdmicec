@@ -52,6 +52,7 @@ class IncomingQueue;
 class DriverImpl : public Driver
 {
 public:
+	static bool isValidReceiveFrame(const unsigned char *buf, int len);
 	static void DriverReceiveCallback(int handle, void *callbackData, unsigned char *buf, int len);
 	static void DriverTransmitCallback(int handle, void *callbackData, int result);
 	typedef EventQueue<CECFrame *> IncomingQueue;
