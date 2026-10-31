@@ -29,6 +29,9 @@
 #include "ccec/Exception.hpp"
 #include "ccec/drivers/hdmi_cec_driver.h"
 
+//For parsing EDID information from the display and getting the physical address
+#include "dsDisplay.h"
+
 using CCEC_OSAL::AutoLock;
 using android::sp;
 using android::String16;
@@ -303,11 +306,47 @@ int HDMICecAidlHAL::getLogicalAddress(int handle, int devType, int *logicalAddre
 
 int HDMICecAidlHAL::getPhysicalAddress(int handle, unsigned int *physicalAddress)
 {
-    if (physicalAddress != nullptr) {
-        *physicalAddress = 0;
+    (void)handle;
+    if (physicalAddress == nullptr) {
+        CCEC_LOG(LOG_ERROR, "HDMICecAidlHAL::getPhysicalAddress invalid output pointer\r\n");
+        throw IOException();
     }
 
-    CCEC_LOG( LOG_DEBUG, "HDMICecAidlHAL::getPhysicalAddress completed\r\n");
+    *physicalAddress = 0;
+
+    intptr_t displayHandle = 0;
+    dsError_t eRet = dsGetDisplay(dsVIDEOPORT_TYPE_HDMI, 0, &displayHandle);
+    if (eRet != dsERR_NONE || displayHandle == 0) {
+        CCEC_LOG(LOG_ERROR,
+            "HDMICecAidlHAL::getPhysicalAddress dsGetDisplay HDMI failed (ret=%d handle=%p)\r\n",
+            eRet,
+            (void*)displayHandle);
+        return 0;
+    }
+
+    dsDisplayEDID_t edidData;
+    memset(&edidData, 0, sizeof(edidData));
+    eRet = dsGetEDID(displayHandle, &edidData);
+    if (eRet != dsERR_NONE) {
+        CCEC_LOG(LOG_ERROR,
+            "HDMICecAidlHAL::getPhysicalAddress dsGetEDID failed for HDMI handle=%p ret=%d\r\n",
+            (void*)displayHandle,
+            eRet);
+        return 0;
+    }
+
+    *physicalAddress =
+        ((unsigned int)edidData.physicalAddressA << 24) |
+        ((unsigned int)edidData.physicalAddressB << 16) |
+        ((unsigned int)edidData.physicalAddressC <<  8) |
+        ((unsigned int)edidData.physicalAddressD);
+    CCEC_LOG(LOG_INFO,
+        "HDMICecAidlHAL::getPhysicalAddress EDID addr %X.%X.%X.%X => 0x%08X\r\n",
+        edidData.physicalAddressA, edidData.physicalAddressB,
+        edidData.physicalAddressC, edidData.physicalAddressD,
+        *physicalAddress);
+
+    CCEC_LOG(LOG_DEBUG, "HDMICecAidlHAL::getPhysicalAddress completed\r\n");
 
     return 0;
 }
@@ -442,31 +481,23 @@ bool HDMICecAidlHAL::emulateAckForPollFrames(const unsigned char *buf, int len)
 {
     if (len <= 1) {
         /*
-         * Poll frame (header only): emulate ACK based on seen-LA cache
-         * and 2-byte probe. This keeps HdmiCecSource ping-based discovery
-         * working on AIDL backend.
+         * Poll frame (header only): emulate ACK with a 2-byte directed probe,
+         * using the seen-LA set as a hint. This keeps HdmiCecSource ping-based
+         * discovery working on AIDL backend.
          */
         const uint8_t destination = (buf != NULL) ? (buf[0] & 0x0F) : 0xFF;
 
         if (destination <= 0x0E) {
-            /* Check seen-LA cache first */
+            /* A seen address is only a hint: it is re-probed on every poll */
             {
                 AutoLock lock_(mAidlMutex);
-                if (mSeenLogicalAddresses.count(destination) > 0) {
-                    CCEC_LOG(LOG_DEBUG,
-                        "HDMICecAidlHAL::emulateAckForPollFrames destination=0x%X present in seen-LA set. Emulating ack.\r\n",
-                        destination);
-                    return true;
-                }
-            }
+                const bool seen = mSeenLogicalAddresses.count(destination) > 0;
 
-            /* Probe with a 2-byte directed frame (GiveDevicePowerStatus) */
-            {
-                AutoLock lock_(mAidlMutex);
+                /* Abort draws no reply, so re-probing a known device keeps its injected OSD name/vendor ID */
                 std::vector<uint8_t> probe;
                 probe.reserve(2);
                 probe.push_back(buf ? buf[0] : 0);
-                probe.push_back(0x8F); // GiveDevicePowerStatus
+                probe.push_back(seen ? 0xFF : 0x8F); // Abort : GiveDevicePowerStatus
 
                 SendMessageStatus probeStatus = SendMessageStatus::BUSY;
                 android::binder::Status aidlStatus = mAidlController->sendMessage(probe, &probeStatus);
@@ -476,6 +507,15 @@ bool HDMICecAidlHAL::emulateAckForPollFrames(const unsigned char *buf, int len)
                         "HDMICecAidlHAL::emulateAckForPollFrames destination=0x%X ACKed by 2-byte probe. Emulating ack.\r\n",
                         destination);
                     return true;
+                }
+
+                if (seen) {
+                    if (aidlStatus.isOk() && probeStatus == SendMessageStatus::ACK_STATE_1) {
+                        mSeenLogicalAddresses.erase(destination);
+                    } else {
+                        /* BUSY or a binder failure proves nothing, so keep the device */
+                        return true;
+                    }
                 }
 
                 CCEC_LOG(LOG_DEBUG,
