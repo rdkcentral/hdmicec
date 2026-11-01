@@ -87,4 +87,3 @@ private:
 };
 
 #endif // HDMI_CEC_AIDL_HAL_H
-
