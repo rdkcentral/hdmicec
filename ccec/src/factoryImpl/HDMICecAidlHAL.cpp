@@ -449,13 +449,13 @@ bool HDMICecAidlHAL::emulateAckForPollFrames(const unsigned char *buf, int len)
         const uint8_t destination = (buf != NULL) ? (buf[0] & 0x0F) : 0xFF;
 
         if (destination <= 0x0E) {
-            /* Probe with a 2-byte directed frame (GiveDevicePowerStatus) */
+            /* Probe with a 2-byte directed <Abort>: it only tests ACK and triggers no state-changing reply */
             AutoLock lock_(mAidlMutex);
             const bool wasSeen = (mSeenLogicalAddresses.count(destination) > 0);
             std::vector<uint8_t> probe;
             probe.reserve(2);
             probe.push_back(buf ? buf[0] : 0);
-            probe.push_back(0x8F); // GiveDevicePowerStatus
+            probe.push_back(0xFF); // Abort
 
             SendMessageStatus probeStatus = SendMessageStatus::BUSY;
             android::binder::Status aidlStatus = mAidlController->sendMessage(probe, &probeStatus);
