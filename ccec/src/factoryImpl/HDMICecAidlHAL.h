@@ -79,9 +79,8 @@ private:
     void* mRxCbData;
     void* mTxCbData;
     mutable Mutex mAidlMutex;
-	// Logical addresses seen on inbound CEC frames.
-	// Used to emulate poll ACK/NACK locally because some AIDL backends
-	// reject 1-byte poll frames as invalid message size.
+	// Logical addresses seen on inbound frames or ACKed probes; evicted on probe NACK.
+	// Keeps known devices through transient probe failures during poll emulation.
 	std::set<uint8_t> mSeenLogicalAddresses;
 
     friend class HDMICecAidlHALEventListener;
