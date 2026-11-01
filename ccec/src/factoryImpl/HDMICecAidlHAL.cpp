@@ -481,45 +481,48 @@ bool HDMICecAidlHAL::emulateAckForPollFrames(const unsigned char *buf, int len)
 {
     if (len <= 1) {
         /*
-         * Poll frame (header only): emulate ACK with a 2-byte directed probe,
-         * using the seen-LA set as a hint. This keeps HdmiCecSource ping-based
-         * discovery working on AIDL backend.
+         * Poll frame (header only): emulate ACK/NACK with a 2-byte probe on
+         * every poll so HdmiCecSource ping-based discovery and removal work
+         * on the AIDL backend.
          */
         const uint8_t destination = (buf != NULL) ? (buf[0] & 0x0F) : 0xFF;
 
         if (destination <= 0x0E) {
-            /* A seen address is only a hint: it is re-probed on every poll */
-            {
-                AutoLock lock_(mAidlMutex);
-                const bool seen = mSeenLogicalAddresses.count(destination) > 0;
+            /* Probe with a 2-byte directed frame (GiveDevicePowerStatus) */
+            AutoLock lock_(mAidlMutex);
+            const bool wasSeen = (mSeenLogicalAddresses.count(destination) > 0);
+            std::vector<uint8_t> probe;
+            probe.reserve(2);
+            probe.push_back(buf ? buf[0] : 0);
+            probe.push_back(0x8F); // GiveDevicePowerStatus
 
-                /* Abort draws no reply, so re-probing a known device keeps its injected OSD name/vendor ID */
-                std::vector<uint8_t> probe;
-                probe.reserve(2);
-                probe.push_back(buf ? buf[0] : 0);
-                probe.push_back(seen ? 0xFF : 0x8F); // Abort : GiveDevicePowerStatus
-
-                SendMessageStatus probeStatus = SendMessageStatus::BUSY;
-                android::binder::Status aidlStatus = mAidlController->sendMessage(probe, &probeStatus);
-                if (aidlStatus.isOk() && probeStatus == SendMessageStatus::ACK_STATE_0) {
-                    mSeenLogicalAddresses.insert(destination);
-                    CCEC_LOG(LOG_DEBUG,
-                        "HDMICecAidlHAL::emulateAckForPollFrames destination=0x%X ACKed by 2-byte probe. Emulating ack.\r\n",
-                        destination);
-                    return true;
-                }
-
-                if (seen) {
-                    if (aidlStatus.isOk() && probeStatus == SendMessageStatus::ACK_STATE_1) {
-                        mSeenLogicalAddresses.erase(destination);
-                    } else {
-                        /* BUSY or a binder failure proves nothing, so keep the device */
-                        return true;
-                    }
-                }
-
+            SendMessageStatus probeStatus = SendMessageStatus::BUSY;
+            android::binder::Status aidlStatus = mAidlController->sendMessage(probe, &probeStatus);
+            if (aidlStatus.isOk() && probeStatus == SendMessageStatus::ACK_STATE_0) {
+                mSeenLogicalAddresses.insert(destination);
                 CCEC_LOG(LOG_DEBUG,
-                    "HDMICecAidlHAL::emulateAckForPollFrames destination=0x%X probe NACK/failed (aidlOk=%d status=%d).\r\n",
+                    "HDMICecAidlHAL::emulateAckForPollFrames destination=0x%X ACKed by 2-byte probe. Emulating ack.\r\n",
+                    destination);
+                return true;
+            }
+
+            if (aidlStatus.isOk() && probeStatus == SendMessageStatus::ACK_STATE_1) {
+                mSeenLogicalAddresses.erase(destination);
+                CCEC_LOG(LOG_DEBUG,
+                    "HDMICecAidlHAL::emulateAckForPollFrames destination=0x%X probe NACK (wasSeen=%d). Evicted from seen-LA set.\r\n",
+                    destination,
+                    wasSeen ? 1 : 0);
+            } else if (wasSeen) {
+                // A busy bus or binder error is not evidence the device left.
+                CCEC_LOG(LOG_DEBUG,
+                    "HDMICecAidlHAL::emulateAckForPollFrames destination=0x%X probe failed (aidlOk=%d status=%d); keeping seen device.\r\n",
+                    destination,
+                    aidlStatus.isOk() ? 1 : 0,
+                    static_cast<int>(probeStatus));
+                return true;
+            } else {
+                CCEC_LOG(LOG_DEBUG,
+                    "HDMICecAidlHAL::emulateAckForPollFrames destination=0x%X probe failed (aidlOk=%d status=%d).\r\n",
                     destination,
                     aidlStatus.isOk() ? 1 : 0,
                     static_cast<int>(probeStatus));
