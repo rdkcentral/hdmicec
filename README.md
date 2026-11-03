@@ -244,7 +244,7 @@ During active operation, the component maintains stable state with continuous fr
 
 - Writer thread receiving NULL frame from queue (sentinel value) indicates shutdown sequence initiated by Bus::stop(). The thread exits its processing loop.
 
-- DriverImpl detects CLOSING state and injects NULL sentinel into receive queue to unblock the reader thread during shutdown.
+- DriverImpl detects CLOSING state and injects NULL sentinel into receive queue to unblock the reader thread during shutdown. DriverImpl::close() tolerates an InvalidStateException from the queue (for example, when the queue is full) when offering this sentinel.
 
 - HAL transmission errors cause IOException exceptions propagated to the caller. The driver state remains OPENED and subsequent operations can proceed normally.
 
@@ -372,10 +372,18 @@ sequenceDiagram
     Note over HAL: Frame received on CEC bus
 
     HAL->>Driver: DriverReceiveCallback(handle, data, buf, len)
-    Driver->>Driver: Create new CECFrame
-    Driver->>Driver: Append bytes to frame
-    Driver->>Driver: Offer frame to rQueue
-    Note over Driver: Frame queued, callback returns
+    Driver->>Driver: isValidReceiveFrame(buf, len)
+      alt buf is NULL, len <= 0, or len > CECFrame::MAX_LENGTH
+          Driver->>Driver: Log and discard frame
+      else Valid frame
+          Driver->>Driver: Create new CECFrame
+          Driver->>Driver: Append bytes to frame
+          Driver->>Driver: Offer frame to rQueue
+          opt Frame creation or offer fails
+              Driver->>Driver: Delete frame, log and discard
+          end
+      end
+    Note over Driver: Callback returns, exceptions never propagate to HAL
 
     Note over Reader: Reader thread polling
     Reader->>Driver: read(frame)
@@ -431,7 +439,7 @@ The HDMI CEC library is structured into functional modules that separate concern
 | `Thread`       | OS abstraction for pthread management. Wraps Runnable instances and provides start/stop lifecycle control. | `Thread.cpp`, `Thread.hpp` |
 | `Mutex`        | OS abstraction for pthread mutex. Provides AutoLock RAII wrapper for exception-safe locking. | `Mutex.cpp`, `Mutex.hpp` |
 | `ConditionVariable` | OS abstraction for pthread condition variables. Used by EventQueue for thread signaling. | `ConditionVariable.cpp`, `ConditionVariable.hpp` |
-| `EventQueue`   | Template-based thread-safe queue with condition variable signaling. Used by writer thread to queue outgoing frames. | `EventQueue.hpp` |
+| `EventQueue`   | Template-based thread-safe queue with condition variable signaling. Used by writer thread to queue outgoing frames. offer() throws InvalidStateException when the queue is at capacity. | `EventQueue.hpp` |
 
 ---
 
@@ -531,9 +539,9 @@ The library integrates with all HDMI CEC HAL functions defined in rdk-halif-hdmi
   - State transition: `DriverImpl.cpp` handles OPENED/CLOSED/CLOSING states
   - Thread management: `Bus.cpp` Reader::run() and Writer::run()
 
-- **Event Processing**: Reader thread polls Driver::read() in a continuous loop. Driver::read() blocks on rQueue.poll() until a frame is available. When a frame arrives via DriverReceiveCallback, it's offered to the queue. Reader locks rMutex and iterates through all FrameListener instances calling notify() synchronously. No explicit event queue for received messages - dispatch happens immediately in reader thread context. Writer thread blocks on wQueue.poll() waiting for frames to transmit.
+- **Event Processing**: Reader thread polls Driver::read() in a continuous loop. Driver::read() blocks on rQueue.poll() until a frame is available. When a frame arrives via DriverReceiveCallback, it's offered to the queue. DriverReceiveCallback first validates the buffer with DriverImpl::isValidReceiveFrame(); null buffers, len <= 0, or len > CECFrame::MAX_LENGTH are logged and discarded. Callback processing is wrapped so exceptions never propagate back to the HAL, and if frame creation or the queue offer fails the frame is deleted (the caller keeps ownership when queue admission fails). Reader locks rMutex and iterates through all FrameListener instances calling notify() synchronously. No explicit event queue for received messages - dispatch happens immediately in reader thread context. Writer thread blocks on wQueue.poll() waiting for frames to transmit.
   - Frame dispatch: `Bus.cpp` Reader::run() iterates listener list
-  - Queue management: `DriverImpl.cpp` uses EventQueue<CECFrame*> for receive queue
+  - Queue management: `DriverImpl.cpp` uses EventQueue<CECFrame*> for receive queue. EventQueue::offer() throws InvalidStateException when the queue is at capacity, leaving existing entries intact
   - No prioritization or debouncing implemented
 
 - **Error Handling Strategy**: HAL status codes are checked after each HAL call. DriverImpl maps specific status codes to typed exceptions: InvalidStateException for driver not open, CECNoAckException for HDMI_CEC_IO_SENT_BUT_NOT_ACKD, IOException for general failures. Exceptions propagate to callers who must handle them. No automatic retry logic implemented.
