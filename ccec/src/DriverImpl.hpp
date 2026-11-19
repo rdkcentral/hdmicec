@@ -31,13 +31,14 @@
 #define HDMI_CCEC_DRIVER_IMPL_HPP_
 
 #include <list>
-
+#include <memory>
 #include "osal/Mutex.hpp"
 #include "osal/EventQueue.hpp"
 
 #include "osal/ConditionVariable.hpp"
 #include "ccec/Driver.hpp"
 #include "ccec/Header.hpp"
+#include "factoryImpl/IHDMICecHal.h"
 
 using CCEC_OSAL::EventQueue;
 using CCEC_OSAL::Mutex;
@@ -86,6 +87,8 @@ private:
 	IncomingQueue rQueue;
         mutable Mutex mutex;
 	std::list<LogicalAddress> logicalAddresses;
+
+	std::unique_ptr<IHDMICecHal> mHal;
 
 	DriverImpl(const DriverImpl &); /* Not allowed */
 	DriverImpl & operator = (const DriverImpl &); /* Not allowed */
