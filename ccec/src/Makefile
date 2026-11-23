@@ -66,11 +66,14 @@ INCLUDE = -I.\
 
 
 CFLAGS+= $(INCLUDE)
+CFLAGS += -I$(DS_PATH)/hal/include -I$(DS_PATH)/ds/include
+
 
 LDFLAGS+= -L$(OPENSOURCE_BASE)/lib
 LDFLAGS+=-L$(GLIB_LIBRARY_PATH)/
 LDFLAGS+=$(GLIBS)
 LDFLAGS += -L. -lpthread -L../../osal/src/install/lib -lRCECOSHal
+LDFLAGS += -L$(DS_PATH)/install/lib -lds -ldshalcli
 # Binder libraries - link if they exist
 ifneq ($(wildcard $(BINDER_BUILD_DIR)/libbinder.a),)
 LDFLAGS += -L$(BINDER_BUILD_DIR) -lbinder
