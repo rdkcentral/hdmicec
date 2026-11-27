@@ -63,6 +63,9 @@ AC_FUNC_MALLOC
 AC_CHECK_FUNCS([memset strdup strerror])
 
 PKG_CHECK_MODULES([GLIB], [glib-2.0 >= 0.10.28])
+PKG_CHECK_MODULES([RDK_HALIF_AIDL_HDMICEC], [rdk-halif-aidl-hdmicec-0.1.0.0 >= 0.1.0.0])
+AC_SUBST([RDK_HALIF_AIDL_HDMICEC_CFLAGS])
+AC_SUBST([RDK_HALIF_AIDL_HDMICEC_LIBS])
 
 dnl Optional L1 unit tests support
 AC_ARG_ENABLE([l1tests],
