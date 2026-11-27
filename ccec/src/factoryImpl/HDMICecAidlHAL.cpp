@@ -326,6 +326,7 @@ void HDMICecAidlHAL::dispatchRx(unsigned char *buf, int len)
         if (srcLA <= 0x0E) {
             AutoLock lock_(mAidlMutex);
             mSeenLogicalAddresses.insert(srcLA);
+	    CCEC_LOG(LOG_INFO, "VINZZZ HDMICecAidlHAL::dispatchRx mSeenLogicalAddresses added logical address 0x%X\r\n", srcLA);
         }
     }
     mRxCb(0, mRxCbData, buf, len);
@@ -464,6 +465,7 @@ bool HDMICecAidlHAL::emulateAckForPollFrames(const unsigned char *buf, int len)
                 CCEC_LOG(LOG_INFO,
                     "HDMICecAidlHAL::emulateAckForPollFrames destination=0x%X ACKed by 2-byte probe. Emulating ack.\r\n",
                     destination);
+		CCEC_LOG(LOG_INFO, "VINZZZ HDMICecAidlHAL::emulateAckForPollFrames mSeenLogicalAddresses added logical address 0x%X\r\n", destination);
                 return true;
             }
 
@@ -473,6 +475,7 @@ bool HDMICecAidlHAL::emulateAckForPollFrames(const unsigned char *buf, int len)
                     "HDMICecAidlHAL::emulateAckForPollFrames destination=0x%X probe NACK (wasSeen=%d). Evicted from seen-LA set.\r\n",
                     destination,
                     wasSeen ? 1 : 0);
+		CCEC_LOG(LOG_INFO, "VINZZZ HDMICecAidlHAL::emulateAckForPollFrames mSeenLogicalAddresses removed logical address 0x%X\r\n", destination);
             } else if (wasSeen) {
                 // A busy bus or binder error is not evidence the device left.
                 CCEC_LOG(LOG_INFO,
