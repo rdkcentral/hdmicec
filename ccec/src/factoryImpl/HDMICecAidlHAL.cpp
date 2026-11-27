@@ -134,7 +134,7 @@ void HDMICecAidlHAL::initAidlService()
             CCEC_LOG(LOG_EXP, "Failed to get AIDL HdmiCec service\r\n");
             throw IOException();
         } 
-        CCEC_LOG(LOG_DEBUG, "Successfully obtained AIDL HdmiCec service\r\n");
+        CCEC_LOG(LOG_INFO, "Successfully obtained AIDL HdmiCec service\r\n");
     } else {
         CCEC_LOG(LOG_EXP, "Failed to get service manager\n");
         throw IOException();
@@ -198,7 +198,7 @@ int HDMICecAidlHAL::close(int handle)
 
     mEventListener = nullptr;
 
-    CCEC_LOG(LOG_DEBUG, "Successfully closed AIDL HdmiCec interface\r\n");
+    CCEC_LOG(LOG_INFO, "Successfully closed AIDL HdmiCec interface\r\n");
     return 0;
 }
 
@@ -222,7 +222,7 @@ int HDMICecAidlHAL::addLogicalAddress(int handle, int logicalAddresses)
         throw AddressNotAvailableException();
     }
 
-    CCEC_LOG(LOG_DEBUG, "Successfully added logical address addr=%d via AIDL\n", logicalAddresses);
+    CCEC_LOG(LOG_INFO, "Successfully added logical address addr=%d via AIDL\n", logicalAddresses);
     return 0;
 }
 
@@ -242,7 +242,7 @@ int HDMICecAidlHAL::removeLogicalAddress(int handle, int logicalAddresses)
         throw IOException();
     }
 
-    CCEC_LOG(LOG_DEBUG, "Successfully removed logical address addr=%d via AIDL\n", logicalAddresses);
+    CCEC_LOG(LOG_INFO, "Successfully removed logical address addr=%d via AIDL\n", logicalAddresses);
     return 0;
 }
 
@@ -280,7 +280,7 @@ int HDMICecAidlHAL::getLogicalAddress(int handle, int devType, int *logicalAddre
                 candidate.push_back(*it);
                 bool addResult = false;
                 android::binder::Status addStatus = mAidlController->addLogicalAddresses(candidate, &addResult);
-                CCEC_LOG(LOG_DEBUG,
+                CCEC_LOG(LOG_INFO,
                     "HDMICecAidlHAL::getLogicalAddress fallback addLogicalAddresses candidate=%d addOk=%d addResult=%d\r\n",
                     candidate[0],
                     addStatus.isOk() ? 1 : 0,
@@ -296,7 +296,7 @@ int HDMICecAidlHAL::getLogicalAddress(int handle, int devType, int *logicalAddre
     }
 
     
-    CCEC_LOG( LOG_DEBUG, "HDMICecAidlHAL::getLogicalAddress completed\r\n");
+    CCEC_LOG( LOG_INFO, "HDMICecAidlHAL::getLogicalAddress completed\r\n");
 
     return 0;
 }
@@ -307,7 +307,7 @@ int HDMICecAidlHAL::getPhysicalAddress(int handle, unsigned int *physicalAddress
         *physicalAddress = 0;
     }
 
-    CCEC_LOG( LOG_DEBUG, "HDMICecAidlHAL::getPhysicalAddress completed\r\n");
+    CCEC_LOG( LOG_INFO, "HDMICecAidlHAL::getPhysicalAddress completed\r\n");
 
     return 0;
 }
@@ -315,7 +315,7 @@ int HDMICecAidlHAL::getPhysicalAddress(int handle, unsigned int *physicalAddress
 void HDMICecAidlHAL::dispatchRx(unsigned char *buf, int len)
 {
     if (mRxCb == nullptr) {
-        CCEC_LOG(LOG_DEBUG, "HDMICecAidlHAL::dispatchRx callback not registered\r\n");
+        CCEC_LOG(LOG_INFO, "HDMICecAidlHAL::dispatchRx callback not registered\r\n");
         return;
     }
 
@@ -334,7 +334,7 @@ void HDMICecAidlHAL::dispatchRx(unsigned char *buf, int len)
 void HDMICecAidlHAL::dispatchTx(int result)
 {
     if (mTxCb == nullptr) {
-        CCEC_LOG(LOG_DEBUG, "HDMICecAidlHAL::dispatchTx callback not registered\r\n");
+        CCEC_LOG(LOG_INFO, "HDMICecAidlHAL::dispatchTx callback not registered\r\n");
         return;
     }
 
@@ -348,7 +348,7 @@ int HDMICecAidlHAL::setRxCallback(int handle, HdmiCecRxCallback_t cbfunc, void *
     mRxCb = cbfunc;
     mRxCbData = data;
 
-    CCEC_LOG(LOG_DEBUG, "HDMICecAidlHAL::setRxCallback invoked\r\n");
+    CCEC_LOG(LOG_INFO, "HDMICecAidlHAL::setRxCallback invoked\r\n");
     return 0;
 }
 
@@ -359,7 +359,7 @@ int HDMICecAidlHAL::setTxCallback(int handle, HdmiCecTxCallback_t cbfunc, void *
     mTxCb = cbfunc;
     mTxCbData = data;
 
-    CCEC_LOG(LOG_DEBUG, "HDMICecAidlHAL::setTxCallback invoked\r\n");
+    CCEC_LOG(LOG_INFO, "HDMICecAidlHAL::setTxCallback invoked\r\n");
     return 0;
 }
 
@@ -404,7 +404,7 @@ int HDMICecAidlHAL::tx(int handle, const unsigned char *buf, int len, int *resul
         throw IOException();
     }
 
-    CCEC_LOG( LOG_DEBUG, "AIDL sendMessage DONE, result %x\r\n", *result);
+    CCEC_LOG( LOG_INFO, "AIDL sendMessage DONE, result %x\r\n", *result);
 
     return 0;
 }
@@ -433,7 +433,7 @@ int HDMICecAidlHAL::txAsync(int handle, const unsigned char *buf, int len)
         throw IOException();
     }
 
-    CCEC_LOG( LOG_DEBUG, "AIDL txAsync completed, status: %d\r\n", static_cast<int>(sendStatus));
+    CCEC_LOG( LOG_INFO, "AIDL txAsync completed, status: %d\r\n", static_cast<int>(sendStatus));
 
     return 0;
 }
@@ -461,7 +461,7 @@ bool HDMICecAidlHAL::emulateAckForPollFrames(const unsigned char *buf, int len)
             android::binder::Status aidlStatus = mAidlController->sendMessage(probe, &probeStatus);
             if (aidlStatus.isOk() && probeStatus == SendMessageStatus::ACK_STATE_0) {
                 mSeenLogicalAddresses.insert(destination);
-                CCEC_LOG(LOG_DEBUG,
+                CCEC_LOG(LOG_INFO,
                     "HDMICecAidlHAL::emulateAckForPollFrames destination=0x%X ACKed by 2-byte probe. Emulating ack.\r\n",
                     destination);
                 return true;
@@ -469,20 +469,20 @@ bool HDMICecAidlHAL::emulateAckForPollFrames(const unsigned char *buf, int len)
 
             if (aidlStatus.isOk() && probeStatus == SendMessageStatus::ACK_STATE_1) {
                 mSeenLogicalAddresses.erase(destination);
-                CCEC_LOG(LOG_DEBUG,
+                CCEC_LOG(LOG_INFO,
                     "HDMICecAidlHAL::emulateAckForPollFrames destination=0x%X probe NACK (wasSeen=%d). Evicted from seen-LA set.\r\n",
                     destination,
                     wasSeen ? 1 : 0);
             } else if (wasSeen) {
                 // A busy bus or binder error is not evidence the device left.
-                CCEC_LOG(LOG_DEBUG,
+                CCEC_LOG(LOG_INFO,
                     "HDMICecAidlHAL::emulateAckForPollFrames destination=0x%X probe failed (aidlOk=%d status=%d); keeping seen device.\r\n",
                     destination,
                     aidlStatus.isOk() ? 1 : 0,
                     static_cast<int>(probeStatus));
                 return true;
             } else {
-                CCEC_LOG(LOG_DEBUG,
+                CCEC_LOG(LOG_INFO,
                     "HDMICecAidlHAL::emulateAckForPollFrames destination=0x%X probe failed (aidlOk=%d status=%d).\r\n",
                     destination,
                     aidlStatus.isOk() ? 1 : 0,
@@ -490,7 +490,7 @@ bool HDMICecAidlHAL::emulateAckForPollFrames(const unsigned char *buf, int len)
             }
         }
 
-        CCEC_LOG(LOG_DEBUG,
+        CCEC_LOG(LOG_INFO,
             "HDMICecAidlHAL::emulateAckForPollFrames destination=0x%X not present. Returning no-ack.\r\n",
             (buf != NULL) ? (buf[0] & 0x0F) : 0xFF);
         throw CECNoAckException();

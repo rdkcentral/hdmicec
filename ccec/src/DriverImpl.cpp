@@ -60,11 +60,11 @@ void DriverImpl::DriverReceiveCallback(int handle, void *callbackData, unsigned 
 	CECFrame *frame = new CECFrame();
 	frame->append((unsigned char *)buf, (size_t)len);
 
-	CCEC_LOG( LOG_DEBUG, ">>>>>>> >>>>> >>>> >> >> >\r\n");
+	CCEC_LOG( LOG_INFO, ">>>>>>> >>>>> >>>> >> >> >\r\n");
 
         dump_buffer((unsigned char*)buf,len);
 
-	CCEC_LOG(LOG_DEBUG, "==========================\r\n");
+	CCEC_LOG(LOG_INFO, "==========================\r\n");
 
 	try {
 		static_cast<DriverImpl &>(Driver::getInstance()).getIncomingQueue(handle).offer(frame);
@@ -73,20 +73,20 @@ void DriverImpl::DriverReceiveCallback(int handle, void *callbackData, unsigned 
 		CCEC_LOG( LOG_EXP, "Exception during frame offer...discarding\r\n");
 		delete frame;
 	}
-	CCEC_LOG( LOG_DEBUG, "frame offered\r\n");
+	CCEC_LOG( LOG_INFO, "frame offered\r\n");
 }
 
 void DriverImpl::DriverTransmitCallback(int handle, void *callbackData, int result)
 {
 	if (HDMI_CEC_IO_SUCCESS != result) {
-		CCEC_LOG( LOG_DEBUG, "======== HdmiCecSetTxCallback received. Result: %d\r\n", result);
+		CCEC_LOG( LOG_INFO, "======== HdmiCecSetTxCallback received. Result: %d\r\n", result);
 	}
 }
 
 DriverImpl::DriverImpl() : status(CLOSED), nativeHandle(0)
 {
 	mHal = HDMICecHalFactory::Create();
-	CCEC_LOG( LOG_DEBUG, "Creating DriverImpl done\r\n");
+	CCEC_LOG( LOG_INFO, "Creating DriverImpl done\r\n");
 }
 
 DriverImpl::~DriverImpl()
@@ -165,7 +165,7 @@ void  DriverImpl::read(CECFrame &frame)  noexcept(false)
 		}
     }
 
-    CCEC_LOG( LOG_DEBUG, "DriverImpl::Read()\r\n");
+    CCEC_LOG( LOG_INFO, "DriverImpl::Read()\r\n");
 
     bool backToPoll = false;
 	do {
@@ -212,24 +212,24 @@ void  DriverImpl::writeAsync(const CECFrame &frame)  noexcept(false)
     		throw InvalidStateException();
     	}
 
-		CCEC_LOG( LOG_DEBUG, "DriverImpl::write to call HdmiCecTxAsync\r\n");
+		CCEC_LOG( LOG_INFO, "DriverImpl::write to call HdmiCecTxAsync\r\n");
 
 		int err = mHal->txAsync(nativeHandle, buf, length);
 
-		CCEC_LOG( LOG_DEBUG, ">>>>>>> >>>>> >>>> >> >> >\r\n");
+		CCEC_LOG( LOG_INFO, ">>>>>>> >>>>> >>>> >> >> >\r\n");
 
 		dump_buffer((unsigned char*)buf,length);
 
-		CCEC_LOG(LOG_DEBUG, "==========================\r\n");
+		CCEC_LOG(LOG_INFO, "==========================\r\n");
 
-		CCEC_LOG( LOG_DEBUG, "DriverImpl:: call HdmiCecTxAsync %x\r\n", err);
+		CCEC_LOG( LOG_INFO, "DriverImpl:: call HdmiCecTxAsync %x\r\n", err);
 
 		if (err != HDMI_CEC_IO_SUCCESS) {
 			throw IOException();
 		}
 	}
 
-    CCEC_LOG( LOG_DEBUG, "Send Async Completed\r\n");
+    CCEC_LOG( LOG_INFO, "Send Async Completed\r\n");
 }
 
 
@@ -250,17 +250,17 @@ void  DriverImpl::write(const CECFrame &frame)  noexcept(false)
     		throw InvalidStateException();
     	}
 		int sendResult = HDMI_CEC_IO_SUCCESS;
-		CCEC_LOG( LOG_DEBUG, "DriverImpl::write to call HdmiCecTx\r\n");
+		CCEC_LOG( LOG_INFO, "DriverImpl::write to call HdmiCecTx\r\n");
 
 		int err = mHal->tx(nativeHandle, buf, length, &sendResult);
 
-		CCEC_LOG( LOG_DEBUG, ">>>>>>> >>>>> >>>> >> >> >\r\n");
+		CCEC_LOG( LOG_INFO, ">>>>>>> >>>>> >>>> >> >> >\r\n");
 
 		dump_buffer((unsigned char*)buf,length);
 
-		CCEC_LOG(LOG_DEBUG, "==========================\r\n");
+		CCEC_LOG(LOG_INFO, "==========================\r\n");
 
-		CCEC_LOG( LOG_DEBUG, "DriverImpl:: call HdmiCecTx DONE %x, result %x\r\n", err, sendResult);
+		CCEC_LOG( LOG_INFO, "DriverImpl:: call HdmiCecTx DONE %x, result %x\r\n", err, sendResult);
 
 		if (err != HDMI_CEC_IO_SUCCESS) {
 			throw IOException();
@@ -288,18 +288,18 @@ void  DriverImpl::write(const CECFrame &frame)  noexcept(false)
 		}
     }
 
-    CCEC_LOG( LOG_DEBUG, "Send Completed\r\n");
+    CCEC_LOG( LOG_INFO, "Send Completed\r\n");
 }
 
 int DriverImpl::getLogicalAddress(int devType)
 {
     {AutoLock lock_(mutex);
 	int logicalAddress = 0;
-	CCEC_LOG( LOG_DEBUG, "DriverImpl::getLogicalAddress called for devType : %d \r\n", devType);
+	CCEC_LOG( LOG_INFO, "DriverImpl::getLogicalAddress called for devType : %d \r\n", devType);
 
 	mHal->getLogicalAddress(nativeHandle, devType, &logicalAddress);
 
-	CCEC_LOG( LOG_DEBUG, "DriverImpl::getLogicalAddress got logical Address : %d \r\n", logicalAddress);
+	CCEC_LOG( LOG_INFO, "DriverImpl::getLogicalAddress got logical Address : %d \r\n", logicalAddress);
 	return logicalAddress;
     }
 }
@@ -307,11 +307,11 @@ int DriverImpl::getLogicalAddress(int devType)
 void DriverImpl::getPhysicalAddress(unsigned int *physicalAddress)
 {
     {AutoLock lock_(mutex);
-        CCEC_LOG( LOG_DEBUG, "DriverImpl::getPhysicalAddress called \r\n");
+        CCEC_LOG( LOG_INFO, "DriverImpl::getPhysicalAddress called \r\n");
 
 		mHal->getPhysicalAddress(nativeHandle, physicalAddress);
 
-        CCEC_LOG( LOG_DEBUG, "DriverImpl::getPhysicalAddress got physical Address : %x \r\n", *physicalAddress);
+        CCEC_LOG( LOG_INFO, "DriverImpl::getPhysicalAddress got physical Address : %x \r\n", *physicalAddress);
         return ;
     }
 }
@@ -371,7 +371,7 @@ void DriverImpl::poll(const LogicalAddress &from, const LogicalAddress &to)
      	 	 	 	  noexcept(false)
 {
 	uint8_t firstByte = (((from.toInt() & 0x0F) << 4) | (to.toInt() & 0x0F));
-	CCEC_LOG( LOG_DEBUG, "$$$$$$$$$$$$$$$$$$$$ POST POLL [%s] [%s]$$$$$$$$$$$$$$$$$$$$$\r\n", from.toString().c_str(), to.toString().c_str());
+	CCEC_LOG( LOG_INFO, "$$$$$$$$$$$$$$$$$$$$ POST POLL [%s] [%s]$$$$$$$$$$$$$$$$$$$$$\r\n", from.toString().c_str(), to.toString().c_str());
 
 	{
 		CECFrame frame;
