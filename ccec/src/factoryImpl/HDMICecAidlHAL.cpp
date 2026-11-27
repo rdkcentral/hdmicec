@@ -469,21 +469,23 @@ bool HDMICecAidlHAL::emulateAckForPollFrames(const unsigned char *buf, int len)
                 return true;
             }
 
-            if (aidlStatus.isOk() && probeStatus == SendMessageStatus::ACK_STATE_1) {
-                mSeenLogicalAddresses.erase(destination);
-                CCEC_LOG(LOG_INFO,
-                    "HDMICecAidlHAL::emulateAckForPollFrames destination=0x%X probe NACK (wasSeen=%d). Evicted from seen-LA set.\r\n",
-                    destination,
-                    wasSeen ? 1 : 0);
-		CCEC_LOG(LOG_INFO, "VINZZZ HDMICecAidlHAL::emulateAckForPollFrames mSeenLogicalAddresses removed logical address 0x%X\r\n", destination);
-            } else if (wasSeen) {
-                // A busy bus or binder error is not evidence the device left.
-                CCEC_LOG(LOG_INFO,
-                    "HDMICecAidlHAL::emulateAckForPollFrames destination=0x%X probe failed (aidlOk=%d status=%d); keeping seen device.\r\n",
-                    destination,
-                    aidlStatus.isOk() ? 1 : 0,
-                    static_cast<int>(probeStatus));
-                return true;
+            if (wasSeen) {
+                if (aidlStatus.isOk() && probeStatus == SendMessageStatus::ACK_STATE_1) {
+                    mSeenLogicalAddresses.erase(destination);
+                    CCEC_LOG(LOG_INFO,
+                        "HDMICecAidlHAL::emulateAckForPollFrames destination=0x%X probe NACK (wasSeen=%d). Evicted from seen-LA set.\r\n",
+                        destination,
+                        wasSeen ? 1 : 0);
+                    CCEC_LOG(LOG_INFO, "VINZZZ HDMICecAidlHAL::emulateAckForPollFrames mSeenLogicalAddresses removed logical address 0x%X\r\n", destination);
+                } else {
+                    // A busy bus or binder error is not evidence the device left.
+                    CCEC_LOG(LOG_INFO,
+                        "HDMICecAidlHAL::emulateAckForPollFrames destination=0x%X probe failed (aidlOk=%d status=%d); keeping seen device.\r\n",
+                        destination,
+                        aidlStatus.isOk() ? 1 : 0,
+                        static_cast<int>(probeStatus));
+                    return true;
+                }
             } else {
                 CCEC_LOG(LOG_INFO,
                     "HDMICecAidlHAL::emulateAckForPollFrames destination=0x%X probe failed (aidlOk=%d status=%d).\r\n",
