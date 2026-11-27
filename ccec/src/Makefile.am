@@ -17,7 +17,7 @@
 # limitations under the License.
 ##########################################################################
 SUBDIRS =
-AM_CXXFLAGS = -pthread -Wall -I${top_srcdir}/osal/include -I${top_srcdir}/ccec/include
+AM_CXXFLAGS = -pthread -Wall -I${top_srcdir}/osal/include -I${top_srcdir}/ccec/include $(RDK_HALIF_AIDL_HDMICEC_CFLAGS)
 
 lib_LTLIBRARIES = libRCEC.la
 
@@ -39,4 +39,5 @@ libRCEC_la_SOURCES = CECFrame.cpp \
                      factoryImpl/ServiceManagerCheck.cpp
 
 libRCEC_la_LDFLAGS = -lpthread
-libRCEC_la_LIBADD = ${top_builddir}/osal/src/libRCECOSHal.la
+libRCEC_la_LIBADD = ${top_builddir}/osal/src/libRCECOSHal.la $(RDK_HALIF_AIDL_HDMICEC_LIBS)
+
